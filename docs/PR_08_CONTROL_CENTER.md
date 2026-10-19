@@ -32,3 +32,14 @@ Après installation : cartes **« IA de développement : prête / en cours de te
 - [ ] Aucun faux statut « prêt » pendant téléchargement ou benchmark.
 - [ ] Affichage correct : partage mobile, téléchargement reporté, modèle installé, modèle trop volumineux, fallback et CPU offload.
 - [ ] Les décisions de modèle et leurs preuves sont récupérées de #4, pas simulées par l'UI.
+
+## Consommation RAM et interface passive pendant le travail IA
+
+- [ ] **RAM légère pendant le codage autonome** : Holding + Control Center + plugins et utilitaires ordinaires (hors processus d'inférence IA et hors audits lourds identifiés) visent **≤ 250 Mo au repos**, **250–350 Mo en fonctionnement**, et ne doivent pas dépasser **400 Mo en fonctionnement normal**. Aucun pic de 750 Mo attribuable à l'UI / Holding n'est acceptable comme « normal ».
+- [ ] Vue de consommation **réelle** de l'arbre de processus complet (pas seulement PID de la fenêtre), avec mémoire actuelle, sommet mesuré, tendance/fuites, UI affichée ou fermée et état du moteur.
+- [ ] **Graphify interactif chargé à la demande uniquement quand son onglet est consulté** ; fermer / détruire le rendu QtWebEngine et purger les caches de la vue lorsqu'on quitte l'onglet, sans supprimer les données du graphe sur disque.
+- [ ] Vue plugins limitée aux métadonnées et healthchecks peu coûteux ; pas de démarrage de tous les plugins ni d'import massif pour afficher un tableau. Logs et événements paginés ou virtualisés, throttling des mises à jour et absence de rafraîchissement destructif.
+- [ ] Audits lourds Doctor / Graphify exemptés du **plafond de codage normal** uniquement pendant leur exécution explicite et identifiée. Afficher séparément leur pic, durée et retour à la RAM de repos ; ne jamais dissimuler une consommation anormale de Holding sous l'étiquette « audit ».
+- [ ] Tests Windows réels avec longues sessions et simulations de flux (50+ lots / 1000 logs) ; vérifier le **pic de l'arbre de processus**, l'absence de fuite entre ouvertures Graphify, et que la fermeture de l'UI ne gonfle pas ni n'interrompt le moteur.
+
+Ce sont des **objectifs et gates futurs**, pas des consommations de l'EXE déjà mesurées.
