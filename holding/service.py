@@ -126,13 +126,17 @@ class HoldingService:
         while not self._stop.is_set():
             # Do not claim new work without a healthy agent. The daemon keeps its
             # lease and may resume once the adapter passes its real health check.
-            resources = self.resource_guard.check()
-            if not resources.safe:
-                result = Tick("RESOURCE_PRESSURE", None, resources.reason)
-            elif self.worker.ready():
-                result = self.engine.tick()
+            # Persistent STOP is never delayed by resource pressure or a dead model.
+            if self.engine._stop_requested():
+                result = Tick("STOPPED", None, "Stop requested")
             else:
-                result = Tick("AGENT_UNAVAILABLE", None, "Coding agent unavailable")
+                resources = self.resource_guard.check()
+                if not resources.safe:
+                    result = Tick("RESOURCE_PRESSURE", None, resources.reason)
+                elif self.worker.ready():
+                    result = self.engine.tick()
+                else:
+                    result = Tick("AGENT_UNAVAILABLE", None, "Coding agent unavailable")
             iterations += 1
             if result.action in {"STOPPED", "LEASE_LOST"}:
                 return result
