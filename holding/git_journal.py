@@ -168,9 +168,9 @@ class GitJournal:
             intent = json.loads(old.intent_json)
             paths = set(intent['paths'])
             actual = {p for p in self.git._git('diff-tree', '--no-commit-id',
-                        '--name-only', '-r', '-z', 'HEAD', cwd=tree.path).split('\\0') if p}
+                        '--name-only', '-r', '-z', 'HEAD', cwd=tree.path).split('\0') if p}
             if (parent == old.base_sha and message.rstrip().endswith(trailer)
-                    and message.rstrip() == intent['message'].rstrip() + '\\n\\n' + trailer
+                    and message.rstrip() == intent['message'].rstrip() + '\n\n' + trailer
                     and actual == paths):
                 return 'APPLIED'
         except GitSafetyError:
