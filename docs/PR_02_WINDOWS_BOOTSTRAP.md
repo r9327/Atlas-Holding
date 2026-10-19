@@ -7,7 +7,7 @@
 - Installation reproductible et **épinglée** de Python compatible, Git, Ollama, OpenCode, dépendances GUI, outils MCP nécessaires et prérequis Atlas ; provenance et hash des paquets ; ne pas exécuter des scripts distants arbitraires.
 - Choix du disque et du répertoire. Réparer une installation partielle, mettre à jour sans perdre la base SQLite ni les préférences. Aucune suppression implicite.
 - Premier démarrage guidé : choisir le clone Atlas ou le cloner, lire ses règles, sélectionner un profil d'IA et configurer les permissions ; **aucun accès en écriture à main**.
-- Sur partage mobile, afficher les tailles réelles avant tout téléchargement lourd (poids LLM), demander l'accord, permettre pause/reprise et vérification intégrale SHA. Après provisionnement, lancement offline.
+- Connexion mobile illimitée : afficher les tailles et progression, puis installer automatiquement les éléments recommandés dans le consentement global du premier démarrage ; pause/reprise et vérification SHA. Après provisionnement, lancement offline.
 - Config et secrets hors dépôt ; plan d'installation/désinstallation et journal d'erreurs compréhensible ; rollback si installation incomplète.
 - Outils lourds ou payants **jamais imposés**. Firecrawl auto-hébergé reste un profil optionnel.
 
@@ -26,10 +26,13 @@ Dépend de #1 (règles). Fournit le bootstrap à #9. L'installateur lui-même et
 L'installateur ne doit **pas** demander « Quel modèle voulez-vous ? » ni imposer à l'utilisateur de comprendre quantification, paramètres ou backend. Par défaut il détecte matériel, modèles disponibles et cache, applique le profil `QUALITY_FIRST` puis propose « **Installer la meilleure configuration IA vérifiée pour ce PC** » avec taille de téléchargement et explication compréhensible.
 
 - Le modèle est filtré par compatibilité RAM/VRAM/disque/contexte/outils ; le choix final est confirmé par essais contrôlés, jamais par le seul nombre de paramètres.
-- Ne pas retélécharger un modèle déjà présent et fonctionnel. Possibilité de **reporter** un téléchargement lourd sur partage mobile, sans bloquer l'interface ; travail autonome impossible si aucun modèle validé.
+- Ne pas retélécharger un modèle déjà présent et fonctionnel. Les téléchargements nécessaires s'effectuent automatiquement sous la permission initiale, même sur connexion mobile illimitée ; sans modèle validé, le travail autonome est indisponible.
 - Première configuration en un clic **après consentement pour les téléchargements lourds et les permissions** ; le nom/digest/quantification demeure dans la vue avancée seulement.
 - Ne pas promettre qu'un 24–30B tient dans 8 Go de VRAM ; détecter CPU offload et tester stabilité / contexte réel.
 - La calibration qualité et l'affectation alternée des modèles relèvent de #4 ; écran explicite et installation de #2 ; le contrat canonique est `docs/LLM_AUTO_SELECTION.md` dans #1.
 - [ ] Sur machine neuve/partiellement équipée, aucun choix technique de modèle exigé.
 - [ ] Sélection automatique vérifiée sur matériel 8 Go VRAM / 32 Go RAM ; fallback sûr si OOM.
-- [ ] Reprise après téléchargement interrompu, consentement sur les Go avant téléchargement, préservation des modèles existants.
+- [ ] Reprise après téléchargement interrompu, autorisation globale unique au premier setup, volumes visibles, préservation des modèles existants et aucune micro-approbation par modèle.
+
+## Passage sans intervention récurrente
+L'utilisateur fournit ensuite **uniquement les roadmaps**. Les téléchargements et la sélection des modèles se font dans les autorisations initiales ; les permissions de GitHub sont également consenties une fois pour le dépôt exact. Suivre le contrat `docs/USER_AUTONOMY_PROFILE.md` de la PR #1, sans plafond mobile ni choix de modèles par nom. Cette exigence est à tester, pas déjà implémentée.
