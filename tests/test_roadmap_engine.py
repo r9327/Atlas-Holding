@@ -49,6 +49,13 @@ class ImportTests(unittest.TestCase):
         updated=self.importer.import_text(roadmap([task('a'),task('b',['a'])]),source='u2')
         self.assertEqual(updated.preserved,('a',))
         self.assertEqual(updated.added,('b',))
+    def test_roadmap_cannot_silently_remove_existing_mission(self):
+        self.importer.import_text(roadmap([task('a'), task('b')]), source='u1')
+        with self.assertRaises(StoreError):
+            self.importer.import_text(roadmap([task('a')]), source='u2')
+        self.assertEqual({m.id for m in self.store.missions()}, {'a', 'b'})
+        self.assertEqual(self.store.db.execute('SELECT count(*) FROM roadmap_versions').fetchone()[0], 1)
+
     def test_forbidden_unknown_and_ambiguous(self):
         for raw in ('do what is best',roadmap([dict(task('a'),operation='disable_ci')]),roadmap([dict(task('a'),acceptance=[])])):
             with self.assertRaises(StoreError):self.importer.import_text(raw,source='u1')

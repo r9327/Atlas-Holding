@@ -125,6 +125,15 @@ class RoadmapImporter:
             if existing is not None:
                 return ImportResult(digest, existing['version'], (), tuple(j.id for j in jobs))
             known = {m.id: m for m in self.store.missions()}
+            # Never silently drop existing missions (including their checkpoints).
+            # Only a separate audited replan may cancel tracked work.
+            tracked = {row[0] for row in self.store.db.execute(
+                "SELECT m.id FROM mission_specs s JOIN missions m ON m.id=s.id WHERE m.repo=?",
+                (doc['repo'],),
+            )}
+            omitted = tracked - set(specs)
+            if omitted:
+                raise StoreError('Roadmap omits tracked missions: ' + ','.join(sorted(omitted)))
             to_add = []
             preserved = []
             for job in jobs:
