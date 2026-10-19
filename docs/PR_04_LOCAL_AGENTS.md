@@ -19,3 +19,14 @@
 
 ## Dépendances
 #1 règles + API orchestrateur #3 ; connecteurs #5 et Doctor #6 à brancher ensuite.
+
+## Routage automatique par qualité, pas par nom de modèle
+
+La Holding ne doit jamais demander à l'utilisateur de choisir lui-même « Qwen / Devstral / X paramètres ». Consommer le **profil matériel et les modèles validés** produits par #2. Choisir les modèles selon le contrat `docs/LLM_AUTO_SELECTION.md` de #1 : qualité et conformité aux tests avant rapidité ; tâche et licences compatibles ; aucun coût d'API externe ; un modèle lourd à la fois ; CPU offload et contexte réellement mesurés.
+
+- [ ] Benchmarks locaux reproductibles sur worktrees jetables : correctif rouge→vert, appel d'outil, respect des garde-fous, relecture d'anomalies et gestion d'incertitude.
+- [ ] Chaque score s'appuie sur des preuves non générées par les IA : tests, Doctor, diff et critères d'acceptation.
+- [ ] Routeur qui désigne codeur/auditeur automatiquement ; un deuxième modèle (facultatif) seulement si avantage validé, téléchargement autorisé et RAM suffisante.
+- [ ] Score prioritaire sur qualité, sécurité comme gate bloquant ; vitesse ne départage qu'en dernier pour le profil `QUALITY_FIRST`.
+- [ ] Modèle devenu incompatible/OOM/timeout : réévaluer puis rollback ; pas de changement silencieux de modèle en plein commit.
+- [ ] Profil et résultats visibles depuis Control Center #8 et persistant en SQLite.
