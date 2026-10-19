@@ -12,3 +12,13 @@ Ne pas publier d'EXE comme « autonome » uniquement parce que l'interface s'ouv
 - [ ] Publication de la Release refusée si des tests de sécurité ou de qualité sont absents. En cas de capacité modèle insuffisante, qualifier le produit d'**assistant contrôlé** et non de Holding autonome prête.
 
 Sources d'acceptation : `docs/ACCEPTANCE_RELIABILITY.md` (PR #2), `docs/QUALITY_EFFECTIVENESS_ACCEPTANCE.md` (PR #4) et la roadmap canonique #1. Les tests doivent être **réellement exécutés sur Windows**, pas seulement écrits.
+
+## Gate RAM — aucun pic de 750 Mo en codage IA normal
+
+- [ ] Vérifier sur **Windows réel**, avec une roadmap multi-lots exécutée par les agents, la mémoire de **tout l'arbre Holding** : daemon, UI, plugins, IPC, superviseurs, Git et utilitaires ordinaires. Ne pas compter les poids / processus d'inférence IA dans ce budget, mais ne pas cacher les autres sous-processus.
+- [ ] **Objectif repos ≤ 250 Mo**, **régime normal 250–350 Mo**, **plafond d'acceptation 400 Mo en codage IA ordinaire**. Un pic de **750 Mo** pendant le travail IA normal = **FAIL**, même fugace, s'il vient de Holding / ses auxiliaires.
+- [ ] Benchmarks avec UI ouverte / fermée, historique de nombreux lots, graphique Graphify ouvert puis refermé, reprise réseau et arrêt propre, enregistrement des pics par PID (mesure de l'arbre complet) et dérive mémoire sur plusieurs heures.
+- [ ] Les **audits lourds Doctor / Graphify / certifications** sont explicitement **exemptés** de ce plafond ; fournir pour eux des courbes et pics séparés, identifiés à l'avance par type d'opération, avec retour au niveau normal après libération. Ils ne doivent pas rendre le travail normal anormalement gourmand à long terme.
+- [ ] Pas de release « certifiée RAM » en l'absence de traces de mesure Windows, ni de rapport qui ne mesure que le PID de l'UI.
+
+Une consommation modèle IA (Ollama et autres inférences) est reportée à part et n'est pas comprise dans ce budget de Holding.
