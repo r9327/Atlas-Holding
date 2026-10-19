@@ -13,6 +13,7 @@ from holding.executor import AuthorizedGit
 from holding.git_worktree import GitWorktrees
 from holding.process_agent import AgentProgram, LocalProcessAgent
 from holding.state_store import StateStore
+from holding.roadmap_import import RoadmapImporter
 
 REPO='r9327/Dof-Atlas'
 
@@ -31,7 +32,7 @@ class CodeWorkerTests(unittest.TestCase):
         git(self.canonical,'add','README.md');git(self.canonical,'commit','-m','init')
         git(self.canonical,'remote','add','origin','https://github.com/r9327/Dof-Atlas.git')
         self.store=StateStore(root/'state.db');self.addCleanup(self.store.close)
-        self.store.add_missions([Mission('job',REPO)])
+        RoadmapImporter(self.store).import_text(json.dumps({'repo':REPO,'missions':[{'id':'job','operation':'code','acceptance':['feature.py works']}] }),source='local-test')
         self.store.grant_for_onboarding(StandingGrant(REPO,frozenset({'code','commit'}),int(time.time())+500))
         self.lease=DaemonLease(self.store.path,heartbeat=False);self.lease.acquire();self.addCleanup(self.lease.release)
         self.git=GitWorktrees(self.canonical,root/'trees',REPO)
@@ -65,6 +66,31 @@ else:
         self.assertEqual(self.store.missions()[0].state,'RUNNING')
         self.assertEqual((self.root/'trees'/'job'/'src'/'feature.py').read_text(),'answer=42\n')
         self.assertIn('Holding-Operation:',git(self.root/'trees'/'job','log','-1','--format=%B'))
+
+    def test_original_roadmap_acceptance_reaches_local_agent(self):
+        self.agent_path.write_text('''import json,sys
+req=json.load(sys.stdin)
+if req['action']=='health':
+ print(json.dumps({'protocol':1,'action':'health','status':'ok','agent_ready':True}))
+else:
+ assertion=req['payload']['acceptance'][0]
+ print(json.dumps({'protocol':1,'action':'plan_patch','status':'ok',
+ 'plan':{'files':[{'path':'goal.py','content':repr(assertion)}],
+         'commit_message':'feat: roadmap grounded code'}}))
+''')
+        runner = LocalProcessAgent(AgentProgram(Path(sys.executable).resolve(),
+                (str(self.agent_path),), timeout_seconds=3))
+        worker = LocalCodeWorker(self.actor,runner,health_directory=self.root)
+        worker(Mission('job',REPO))
+        self.assertEqual((self.root/'trees'/'job'/'goal.py').read_text(),"'feature.py works'")
+
+    def test_missing_roadmap_spec_refuses_to_start_work(self):
+        with self.store._transaction():
+            self.store.db.execute("DELETE FROM mission_specs WHERE id='job'")
+        worker=self.worker(self.plan())
+        with self.assertRaisesRegex(CodePlanError,'lacks immutable roadmap'):
+            worker(Mission('job',REPO))
+        self.assertFalse((self.root/'trees'/'job').exists())
 
     def test_protected_security_policy_path_denied(self):
         worker=self.worker(self.plan('.github/workflows/ci.yml'))

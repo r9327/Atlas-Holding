@@ -10,6 +10,7 @@ import unittest
 from holding.autonomy import Mission, StandingGrant
 from holding.daemon_entry import Installation, BootstrapError
 from holding.state_store import StateStore
+from holding.roadmap_import import RoadmapImporter
 
 REPO='r9327/Dof-Atlas'
 
@@ -49,7 +50,7 @@ else:
         self.save()
         db=Path(self.data['database'])
         with StateStore(db) as state:
-            state.add_missions([Mission('one',REPO)])
+            RoadmapImporter(state).import_text(json.dumps({'repo':REPO,'missions':[{'id':'one','operation':'code','acceptance':['x=1 must exist']}]}),source='test')
             state.grant_for_onboarding(StandingGrant(REPO,frozenset({'code','commit'}),int(time.time())+300))
         with Installation.load(self.config).build_service() as service:
             service.start()

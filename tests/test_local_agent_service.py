@@ -1,3 +1,4 @@
+import json
 import subprocess
 import sys
 import tempfile
@@ -10,6 +11,7 @@ from holding.git_worktree import GitWorktrees
 from holding.process_agent import AgentProgram
 from holding.service import HoldingService, ServiceSettings
 from holding.state_store import StateStore
+from holding.roadmap_import import RoadmapImporter
 
 REPO='r9327/Dof-Atlas'
 
@@ -36,7 +38,7 @@ else:
 ''')
             db=root/'holding.sqlite';root_sha=git(canonical,'rev-parse','HEAD')
             with StateStore(db) as store:
-                store.add_missions([Mission('task',REPO)])
+                RoadmapImporter(store).import_text(json.dumps({'repo':REPO,'missions':[{'id':'task','operation':'code','acceptance':['code must run']}]}),source='test')
                 store.grant_for_onboarding(StandingGrant(REPO,frozenset({'code','commit'}),int(time.time())+3600))
             localgit=GitWorktrees(canonical,root/'jobs',REPO)
             program=AgentProgram(Path(sys.executable).resolve(),(str(script),),timeout_seconds=3)

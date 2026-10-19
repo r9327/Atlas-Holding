@@ -93,9 +93,33 @@ class LocalCodeWorker:
             raise CodePlanError('Patch exceeds total size limit')
         return result
 
+    def _acceptance(self, mission: Mission) -> tuple[str, ...]:
+        """Never ask an LLM to code without the original roadmap requirements."""
+        table = self.git.store.db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='mission_specs'"
+        ).fetchone()
+        if table is None:
+            raise CodePlanError('No imported roadmap specification exists')
+        row = self.git.store.db.execute(
+            "SELECT spec_json FROM mission_specs WHERE id=?", (mission.id,)
+        ).fetchone()
+        if row is None:
+            raise CodePlanError('Mission lacks immutable roadmap acceptance criteria')
+        try:
+            spec = json.loads(row['spec_json'])
+        except (ValueError, TypeError) as exc:
+            raise CodePlanError('Damaged roadmap mission specification') from exc
+        criteria = spec.get('acceptance')
+        if (spec.get('id') != mission.id or spec.get('operation') != mission.operation or
+                not isinstance(criteria, list) or not criteria or
+                any(not isinstance(item, str) or not item.strip() for item in criteria)):
+            raise CodePlanError('Mission and roadmap specification disagree')
+        return tuple(criteria)
+
     def __call__(self, mission: Mission) -> str:
         if mission.operation != 'code':
             raise CodePlanError('This worker handles only code missions')
+        criteria = self._acceptance(mission)
         if not self.ready():
             raise AgentProcessError('Agent health check failed')
         # Supervisor, not the model, chooses/reuses the exact worktree.
@@ -104,7 +128,8 @@ class LocalCodeWorker:
             raise CodePlanError('Worktree must be clean before agent starts')
         request = {'mission_id': mission.id, 'repository': mission.repo,
                    'branch': worktree.branch, 'base_sha': worktree.base_sha,
-                   'dependencies': list(mission.dependencies)}
+                   'dependencies': list(mission.dependencies),
+                   'acceptance': list(criteria)}
         response = self.agent.request('plan_patch', request, cwd=worktree.path)
         # The child is not trusted to edit files directly. Any direct changes
         # are quarantined by the normal worker failure/recovery path.
