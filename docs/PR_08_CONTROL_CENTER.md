@@ -21,3 +21,14 @@
 
 ## Dépendances
 #1, API #3 et événements #4/#5/#7 ; la fenêtre peut démarrer avec données de test sans déclarer la Holding autonome.
+
+## Écran IA compréhensible, sans choix technique obligatoire
+
+Le premier lancement affiche **« Atlas choisit la meilleure configuration IA pour votre PC »**, avec choix implicite `Qualité maximale compatible` et détails optionnels, plutôt qu'un sélecteur brut de noms de modèles. Le bouton **« Installer ma configuration recommandée »** doit afficher l'espace occupé, les gros téléchargements et leurs autorisations avant téléchargement. L'utilisateur peut reporter sans entrer dans la configuration avancée.
+
+Après installation : cartes **« IA de développement : prête / en cours de test / indisponible »** et **« IA de vérification : prête / facultative »** ; les modèles peuvent être identiques par défaut. Afficher la justification réelle (tests passés, limites de RAM/VRAM, date, éventuellement lenteur), le volume sur le disque et un bouton **« Réévaluer automatiquement »**. Les modèles/tags/quantifications sont dans « Détails avancés ».
+
+- [ ] Test UI : un débutant configure sans identifier ni nommer de modèle.
+- [ ] Aucun faux statut « prêt » pendant téléchargement ou benchmark.
+- [ ] Affichage correct : partage mobile, téléchargement reporté, modèle installé, modèle trop volumineux, fallback et CPU offload.
+- [ ] Les décisions de modèle et leurs preuves sont récupérées de #4, pas simulées par l'UI.
