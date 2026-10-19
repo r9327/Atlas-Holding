@@ -17,6 +17,7 @@ from .autonomy import Mission
 from .engine import HoldingEngine, Tick
 from .git_worktree import GitWorktrees
 from .recovery import RecoveryCoordinator, RecoveryOutcome
+from .resource_guard import ResourceGuard
 
 
 class AgentUnavailable(RuntimeError):
@@ -66,6 +67,7 @@ class HoldingService:
         self._stop = threading.Event()
         self._started = False
         self._recovery_git = recovery_git
+        self.resource_guard = ResourceGuard(settings.database.parent)
         self.last_recovery: tuple[RecoveryOutcome, ...] = ()
 
     @classmethod
@@ -124,7 +126,10 @@ class HoldingService:
         while not self._stop.is_set():
             # Do not claim new work without a healthy agent. The daemon keeps its
             # lease and may resume once the adapter passes its real health check.
-            if self.worker.ready():
+            resources = self.resource_guard.check()
+            if not resources.safe:
+                result = Tick("RESOURCE_PRESSURE", None, resources.reason)
+            elif self.worker.ready():
                 result = self.engine.tick()
             else:
                 result = Tick("AGENT_UNAVAILABLE", None, "Coding agent unavailable")
