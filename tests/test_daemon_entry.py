@@ -42,7 +42,7 @@ else:
                   'workspace':str(self.root/'worktrees'),'health_directory':str(self.root),
                   'executable':str(Path(sys.executable).resolve()),
                   'executable_sha256':hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest(),
-                  'arguments':[str(self.script)],'timeout_seconds':3}
+                  'arguments':[str(self.script)],'argument_sha256':{str(self.script):hashlib.sha256(self.script.read_bytes()).hexdigest()},'timeout_seconds':3}
 
     def save(self):self.config.write_text(json.dumps(self.data))
 
@@ -57,6 +57,17 @@ else:
             self.assertEqual(service.run(max_ticks=1).action,'QA_PENDING')
             self.assertTrue((self.root/'worktrees'/'one'/'x.py').is_file())
             self.assertEqual(service.engine.store.missions()[0].evidence_sha,'')
+
+    def test_agent_script_modified_after_onboarding_refused(self):
+        self.save()
+        self.script.write_text('print(123)')
+        with self.assertRaises(BootstrapError):Installation.load(self.config)
+
+    def test_unpinned_inline_code_refused(self):
+        self.data['arguments']=['-c','print(123)']
+        self.data['argument_sha256']={}
+        self.save()
+        with self.assertRaises(BootstrapError):Installation.load(self.config)
 
     def test_unknown_config_fields_refused(self):
         self.data['trusted_doctor_override']=True;self.save()
