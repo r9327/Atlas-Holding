@@ -40,6 +40,8 @@ def create_snapshot(connection: sqlite3.Connection, target: str | Path) -> Snaps
     fd, name = tempfile.mkstemp(dir=target.parent, prefix=".atlas-snapshot-", suffix=".db")
     os.close(fd)
     temporary = Path(name)
+    published = False
+    manifest_created = False
     try:
         with sqlite3.connect(temporary) as output:
             connection.backup(output)
@@ -51,13 +53,23 @@ def create_snapshot(connection: sqlite3.Connection, target: str | Path) -> Snaps
             raise BackupError("Empty snapshot")
         # An incomplete manifest+snapshot pair is never accepted by restore.
         with manifest.open("x", encoding="ascii") as file:
+            manifest_created = True
             file.write(digest + "\n")
             file.flush()
             os.fsync(file.fileno())
-        os.replace(temporary, target)
+        # Hard-link publication is atomic and refuses overwriting a file
+        # created after preflight (unlike os.replace). Same-directory temp
+        # ensures a same-filesystem operation.
+        try:
+            os.link(temporary, target)
+        except OSError as exc:
+            raise BackupError("Atomic no-overwrite snapshot publication failed") from exc
+        published = True
         return Snapshot(target, digest, count)
     finally:
         temporary.unlink(missing_ok=True)
+        if manifest_created and not published:
+            manifest.unlink(missing_ok=True)
 
 
 def restore_snapshot(snapshot: str | Path, destination: str | Path) -> Path:

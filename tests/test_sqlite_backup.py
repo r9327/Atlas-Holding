@@ -1,6 +1,7 @@
 import sqlite3
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 import unittest
 
 from holding.sqlite_backup import create_snapshot, restore_snapshot, BackupError
@@ -54,6 +55,17 @@ class SQLiteBackupTests(unittest.TestCase):
         backup.database.with_suffix(".sqlite.sha256").unlink()
         with self.assertRaises(BackupError):
             restore_snapshot(backup.database, self.root / "restored.sqlite")
+
+    def test_snapshot_race_never_overwrites_user_file(self):
+        target = self.root / "backup.sqlite"
+        def competing_writer(_temporary, published):
+            Path(published).write_text("USER-DATA", encoding="ascii")
+            raise FileExistsError("simulated competing writer")
+        with patch("holding.sqlite_backup.os.link", side_effect=competing_writer):
+            with self.assertRaises(BackupError):
+                create_snapshot(self.db, target)
+        self.assertEqual(target.read_text(encoding="ascii"), "USER-DATA")
+        self.assertFalse(target.with_suffix(".sqlite.sha256").exists())
 
     def test_existing_wal_prevents_restore(self):
         backup = self.snapshot()
