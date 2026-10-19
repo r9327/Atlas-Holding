@@ -124,7 +124,7 @@ class GitWorktrees:
                 any(x in ('', '.', '..', '.git') for x in parts) or
                 parts[0] in {'.github', '.env'} or
                 any(x.lower() in {'secrets', 'tokens', 'credentials'} for x in parts) or
-                any(c in p for c in ('\\0', '*', '?', '[', ']', ':', '\\n', '\\r'))):
+                any(ord(c) < 32 or c in '*?[]:' for c in p)):
                 raise GitSafetyError('Sensitive, ambiguous or unsafe path')
             location = tree.path / norm
             if location.is_dir() or location.is_symlink() or not location.resolve().is_relative_to(tree.path):
