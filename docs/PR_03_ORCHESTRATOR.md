@@ -20,3 +20,8 @@
 
 ## Dépendances
 #1 avant intégration ; #4/#5/#6/#7/#8 utilisent cette API. Pas de CI finale pendant les commits intermédiaires.
+
+## Profil de modèle et intégrité persistante
+- [ ] SQLite conserve version, digest, quantification, contexte **mesuré**, ressources matérielles, provenance du modèle et preuve du benchmark local sans stocker de secrets ; la définition de la sélection est `docs/LLM_AUTO_SELECTION.md` de #1.
+- [ ] Une mission indique le modèle réellement utilisé à chaque rôle et la possibilité de reprendre/rejouer la vérification après redémarrage ou changement de version.
+- [ ] Aucun changement automatique de modèle au milieu d'un checkpoint Git ou d'une écriture atomique ; transition et rollback journalisés.
