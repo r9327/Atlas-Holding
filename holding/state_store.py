@@ -276,12 +276,31 @@ class StateStore:
                 self._transition(task, "RUNNING", "RECOVERY_REQUIRED", "Interrupted process; inspect worktree")
             return tuple(ids)
 
-    def acknowledge_recovery(self, mission_id: str, *, safe_worktree_confirmed: bool) -> None:
+    def acknowledge_recovery(self, mission_id: str, *, safe_worktree_confirmed: bool,
+                             lease_owner: str | None = None) -> None:
         """Must be called by a Git/worktree repair service, never by the LLM."""
         if not safe_worktree_confirmed:
             raise StoreError("Worktree inspection has not succeeded")
         with self._transaction():
+            self._assert_daemon_fence(lease_owner)
             self._transition(mission_id, "RECOVERY_REQUIRED", "READY")
+
+    def recover_verified_commit(self, mission_id: str, candidate_sha: str, *,
+                                lease_owner: str) -> None:
+        """Recovery coordinator only: checkpoint a Git-verified interrupted commit.
+
+        Does NOT accept a Doctor PASS, and cannot transition to DONE.
+        """
+        if not SHA_RE.fullmatch(candidate_sha):
+            raise StoreError("Invalid recovered Git SHA")
+        with self._transaction():
+            self._assert_daemon_fence(lease_owner)
+            self._transition(mission_id, "RECOVERY_REQUIRED", "QA_PENDING",
+                             "Verified Git commit recovered; QA still required")
+            self.db.execute(
+                "UPDATE missions SET candidate_sha=?,evidence_sha='' WHERE id=?",
+                (candidate_sha.lower(), mission_id),
+            )
 
     def events(self, limit: int = 100) -> list[dict]:
         if not 1 <= limit <= 10000:
