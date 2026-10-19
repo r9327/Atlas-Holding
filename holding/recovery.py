@@ -69,5 +69,20 @@ class RecoveryCoordinator:
         return RecoveryOutcome(mission_id, "READY", "Clean worktree ready to continue")
 
     def recover_all(self) -> tuple[RecoveryOutcome, ...]:
-        return tuple(self.recover(m.id) for m in self.store.missions()
-                     if m.state == "RECOVERY_REQUIRED" and m.repo == self.git.repository)
+        """One damaged mission must not prevent unrelated jobs from resuming."""
+        outcomes = []
+        for mission in self.store.missions():
+            if mission.state != "RECOVERY_REQUIRED" or mission.repo != self.git.repository:
+                continue
+            try:
+                outcomes.append(self.recover(mission.id))
+            except (StoreError, GitSafetyError, ValueError) as error:
+                # Never mask a lost daemon lease; old daemons cannot declare
+                # other missions recoverable after another instance took over.
+                self.lease.assert_owned()
+                with self.store._transaction():
+                    self.store._assert_daemon_fence(self.lease.owner)
+                    self.store._event(mission.id, "RECOVERY_INSPECTION_ERROR", type(error).__name__)
+                outcomes.append(RecoveryOutcome(mission.id, "RECOVERY_REQUIRED",
+                                                "Recovery inspection failed; quarantined"))
+        return tuple(outcomes)
