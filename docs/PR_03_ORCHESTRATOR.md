@@ -25,3 +25,14 @@
 - [ ] SQLite conserve version, digest, quantification, contexte **mesuré**, ressources matérielles, provenance du modèle et preuve du benchmark local sans stocker de secrets ; la définition de la sélection est `docs/LLM_AUTO_SELECTION.md` de #1.
 - [ ] Une mission indique le modèle réellement utilisé à chaque rôle et la possibilité de reprendre/rejouer la vérification après redémarrage ou changement de version.
 - [ ] Aucun changement automatique de modèle au milieu d'un checkpoint Git ou d'une écriture atomique ; transition et rollback journalisés.
+
+## Entrée utilisateur unique et roadmaps changeantes
+
+La seule action récurrente de l'utilisateur est **d'envoyer une direction de roadmap**. Le CEO prend les décisions de découpage, priorité, affectation, tests et reprise, sans demander de confirmation par lot. Les opérations GitHub dans le mandat initial sont automatiques ; aucun agent ne peut changer seul ses permissions.
+
+- [ ] Import de roadmap avec identité/source/hash/version immuable ; nouvelle directive pendant l'exécution = diff sémantique, DAG recalculé à checkpoint sûr, tâches existantes préservées et dépendances réévaluées.
+- [ ] Nouveaux objectifs, suppressions et contradictions expliqués dans un journal d'arbitrage technique ; aucun abandon silencieux d'un lot ou de ses preuves.
+- [ ] Critères de sortie automatiquement couverts par une matrice `exigence → lot → tests → SHA/preuve` ; vérificateur indépendant de couverture, pas seulement une auto-déclaration du CEO.
+- [ ] Clôture quand tous les lots sont prouvés `DONE` et aucune vérification bloquante ne reste : rapport final, arrêt de l'ordonnanceur, pas de génération infinie de nouvelles tâches.
+- [ ] En cas d'unique décision produit indécidable, enregistrer `REQUIRES_DECISION` mais continuer les autres lots sans sollicitation répétitive.
+- [ ] Test de replanification avec 3 lots dépendants et 2 lots déjà fusionnés ; aucune double PR, suppression dangereuse ou perte du journal après reboot.
