@@ -22,3 +22,10 @@ Orchestrer en local, avec reprise persistante et sans abonnement IA imposé, le 
 - docs/TOOLCHAIN.md : chaîne IA et capacités MCP.
 - config/tool_registry.json : catalogue déclaratif initial (non exécutable).
 - docs/AUTOPILOT_PLAN.md : ordre de réalisation ; aucune fonctionnalité non codée ne peut être annoncée prête.
+
+## Extension obligatoire : roadmap complète et MCP local
+
+- Le CEO doit importer une roadmap entière, faire lui-même l'inventaire, le découpage par dépendances et la classification AUTO / AUTO_WITH_STANDING_GRANT / REQUIRES_DECISION / BLOCKED / FORBIDDEN. Aucune omission silencieuse et aucun besoin de 'go' répétitif.
+- Tous les agents commencent par le catalogue de plugins/capabilities. **Priorité au plugin spécialisé local vérifié**, puis au cache local versionné, puis au plugin réseau autorisé. Aucun outil distant n'est exigé pour une mission entièrement locale.
+- Un MCP lancé sur le PC n'est pas nécessairement offline : Firecrawl ne récupère pas de nouvelles pages sans Internet et Context7 a besoin d'un catalogue ou d'un cache. Ne jamais masquer la différence dans l'UI.
+- Références : `docs/ROADMAP_INTAKE.md`, `docs/LOCAL_MCP.md`. Ces documents définissent des fonctionnalités à construire, pas déjà opérationnelles.

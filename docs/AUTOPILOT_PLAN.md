@@ -35,3 +35,11 @@
 
 ## Interdictions
 Aucun shell général, plugin MCP, token ou installation système confié à un LLM sans contrôle. Les étapes ci-dessus sont des **TODO**, pas des capacités déjà fonctionnelles.
+
+## 0B — plugins locaux en priorité + import de roadmap intégrale
+- [ ] Import complet et audit de couverture de roadmap, lots/DAG/règles et niveaux d'autonomie ; voir `docs/ROADMAP_INTAKE.md`.
+- [ ] Hub MCP local avec serveur stdio, discovery des outils, permissions, vérification santé et configuration OpenCode ; voir `docs/LOCAL_MCP.md`.
+- [ ] Plugins locaux Doctor, AI Context, Graphify et Git prêts même sans réseau ; vrais tests hors ligne.
+- [ ] Cache documentaire versionné (sources et hash) pour Context7/Firecrawl ; extraction Web légère locale facultative.
+- [ ] Firecrawl auto-hébergé comme profil Docker facultatif, démarrage contrôlé selon pression mémoire ; ne pas confondre client local et collecte offline.
+- [ ] Interface Plugins : local/online/cache/indisponible + usage quotas + permissions.
