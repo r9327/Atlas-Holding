@@ -92,6 +92,17 @@ else:
             worker(Mission('job',REPO))
         self.assertFalse((self.root/'trees'/'job').exists())
 
+    def test_model_cannot_modify_doctor_security_or_independent_tests(self):
+        for path in ('app/doctor_gate.py', 'tools/DoctorAtlas/rules.py',
+                     'app/authentication.py', 'docs/security_policy.md',
+                     'holding/proofs.py', 'tests/test_real_doctor.py',
+                     'app/permission_manager.py', 'src/ci_rules.py'):
+            with self.subTest(path=path):
+                worker = self.worker(self.plan(path))
+                with self.assertRaisesRegex(CodePlanError, 'protected'):
+                    worker(Mission('job', REPO))
+                self.assertFalse((self.root/'trees'/'job'/path).exists())
+
     def test_protected_security_policy_path_denied(self):
         worker=self.worker(self.plan('.github/workflows/ci.yml'))
         with self.assertRaises(CodePlanError): worker(Mission('job',REPO))

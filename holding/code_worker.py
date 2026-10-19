@@ -20,6 +20,20 @@ from .process_agent import LocalProcessAgent, AgentProcessError
 
 _SAFE_PATH = re.compile(r'^[A-Za-z0-9_./-]{1,160}$')
 _FORBIDDEN_PARTS = {'.git', '.github', '.env', 'secrets', 'tokens', 'credentials'}
+# Guardrails are outside model control. The coding role cannot modify
+# verification, credentials, permissions, deployment gates or independent tests.
+_PROTECTED_TERMS = ('doctor', 'security', 'permission', 'authorization',
+                    'authentication', 'credential', 'signature', 'certif',
+                    'workflow', 'policy', 'secrets', 'token', 'gate')
+_PROTECTED_COMPONENTS = {'tests', 'test', '.github', 'holding', 'ci', 'certification'}
+
+
+def _protected_patch_path(path: Path) -> bool:
+    parts = [part.casefold() for part in path.parts]
+    return (any(part in _PROTECTED_COMPONENTS for part in parts) or
+            any(term in part for part in parts for term in _PROTECTED_TERMS) or
+            any(part.startswith(('test_', 'ci_')) or part in ('conftest.py', 'tox.ini') for part in parts))
+
 
 
 class CodePlanError(RuntimeError):
@@ -70,6 +84,8 @@ class LocalCodeWorker:
                     any(part.lower() in _FORBIDDEN_PARTS or part in ('.', '..', '') or
                         part.startswith('.') for part in path.parts)):
                 raise CodePlanError('Forbidden patch path')
+            if _protected_patch_path(path):
+                raise CodePlanError('Agent is not authorized to edit protected test or security paths')
             if filename.lower() in used:
                 raise CodePlanError('Duplicate/case-conflicting patch filename')
             used.add(filename.lower())
