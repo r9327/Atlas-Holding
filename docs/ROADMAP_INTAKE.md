@@ -33,3 +33,7 @@ Après trois corrections sans progrès mesurable sur la même cause, consigner l
 
 ## État
 Ce contrat n'est pas encore implémenté. Les protections doivent être testées sur une branche et un dépôt jetables avant qu'un CEO autonome ait des permissions sur Dofus Atlas.
+
+## Validation différée et critères de sortie
+
+Lors de l'import, chaque lot obtient aussi `external_evidence_required` et `external_review_pending`. La Holding peut avancer hors ligne sur les lots sans vérification extérieure indispensable, mais ne certifie pas ceux dont les données ou documentations externes sont essentielles tant que la contre-expertise sur réseau n'est pas achevée. Les modifications après revue redéclenchent Doctor/test local puis la certification finale du nouveau SHA. Voir `docs/ONLINE_REVALIDATION.md`.

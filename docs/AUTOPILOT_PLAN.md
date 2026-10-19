@@ -43,3 +43,13 @@ Aucun shell général, plugin MCP, token ou installation système confié à un 
 - [ ] Cache documentaire versionné (sources et hash) pour Context7/Firecrawl ; extraction Web légère locale facultative.
 - [ ] Firecrawl auto-hébergé comme profil Docker facultatif, démarrage contrôlé selon pression mémoire ; ne pas confondre client local et collecte offline.
 - [ ] Interface Plugins : local/online/cache/indisponible + usage quotas + permissions.
+
+## 3B — Contre-expertise différée (Internet retrouvé)
+- [ ] Persister une file par lot de vérifications à réaliser ultérieurement par capability et niveau de risque ; source, date, SHA et priorité.
+- [ ] Détection de connectivité réelle et stabilisée vers chaque service, sans basculer au moindre changement Wi-Fi.
+- [ ] Checkpoint/pause des écritures, puis seulement exécuter les plugins requis et comparer au travail local.
+- [ ] Firecrawl/Context7 : sources vérifiables, dates, versions et quotas ; aucune collecte globale inutile.
+- [ ] GitHub : fetch et revue des divergences avant push, aucun rebase destructeur, CI uniquement pour les PR complètes.
+- [ ] Résultats `CONFIRMED`, `CORRECTION_REQUIRED`, `DEFERRED` ou `BLOCKED` ; générer les tâches correctives automatiques.
+- [ ] Invalider preuves et tests des SHA modifiés ; relancer Doctor ciblé puis certification finale uniquement lorsque l'ensemble est prêt.
+- [ ] Tests d'interruption/reconnexion, preuves obsolètes, erreurs de sources, quotas épuisés, modifications distantes concurrentes et reprise après crash.

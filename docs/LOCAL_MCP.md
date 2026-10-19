@@ -52,3 +52,7 @@ Sources d'intégration à consulter au moment de l'installation :
 - Firecrawl self-host : https://github.com/firecrawl/firecrawl/blob/main/SELF_HOST.md
 - Context7 MCP : https://context7.com/docs/resources/developer
 - OpenCode MCP : https://dev.opencode.ai/docs/fr/mcp-servers/
+
+## Reconnexion : audit différé par capacité
+
+Le hub stocke au moment du travail hors ligne une **dette de vérification externe** par sous-tâche : capability nécessaire, motifs, sources ou versions utilisées, horodatage, risques, fichiers et SHA de référence. Il n'exécute Context7 / Firecrawl / GitHub que si une question concrète est restée sans preuve actuelle. Les résultats sont enregistrés avec URI, version, date, empreinte si disponible et impact sur le code, puis transmis au CEO et à l'auditeur local. Pour le cycle intégral, voir `docs/ONLINE_REVALIDATION.md`.
