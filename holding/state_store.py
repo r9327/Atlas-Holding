@@ -183,10 +183,26 @@ class StateStore:
         row = self.db.execute("SELECT value FROM settings WHERE key='paused'").fetchone()
         return row is not None and row["value"] == "1"
 
-    def claim_next(self, *, online: bool, now_epoch: int | None = None) -> Decision:
+    def _assert_daemon_fence(self, lease_owner: str | None) -> None:
+        """Verify ownership within BEGIN IMMEDIATE before changing mission state.
+
+        Legacy direct StateStore callers can omit a lease; the autonomous daemon
+        MUST pass its unique owner token at every state transition.
+        """
+        if lease_owner is None:
+            return
+        row = self.db.execute(
+            "SELECT owner,expires_epoch FROM daemon_lease WHERE singleton=1"
+        ).fetchone()
+        if row is None or row["owner"] != lease_owner or row["expires_epoch"] <= int(time.time()):
+            raise StoreError("DAEMON_LEASE_LOST")
+
+    def claim_next(self, *, online: bool, now_epoch: int | None = None,
+                   lease_owner: str | None = None) -> Decision:
         """Atomically choose and claim one mission; never dispatch an executor here."""
         now = int(time.time()) if now_epoch is None else now_epoch
         with self._transaction():
+            self._assert_daemon_fence(lease_owner)
             if self._paused():
                 return Decision("WAIT", None, "Holding paused")
             choice = choose_next(self.missions(), self._grants(), now_epoch=now, online=online)
@@ -209,11 +225,13 @@ class StateStore:
             raise StoreError(f"Invalid transition for {mission_id}: expected {source}")
         self._event(mission_id, f"{source}_TO_{destination}", reason)
 
-    def checkpoint(self, mission_id: str, candidate_sha: str) -> None:
+    def checkpoint(self, mission_id: str, candidate_sha: str, *,
+                   lease_owner: str | None = None) -> None:
         """Store a code checkpoint. A checkpoint is NOT Doctor/CI verification."""
         if not SHA_RE.fullmatch(candidate_sha):
             raise StoreError("Candidate SHA must be a real Git SHA-1 object ID")
         with self._transaction():
+            self._assert_daemon_fence(lease_owner)
             self._transition(mission_id, "RUNNING", "QA_PENDING")
             self.db.execute(
                 "UPDATE missions SET candidate_sha=?,evidence_sha='' WHERE id=?",
@@ -231,10 +249,12 @@ class StateStore:
         """
         raise StoreError("Unauthenticated text verdict refused; use ProofVerifier.apply")
 
-    def fail_running(self, mission_id: str, reason: str, *, max_attempts: int = 3) -> None:
+    def fail_running(self, mission_id: str, reason: str, *, max_attempts: int = 3,
+                     lease_owner: str | None = None) -> None:
         if max_attempts < 1:
             raise ValueError("max_attempts must be positive")
         with self._transaction():
+            self._assert_daemon_fence(lease_owner)
             row = self.db.execute(
                 "SELECT failures_without_progress FROM missions WHERE id=? AND state='RUNNING'",
                 (mission_id,),
@@ -247,9 +267,10 @@ class StateStore:
                 "UPDATE missions SET failures_without_progress=? WHERE id=?", (attempts, mission_id)
             )
 
-    def quarantine_interrupted(self) -> tuple[str, ...]:
+    def quarantine_interrupted(self, *, lease_owner: str | None = None) -> tuple[str, ...]:
         """On daemon restart: NEVER automatically rerun an interrupted writer."""
         with self._transaction():
+            self._assert_daemon_fence(lease_owner)
             ids = [r[0] for r in self.db.execute("SELECT id FROM missions WHERE state='RUNNING'")]
             for task in ids:
                 self._transition(task, "RUNNING", "RECOVERY_REQUIRED", "Interrupted process; inspect worktree")

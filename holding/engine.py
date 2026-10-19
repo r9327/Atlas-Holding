@@ -42,7 +42,7 @@ class HoldingEngine:
         # Never quarantine tasks belonging to another active daemon.
         self.lease.acquire()
         try:
-            interrupted = self.store.quarantine_interrupted()
+            interrupted = self.store.quarantine_interrupted(lease_owner=self.lease.owner)
         except BaseException:
             self.lease.release()
             raise
@@ -81,7 +81,13 @@ class HoldingEngine:
         if self._stop.is_set() or self._stop_requested():
             return Tick('STOPPED', None, 'Stop requested')
         self.lease.assert_owned()
-        choice = self.store.claim_next(online=bool(self.online()))
+        try:
+            choice = self.store.claim_next(online=bool(self.online()), lease_owner=self.lease.owner)
+        except StoreError as exc:
+            if str(exc) == 'DAEMON_LEASE_LOST':
+                self._stop.set()
+                return Tick('LEASE_LOST', None, 'Lease lost during task claim')
+            raise
         if choice.action != 'RUN' or not choice.mission_id:
             return Tick(choice.action, choice.mission_id, choice.reason)
         mission = next(m for m in self.store.missions() if m.id == choice.mission_id)
@@ -90,14 +96,24 @@ class HoldingEngine:
             # permission-checked adapter. Never execute a raw LLM command here.
             sha = self.worker(mission)
             self.lease.assert_owned()
-            self.store.checkpoint(mission.id, sha)
-        except LeaseError:
+            self.store.checkpoint(mission.id, sha, lease_owner=self.lease.owner)
+        except (LeaseError, StoreError) as failure:
+            if isinstance(failure, StoreError) and str(failure) != 'DAEMON_LEASE_LOST':
+                raise
             self._stop.set()
             # Never release/quarantine a task from a stale supervisor.
             return Tick('LEASE_LOST', mission.id, 'Lease lost; recovery inspection required')
         except Exception as exc:
-            # Avoid persisting secrets/exception contents that may contain tokens.
-            self.store.fail_running(mission.id, type(exc).__name__)
+            # An old daemon must never reset a mission after replacement.
+            # The fence is checked inside BEGIN IMMEDIATE, not just before it.
+            try:
+                self.store.fail_running(mission.id, type(exc).__name__,
+                                        lease_owner=self.lease.owner)
+            except StoreError as fence:
+                if str(fence) == 'DAEMON_LEASE_LOST':
+                    self._stop.set()
+                    return Tick('LEASE_LOST', mission.id, 'Lease lost during task failure')
+                raise
             return Tick('RETRY_OR_BLOCKED', mission.id, type(exc).__name__)
         return Tick('QA_PENDING', mission.id, 'Awaiting authenticated tests and Doctor evidence')
 
