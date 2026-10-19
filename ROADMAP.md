@@ -76,3 +76,15 @@ La Holding doit **choisir elle-même une configuration IA locale privilégiant l
 **Seule action récurrente : transmettre la ligne directrice des roadmaps.** Le CEO importe les objectifs, structure les lots, choisit modèles et plugins, travaille, teste, revoit, commite, puis synchronise/certifie/fusionne **dans les délégations durables choisies une fois pendant l'installation**. Aucune confirmation manuelle routinière, aucun « continue ». Les décisions réellement hors périmètre restent visibles sans arrêter les autres lots. Voir `docs/USER_AUTONOMY_PROFILE.md` (règle prioritaire pour ce profil).
 
 Le partage mobile de l'utilisateur est **illimité** : aucune limite quotidienne en Go à imposer. Afficher tailles et progression et permettre la reprise en cas de coupure ; continuer à respecter espace disque, quotas API/Firecrawl et politique zéro dépense. La Holding n'est pas lancée pendant les sessions de jeu : inutile de développer une reconnaissance des jeux ; seules les protections système générales restent nécessaires.
+
+## Gestion des changements de roadmap et fin réelle du chantier
+
+L'utilisateur peut envoyer une nouvelle ligne directrice **pendant** une exécution. La Holding doit versionner chaque import (fichier/URL, SHA/hash, date), produire le diff des objectifs, préserver les preuves déjà valides, replanifier les seuls lots touchés et ne jamais annuler une écriture ou une PR au milieu d'une opération atomique. Une modification importante n'autorise pas à écraser du travail déjà fusionné ; les incompatibilités sont traitées comme migrations/PR correctives.
+
+Quand tous les lots sont réellement `DONE` au regard des critères et preuves à jour, le CEO arrête sa boucle, ferme les activités inutiles et présente un **bilan final vérifiable** : objectifs couverts, PR fusionnées, SHA, tests Doctor/CI, vérifications externes, décisions différées, blocages et reste à faire. Une tâche sans preuve ne devient jamais `DONE` pour afficher 100 %.
+
+**Critères bloquants à implémenter :**
+- [ ] Une roadmap initiale, puis une directive modifiée pendant le codage : diff, replanification à checkpoint sûr, aucun doublon/écrasement.
+- [ ] Deux versions de roadmap dont une exigence a changé : invalider uniquement les validations affectées et conserver les autres avec leurs SHA.
+- [ ] Fin de tous les lots : arrêter la boucle de création de tâches, produire rapport final vérifiable et attendre une nouvelle directive.
+- [ ] Une tâche bloquée : ne pas afficher `100 % terminé` et ne pas relancer à l'infini, poursuivre ce qui reste possible.
