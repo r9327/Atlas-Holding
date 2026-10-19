@@ -32,7 +32,7 @@ Pour **chaque** dépendance : `NOT_FOUND` → installer ; `FOUND_VALID` → réu
 
 1. **Inventaire avant changement**. Afficher un écran « Déjà présent / À installer / À réparer / Facultatif », avec source, version, téléchargement approximatif et disque cible.
 2. **Pas de doublons** : ne pas re-télécharger un modèle ni installer un deuxième Python si le runtime packagé suffit. Conserver les logiciels déjà valides.
-3. **Téléchargements lourds explicites**, notamment modèle 24–30B quantifié : utilisateur autorise l'espace réseau mobile ; pause/reprise via API si possible, intégrité SHA avant adoption. Les outils petits peuvent être préparés dans une phase distincte.
+3. **Téléchargements lourds automatiques après consentement global initial**, notamment modèle quantifié : forfait mobile illimité, pas de quota Go artificiel ; afficher taille et stockage, pause/reprise si possible, vérification SHA avant adoption.
 4. **Aucun abonnement** ni carte de paiement obligatoire ; les fonctionnalités nécessitant un compte ou quota (GitHub/Firecrawl) sont déclarées facultatives tant qu'elles ne sont pas requises pour la tâche.
 5. **Choix du disque** : séparer setup/binaire, modèles, caches Web/Docs, clones/worktrees et SQLite pour pouvoir déplacer les gros volumes sans casser les chemins.
 6. **Source officielle + versions/hash épinglés** : bannir les installations `curl|sh` ou `iwr|iex` arbitraires depuis des pages récupérées par les IA.
@@ -61,9 +61,12 @@ Le contrat de #2 n'est validé que lorsqu'un **vrai installateur** réalise ces 
 - [ ] `QUALITY_FIRST` est sélectionné par défaut : une recommandation en français (« Qualité maximale compatible »), pas une liste de noms de modèles.
 - [ ] Le setup détecte modèles Ollama déjà présents (ID/digest, format, capacité de tools et bon fonctionnement) et les compare avant de proposer un téléchargement.
 - [ ] Sélectionne un modèle de code par compatibilité mesurée CPU/RAM/VRAM/contexte, et non par les seuls paramètres ou la VRAM totale ; mémorise le profil et sa preuve.
-- [ ] Peut différer un téléchargement volumineux sans annoncer « IA prête » et expliquer en clair l'impact hors ligne.
-- [ ] Avertit avant téléchargement (nombre de Go, disque, destination) sur partage mobile ; aucun modèle supplémentaire implicite.
+- [ ] En cas d'absence réseau/espace, reporte et reprend un téléchargement sans annoncer « IA prête » et explique l'impact hors ligne.
+- [ ] Affiche la taille et la destination au premier setup, puis télécharge automatiquement les modèles nécessaires selon la permission globale initiale sur connexion mobile illimitée, sans demander un choix technique.
 - [ ] Si test échoue (OOM/timeout/tools mal supportés), propose une alternative compatible ou bloque proprement, sans boucle infinie.
 - [ ] « Détails techniques » facultatifs et requalification accessible via UI.
 
 La logique commune de benchmark et l'autorisation d'un second modèle relecteur sont du ressort de #4 ; source de vérité : `docs/LLM_AUTO_SELECTION.md` dans #1.
+
+## Passage sans intervention récurrente
+L'utilisateur fournit ensuite **uniquement les roadmaps**. Les téléchargements et la sélection des modèles se font dans les autorisations initiales ; les permissions de GitHub sont également consenties une fois pour le dépôt exact. Suivre le contrat `docs/USER_AUTONOMY_PROFILE.md` de la PR #1, sans plafond mobile ni choix de modèles par nom. Cette exigence est à tester, pas déjà implémentée.
