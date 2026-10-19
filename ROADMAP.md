@@ -9,7 +9,7 @@
 1. Ouvrir les Releases du dépôt `r9327/Atlas-Holding` et télécharger **un seul** `AtlasHoldingSetup.exe` indépendant de Python sur la machine de l'utilisateur.
 2. Le setup lit la configuration Windows (CPU, GPU/VRAM, RAM, disques, espace disponible, connexion, privilèges) et **détecte la présence ET le bon fonctionnement** de Git, Python/venv si nécessaire, Ollama, OpenCode, modèles téléchargés et serveurs MCP. Ne jamais réinstaller sans raison.
 3. Afficher un plan d'installation transparent : « déjà prêt », « à réparer », « à installer », « optionnel », « nécessite Internet/connexion utilisateur », avec **volume de téléchargement estimé** avant de lancer un LLM.
-4. L'utilisateur choisit un emplacement/dossier, un profil de modèle compatible avec 3060 Ti 8 Go/32 Go et valide les téléchargements lourds. Le setup exécute les installations officielles épinglées, valide hashes/versions/healthchecks, réessaie et reprend les téléchargements interrompus.
+4. L'utilisateur choisit l'emplacement initial ; la Holding choisit automatiquement le modèle compatible avec 3060 Ti 8 Go/32 Go et lance les téléchargements nécessaires dans l'autorisation d'installation globale donnée une seule fois. Le setup exécute les installations officielles épinglées, valide hashes/versions/healthchecks, réessaie et reprend les téléchargements interrompus.
 5. Les secrets et préférences restent hors dépôts Git. Auth GitHub ou services tiers uniquement lorsque nécessaire, via procédure sécurisée ; les permissions système ou changements irréversibles exigent un accord clair. Aucune clé n'est incluse dans le binaire ou les logs.
 6. Le setup clone/choisit **le dépôt canonique** `r9327/Dof-Atlas`, lit ses instructions et prépare des worktrees isolés. Ne jamais lancer automatiquement un writer sur `main` ou un clone utilisateur sale.
 7. Afficher le Control Center : santé des modèles/plugins, agents, progression réelle, Doctor/Graphify/AI Context, stockage, consommation système, tâches bloquées, bouton pause/reprendre/stop, journal lisible.
@@ -70,3 +70,9 @@ La Holding doit **choisir elle-même une configuration IA locale privilégiant l
 - [ ] Premier lancement « configuration recommandée — priorité qualité » sans question technique sur les noms des modèles.
 - [ ] Matériel réellement mesuré, choix compatible prouvé, poids installés réutilisés et gros téléchargements consentis.
 - [ ] Bascule/réévaluation sans perte de préférences et refus d'un modèle non validé.
+
+## Expérience sans pilotage humain récurrent
+
+**Seule action récurrente : transmettre la ligne directrice des roadmaps.** Le CEO importe les objectifs, structure les lots, choisit modèles et plugins, travaille, teste, revoit, commite, puis synchronise/certifie/fusionne **dans les délégations durables choisies une fois pendant l'installation**. Aucune confirmation manuelle routinière, aucun « continue ». Les décisions réellement hors périmètre restent visibles sans arrêter les autres lots. Voir `docs/USER_AUTONOMY_PROFILE.md` (règle prioritaire pour ce profil).
+
+Le partage mobile de l'utilisateur est **illimité** : aucune limite quotidienne en Go à imposer. Afficher tailles et progression et permettre la reprise en cas de coupure ; continuer à respecter espace disque, quotas API/Firecrawl et politique zéro dépense. La Holding n'est pas lancée pendant les sessions de jeu : inutile de développer une reconnaissance des jeux ; seules les protections système générales restent nécessaires.

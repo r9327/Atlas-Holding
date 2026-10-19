@@ -2,10 +2,10 @@
 
 Ce document complète [ROADMAP.md](../ROADMAP.md) et [AGENTS.md](../AGENTS.md). Les exigences ci-dessous sont **obligatoires pour le premier EXE autonome** ; leur présence écrite ne prouve aucune implémentation ni aucun test.
 
-## 1. Forfait mobile, réseau et quotas (PR #2, #5 et #7)
-- Détecter si Windows déclare une connexion « limitée / metered », mais ne pas dépendre de cet indicateur : offrir aussi un **mode « partage mobile » manuel**.
-- Plafond de volume transféré configurable par jour et par session (téléchargements de LLM et outils séparés des opérations Git/CI). Afficher le total estimé et réellement transféré ; tenir compte du volume initial et des reprises.
-- Aucun téléchargement de modèle, Docker, paquet lourd ou crawl Firecrawl sans **accord initial clair** indiquant nombre de Go et espace disque ; reprise si interrompu, pas de boucle de re-téléchargement.
+## 1. Réseau, coupures et quotas de services (PR #2, #5 et #7)
+- Utiliser le réseau mobile illimité normalement : aucun profil « forfait limité » ni plafond quotidien imposés. Afficher les transferts et vérifier la stabilité de connexion.
+- Aucun plafond artificiel de données ; montrer les tailles et progressions, surveiller le disque, les limites réelles des services (quota Firecrawl / GitHub) et respecter zéro dépense par défaut.
+- L'assistant d'installation obtient une autorisation **globale initiale** pour la configuration locale recommandée et indique la taille des téléchargements ; ensuite téléchargements prévus automatiques avec reprise, sans nouveau clic à chaque fichier. Ne pas lancer de service payant sans nouvelle autorisation.
 - Après reconnexion, privilégier les *petites* vérifications nécessaires ; Git fetch/API avec délais et retry bornés, pas de polling CI à la seconde, pas de nouveau benchmark Web global.
 - Quota épuisé ou réseau instable : `DEFERRED`, pas `PASS`; poursuivre les tâches indépendantes hors ligne.
 
@@ -17,7 +17,7 @@ Ce document complète [ROADMAP.md](../ROADMAP.md) et [AGENTS.md](../AGENTS.md). 
 - Une sauvegarde non restaurée en test ne suffit pas : **exercer réellement la restauration** sur un environnement jetable.
 
 ## 3. Protection du PC et cohabitation avec DOFUS (PR #3, #4 et #8)
-- Mesurer mémoire disponible, CPU/GPU, pression du disque, disponibilité des modèles, RAM/VRAM de leur contexte ; option de plafonds CPU/RAM, créneaux et **pause quand un jeu est lancé**. L'utilisateur peut désactiver ce mode.
+- Mesurer mémoire disponible, CPU/GPU, disque et ressources des modèles ; protection automatique à seuil critique et reprise à checkpoint sûr. **Aucune détection de jeu obligatoire** puisque la Holding n'est pas lancée pendant les sessions de jeu de l'utilisateur.
 - Journaliser charges élevées ; si ressource critique, mettre le codeur en pause **au prochain checkpoint sûr** puis reprendre automatiquement quand le matériel redevient disponible. Ne jamais interrompre une écriture Git atomique.
 - Surveillance thermique uniquement si un capteur fiable et permissionné est accessible : sinon indiquer « mesure indisponible », sans inventer des températures.
 - Le processus moteur doit fonctionner séparément de la fenêtre Qt, avec watchdog sur process crash/hang, détection des sorties et contrôle anti-redémarrages infinis.
@@ -48,14 +48,14 @@ Ce document complète [ROADMAP.md](../ROADMAP.md) et [AGENTS.md](../AGENTS.md). 
 ## 7. Politique par défaut en un clic
 - Mode `QUALITY_FIRST`, outils/plug-ins locaux prioritaires, téléchargements lourds avec accord, zéro service payant et aucune API externe imposée.
 - Autoriser sans intervention : lecture, planification, travail local sur worktrees, tests ciblés Doctor, revue, commits sur branche dédiée, sauvegardes non destructives.
-- Laisser **désactivé tant que non délégué** : push automatique, Ready/certification, fusion, modification de configuration sensible. Dans l'assistant initial, expliquer ces autorisations en langage simple et permettre « Autoriser pour le dépôt Atlas ».
+- Proposer dès l'installation le consentement durable « Autopilot complet sur Atlas » couvrant push, PR Draft, Ready/certification et fusion verte sur le dépôt exact ; aucune question répétée par PR si autorisé. Les modifications de configuration sensible restent exclues.
 - Contrôle global visible : STOP sûr, état des sauvegardes, consommation de données et raison de tout blocage.
 
 ## Gates supplémentaires de premier lancement
-- [ ] Connexion mobile de 3 Go restant, modèle 15+ Go envisagé : avertissement et téléchargement non lancé sans consentement.
+- [ ] Connexion mobile illimitée, modèle 15+ Go : après consentement initial global, téléchargement lancé automatiquement et résilient aux coupures ; tailles affichées, aucun cap artificiel.
 - [ ] Installation interrompue et relancée : reprise ou rollback correct, aucune deuxième installation d'un composant valide.
 - [ ] Crash SQLite et reboot au milieu d'une tâche : état exact restauré, aucune mutation dupliquée, test de restauration depuis sauvegarde.
-- [ ] Ouverture de DOFUS durant inférence : abaissement des ressources ou pause sans perte.
+- [ ] Saturation RAM/VRAM ou disque durant inférence : pause sûre et reprise, sans détection de jeu imposée.
 - [ ] Injection de prompt via MCP malveillant tentant de modifier Doctor/permissions : refus technique côté exécuteur.
 - [ ] LLM hallucinant un PASS sans test : refus ; benchmark caché détecte comportement fautif.
 - [ ] Modèle installé ou plugin mis à jour puis incompatible : retour au dernier état fonctionnel.
@@ -63,3 +63,7 @@ Ce document complète [ROADMAP.md](../ROADMAP.md) et [AGENTS.md](../AGENTS.md). 
 - [ ] Windows propre : install, mode offline après provisioning, contrôles UI réels et EXE hashé.
 
 **Ces exigences n'autorisent pas la Holding à s'installer ou à travailler sur le PC de l'utilisateur tant qu'elles ne sont pas codées et testées.**
+
+## Directive utilisateur sans micro-gestion
+
+La seule action récurrente attendue est la **ligne directrice des roadmaps**. Les décisions de tri, de modèle, de plugins, d'implémentation, de tests, de correction, de CI et de fusion (dans une délégation initiale consentie) appartiennent à la Holding. Les autorisations initiales GitHub/UAC et les actions réellement sensibles restent des exceptions de sécurité, pas un mécanisme d'approbation continue. Voir `docs/USER_AUTONOMY_PROFILE.md`.
