@@ -44,3 +44,13 @@
 - [ ] L'utilisateur ne joue pas pendant l'exécution de la Holding : surveillance matérielle générale plutôt que détection des jeux.
 
 Voir `docs/USER_AUTONOMY_PROFILE.md` en PR #1. Gates non implémentés.
+
+## Gate E2E : changement de directive et clôture autonome
+
+- [ ] Pendant que deux agents se passent le relais sur une mission, l'utilisateur dépose une mise à jour de la **ligne directrice** ; la Holding termine le checkpoint courant, conserve les preuves, reconstruit les dépendances et poursuit sans intervention technique.
+- [ ] La matrice `exigence → lot → test → SHA / PR` permet de prouver l'absence d'objectif oublié ; le rapport final correspond à la version de roadmap réellement active.
+- [ ] À 100 % **réel** : tous lots requis certifiés, aucune dette externe bloquante, aucun conflit Git / CI non résolu ; génération du rapport final et arrêt normal de la boucle sans tâche inventée.
+- [ ] Si une opération humaine réellement non délégable subsiste, le rapport indique `PARTIEL / BLOQUÉ` et les raisons ; jamais « terminé » mensonger.
+- [ ] Redémarrer l'EXE après clôture ne rejoue pas les anciennes PR ; nouvelle roadmap ou modification déclenche uniquement le différentiel nécessaire.
+
+Se référer à `ROADMAP.md` de la PR #1 ; le test porte sur un vrai exécutable Windows, pas sur une maquette.
