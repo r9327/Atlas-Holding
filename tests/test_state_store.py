@@ -54,17 +54,15 @@ class StoreTests(unittest.TestCase):
         self.store = StateStore(self.path)
         self.assertEqual(self.claim().action, 'REQUIRES_DECISION')
 
-    def test_evidence_record_requires_sha_match(self):
+    def test_text_verdict_cannot_mark_done(self):
         self.store.add_missions([Mission('a', REPO)])
         self.claim()
         self.store.checkpoint('a', SHA)
         with self.assertRaises(StoreError):
             self.store.register_test_verdict('a', candidate_sha=SHA,
-               evidence_sha='b'*40, verdict='PASS', runner='doctor_adapter', artifact_id='log1')
+                evidence_sha=SHA, verdict='PASS', runner='doctor_adapter',
+                artifact_id='forged')
         self.assertEqual(self.store.missions()[0].state, 'QA_PENDING')
-        self.store.register_test_verdict('a', candidate_sha=SHA, evidence_sha=SHA,
-                                        verdict='PASS', runner='doctor_adapter', artifact_id='artifact:1')
-        self.assertEqual(self.store.missions()[0].state, 'DONE')
 
     def test_untrusted_runner_cannot_publish_pass(self):
         self.store.add_missions([Mission('a', REPO)])
@@ -74,13 +72,14 @@ class StoreTests(unittest.TestCase):
             self.store.register_test_verdict('a', candidate_sha=SHA, evidence_sha=SHA,
                                             verdict='PASS', runner='model', artifact_id='fake')
 
-    def test_dependencies_unblock_after_recorded_verdict(self):
+    def test_untrusted_verdict_does_not_unblock_dependencies(self):
         self.store.add_missions([Mission('a', REPO), Mission('b', REPO, dependencies=('a',))])
         self.assertEqual(self.claim().mission_id, 'a')
         self.store.checkpoint('a', SHA)
-        self.store.register_test_verdict('a', candidate_sha=SHA, evidence_sha=SHA,
-                                        verdict='PASS', runner='doctor_adapter', artifact_id='ok')
-        self.assertEqual(self.claim().mission_id, 'b')
+        with self.assertRaises(StoreError):
+            self.store.register_test_verdict('a', candidate_sha=SHA,
+                evidence_sha=SHA, verdict='PASS', runner='doctor_adapter', artifact_id='ok')
+        self.assertEqual(self.claim().action, 'WAIT')
 
     def test_no_duplicate_import_and_rollback(self):
         with self.assertRaises(StoreError):

@@ -224,29 +224,12 @@ class StateStore:
         self, mission_id: str, *, candidate_sha: str, evidence_sha: str,
         verdict: str, runner: str, artifact_id: str,
     ) -> None:
-        """Accept *claims* only from future trusted adapter; not an LLM tool.
+        """Legacy string-only attestations are not sufficient to mark DONE.
 
-        TODO: adapter must authenticate Doctor JSON, SHA and artifact existence.
-        Until then this API must not be exposed to an autonomous agent.
+        Only the independently privileged ProofVerifier.apply() can accept
+        an actual signed Doctor/CI artifact bound to the candidate SHA.
         """
-        if runner not in {"doctor_adapter", "github_certification_adapter"}:
-            raise StoreError("Only trusted verifier identities permitted")
-        if not artifact_id or not SHA_RE.fullmatch(candidate_sha) or not SHA_RE.fullmatch(evidence_sha):
-            raise StoreError("Invalid evidence identifiers")
-        if candidate_sha.lower() != evidence_sha.lower() or verdict not in {"PASS", "FAIL"}:
-            raise StoreError("Stale or invalid verdict")
-        with self._transaction():
-            row = self.db.execute(
-                "SELECT candidate_sha FROM missions WHERE id=? AND state='QA_PENDING'", (mission_id,)
-            ).fetchone()
-            if row is None or row["candidate_sha"] != candidate_sha.lower():
-                raise StoreError("Candidate changed since validation started")
-            if verdict == "PASS":
-                self._transition(mission_id, "QA_PENDING", "DONE", artifact_id)
-                self.db.execute("UPDATE missions SET evidence_sha=? WHERE id=?",
-                                (evidence_sha.lower(), mission_id))
-            else:
-                self._transition(mission_id, "QA_PENDING", "BLOCKED", artifact_id)
+        raise StoreError("Unauthenticated text verdict refused; use ProofVerifier.apply")
 
     def fail_running(self, mission_id: str, reason: str, *, max_attempts: int = 3) -> None:
         if max_attempts < 1:
