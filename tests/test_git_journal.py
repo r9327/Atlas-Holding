@@ -123,6 +123,29 @@ class GitJournalTests(unittest.TestCase):
         self.assertEqual(self.actor.journal.inspect_recovery('job', 'missing-tree'),
                          'INSPECT_REQUIRED')
 
+    def test_recovery_survives_sqlite_reopen_and_process_replacement(self):
+        tree = self.actor.create('job')
+        (tree.path / 'feature.py').write_text('persisted=True\n')
+        with patch.object(self.actor.journal, 'inspect_recovery',
+                          side_effect=RuntimeError('simulated crash')):
+            with self.assertRaises(RuntimeError):
+                self.actor.commit('job', ('feature.py',), 'feat: recovery',
+                                  operation_key='restart-1')
+        saved_sha = git(tree.path, 'rev-parse', 'HEAD')
+        self.lease.release()
+        self.store.close()
+        with StateStore(self.dbpath) as db:
+            with DaemonLease(self.dbpath, heartbeat=False) as replacement:
+                self.assertEqual(db.quarantine_interrupted(lease_owner=replacement.owner), ('job',))
+                from holding.git_journal import GitJournal
+                journal = GitJournal(db, self.git, lease_owner=replacement.owner)
+                self.assertEqual(journal.pending('job')[0].status, 'PREPARED')
+                self.assertEqual(journal.inspect_recovery('job', 'restart-1'), 'APPLIED')
+                self.assertEqual(journal.pending('job'), ())
+                self.assertEqual(journal.get('job', 'restart-1').result_sha, saved_sha)
+                self.assertEqual(db.missions()[0].state, 'RECOVERY_REQUIRED')
+                self.assertEqual(git(tree.path, 'rev-parse', 'HEAD'), saved_sha)
+
     def test_lost_lease_refuses_new_git_operation(self):
         self.lease.release()
         with self.assertRaises(Exception):
