@@ -1,0 +1,14 @@
+# PR #2 — Windows bootstrap : gates supplémentaires (non implémentés)
+
+Se reporter au contrat commun [OPERATIONAL_READINESS.md](https://github.com/r9327/Atlas-Holding/blob/feat/windows-local-holding-v0/docs/OPERATIONAL_READINESS.md) de la PR #1.
+
+- [ ] Sur connexion mobile ou connexion marquée limitée, **budget en Go** estimé, restant et effectivement consommé ; autorisation explicite des gros modèles/installations avant le début.
+- [ ] Pause/reprise et checksum d'un gros téléchargement sur partage interrompu, sans re-téléchargement complet indu.
+- [ ] Inventaire et réutilisation des composants réels, installation/réparation atomique et idempotente ; ne jamais casser Python/Git/Ollama installés pour d'autres apps.
+- [ ] Sauvegarde et rollback automatique après mise à jour échouée, plus test réel de restauration.
+- [ ] Vérification de provenance, signature lorsqu'elle existe et hash des paquets ; aucune commande `curl|sh` ou script réseau non contrôlé.
+- [ ] Profil **qualité auto** pour LLM sans nom à saisir, et permissions GitHub expliquées en français lors de l'onboarding.
+- [ ] Téléchargement initial requis s'il manque un modèle : état explicite si offline, pas d'IA inventée.
+- [ ] Ne jamais effacer des poids Ollama ou dossiers partagés lors d'une désinstallation sans confirmation explicite.
+
+Aucune de ces cases n'est validée actuellement ; tests sur Windows propre requis.
