@@ -34,8 +34,11 @@ class ProofVerifier:
     """Validates signed result + local artifact, not free-form runner strings."""
 
     def __init__(self, evidence_root: str | Path, secret: bytes):
-        self.root = Path(evidence_root).resolve(strict=True)
-        if self.root.is_symlink() or not self.root.is_dir():
+        candidate = Path(evidence_root)
+        if candidate.is_symlink():
+            raise ProofError("Evidence root cannot be a symlink")
+        self.root = candidate.resolve(strict=True)
+        if not self.root.is_dir():
             raise ProofError("Evidence root must be an existing directory")
         if not isinstance(secret, bytes) or len(secret) < 32:
             raise ProofError("A protected 256-bit verifier secret is required")

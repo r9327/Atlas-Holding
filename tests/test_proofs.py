@@ -59,6 +59,15 @@ class ProofTests(unittest.TestCase):
         with self.assertRaises(ProofError):
             self.verifier.verify("../receipt.json", mission_id="m", sha=SHA)
 
+    def test_symlinked_evidence_root_refused(self):
+        alias = self.root.parent / "evidence-link"
+        try:
+            alias.symlink_to(self.root, target_is_directory=True)
+        except OSError:
+            self.skipTest("Symlink creation is not permitted on this system")
+        with self.assertRaises(ProofError):
+            ProofVerifier(alias, SECRET)
+
     def test_short_secret_fails(self):
         with self.assertRaises(ProofError):
             ProofVerifier(self.root, b"short")
