@@ -47,6 +47,39 @@ class GitWorktreeTests(unittest.TestCase):
         for path in ('../outside','.github/workflows/remove.yml','secrets/token.txt','/tmp/absolute'):
             with self.subTest(path=path),self.assertRaises(GitSafetyError):
                 self.manager.commit('feat1',(path,),'feat: unsafe')
+    def test_prestaged_protected_workflow_never_enters_commit(self):
+        tree = self.manager.create('feat1')
+        protected = tree.path / '.github' / 'workflows' / 'ci.yml'
+        protected.parent.mkdir(parents=True)
+        protected.write_text('name: CI\\n')
+        git(tree.path, 'add', '.github/workflows/ci.yml')
+        (tree.path / 'feature.py').write_text('ok=1\\n')
+        with self.assertRaises(GitSafetyError):
+            self.manager.commit('feat1', ('feature.py',), 'feat: safe change')
+        self.assertEqual(git(tree.path, 'branch', '--show-current'), 'holding/feat1')
+        self.assertFalse((self.root / 'feature.py').exists())
+
+    def test_wildcard_and_directory_pathspecs_refused(self):
+        tree = self.manager.create('feat1')
+        (tree.path / 'feature.py').write_text('a=1')
+        (tree.path / 'code').mkdir()
+        (tree.path / 'code' / 'file.py').write_text('pass')
+        for path in ('*', '.', 'code', 'featur?.py', ':(top)feature.py'):
+            with self.subTest(path=path), self.assertRaises(GitSafetyError):
+                self.manager.commit('feat1', (path,), 'feat: disallow broad staging')
+
+    def test_outside_symlink_refused(self):
+        tree = self.manager.create('feat1')
+        outside = Path(self.temp.name) / 'outside'
+        outside.write_text('private')
+        link = tree.path / 'linked.py'
+        try:
+            link.symlink_to(outside)
+        except OSError:
+            self.skipTest('Symlinks not permitted on host')
+        with self.assertRaises(GitSafetyError):
+            self.manager.commit('feat1', ('linked.py',), 'feat: refuse external link')
+
     def test_recovery_inspects_dirty_writer(self):
         work=self.manager.create('feat1')
         self.assertTrue(self.manager.inspect_recovery('feat1'))

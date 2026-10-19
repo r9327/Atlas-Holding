@@ -112,22 +112,40 @@ class GitWorktrees:
 
     def commit(self, mission_id: str, paths: tuple[str, ...], message: str) -> str:
         tree = self.inspect(mission_id)
-        if not paths or len(message) < 5:
-            raise GitSafetyError('Explicit files and meaningful commit message required')
+        if not paths or len(message.strip()) < 5 or len(set(paths)) != len(paths):
+            raise GitSafetyError('Explicit unique files and meaningful commit message required')
+        if self._git('diff', '--cached', '--name-only', '-z', cwd=tree.path):
+            raise GitSafetyError('Refusing to commit with pre-staged changes')
         for p in paths:
             norm = Path(p)
             parts = norm.parts
-            if (norm.is_absolute() or not parts or '..' in parts or '.git' in parts or
-                parts[0] == '.github' or parts[0] == '.env' or
-                any(x.lower() in {'secrets', 'tokens', 'credentials'} for x in parts)):
-                raise GitSafetyError('Sensitive or unsafe path')
-            location = (tree.path / norm).resolve()
-            if not location.is_relative_to(tree.path):
-                raise GitSafetyError('Path escapes worktree')
-        self._git('add','--',*paths,cwd=tree.path)
-        self._git('diff','--cached','--check',cwd=tree.path)
-        self._git('commit','-m',message,cwd=tree.path,timeout=120)
-        sha = self._git('rev-parse','HEAD',cwd=tree.path).lower()
+            if (not p or norm.is_absolute() or not parts or
+                p != norm.as_posix() or p in ('.', '..') or
+                any(x in ('', '.', '..', '.git') for x in parts) or
+                parts[0] in {'.github', '.env'} or
+                any(x.lower() in {'secrets', 'tokens', 'credentials'} for x in parts) or
+                any(c in p for c in ('\\0', '*', '?', '[', ']', ':', '\\n', '\\r'))):
+                raise GitSafetyError('Sensitive, ambiguous or unsafe path')
+            location = tree.path / norm
+            if location.is_dir() or location.is_symlink() or not location.resolve().is_relative_to(tree.path):
+                raise GitSafetyError('Only regular files or tracked deletions are permitted')
+            if not location.is_file() and self._git('ls-files', '--error-unmatch', '--', p,
+                                                   cwd=tree.path, timeout=10) != p:
+                raise GitSafetyError('Untracked deleted path is not allowed')
+        self._git('add', '--', *paths, cwd=tree.path)
+        staged = self._git('diff', '--cached', '--name-only', '-z', cwd=tree.path)
+        actual = {item for item in staged.split('\\0') if item}
+        if not actual or actual - set(paths):
+            raise GitSafetyError('Unexpected staged file (possible pathspec injection)')
+        self._git('diff', '--cached', '--check', cwd=tree.path)
+        # --only restricts the commit to the exact chosen paths even if the
+        # index were modified after the safety check by another process.
+        self._git('commit', '--only', '-m', message, '--', *paths, cwd=tree.path, timeout=120)
+        sha = self._git('rev-parse', 'HEAD', cwd=tree.path).lower()
         if not _SHA.fullmatch(sha):
             raise GitSafetyError('Invalid commit')
+        committed = {item for item in self._git('diff-tree', '--no-commit-id', '--name-only',
+                                                '-r', '-z', 'HEAD', cwd=tree.path).split('\\0') if item}
+        if not committed or committed - set(paths):
+            raise GitSafetyError('Committed path set was unexpected: quarantine worktree')
         return sha
