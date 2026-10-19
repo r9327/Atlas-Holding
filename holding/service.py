@@ -68,6 +68,34 @@ class HoldingService:
         self._recovery_git = recovery_git
         self.last_recovery: tuple[RecoveryOutcome, ...] = ()
 
+    @classmethod
+    def from_local_agent(cls, settings: ServiceSettings, *, program,
+                         git: GitWorktrees, health_directory: Path,
+                         online: Callable[[], bool]) -> "HoldingService":
+        """Trusted setup only: bind the fixed local binary to leased Git writes.
+
+        The user-onboarded config must choose the binary and repository. A
+        roadmap must never choose a process, arguments, or executable path.
+        """
+        from .executor import AuthorizedGit
+        from .process_agent import LocalProcessAgent
+        from .code_worker import LocalCodeWorker
+
+        class _Unbound:
+            def ready(self) -> bool:
+                return False
+            def __call__(self, mission: Mission) -> str:
+                raise AgentUnavailable('Worker not bound')
+
+        service = cls(settings, _Unbound(), online=online, recovery_git=git)
+        authenticated_git = AuthorizedGit(service.engine.store, git, service.engine.lease)
+        adapter = LocalProcessAgent(program, should_stop=lambda: (
+            service._stop.is_set() or service.engine._stop_requested()))
+        worker = LocalCodeWorker(authenticated_git, adapter, health_directory=health_directory)
+        service.worker = worker
+        service.engine.worker = worker
+        return service
+
     def start(self) -> tuple[str, ...]:
         if self._started:
             raise RuntimeError("Service has already started")
