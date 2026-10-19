@@ -27,3 +27,10 @@
 
 ## Dépendances
 #1–#8. Cette PR est la **dernière** à certifier/fusionner. Aucune Release publiée avant preuve E2E.
+
+## Gate E2E supplémentaire — choix IA automatique sans jargon
+- [ ] Installer un Windows neuf puis préparer une Holding **sans demander de nom de modèle au premier lancement** : détecter matériel, recommander « priorité qualité », demander le consentement sur les Go, provisionner, tester, affecter modèle codeur et relecteur si pertinent.
+- [ ] Reprendre un modèle existant sans re-téléchargement ; exécuter un véritable benchmark d'intégration dont les résultats / preuves conduisent à la sélection (pas d'auto-notation par l'IA).
+- [ ] Panne réseau pendant gros téléchargement, OOM du modèle choisi ou échec tool calling : fallback ou blocage explicite, aucun « tout prêt » fictif ; configuration survivant au redémarrage.
+- [ ] Contrôler l'onglet IA/Plugins de l'UI : nom technique facultatif, statut du modèle réel, liens aux tests et mémoire utilisée ; Windows propre, 8 Go VRAM / 32 Go RAM test ou simulation documentée des limites.
+- [ ] La règle canonique de décision est `docs/LLM_AUTO_SELECTION.md` depuis #1 ; interfaces #2/#3/#4/#8 réellement intégrées.
