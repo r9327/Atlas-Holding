@@ -15,6 +15,8 @@ from typing import Callable, Protocol
 
 from .autonomy import Mission
 from .engine import HoldingEngine, Tick
+from .git_worktree import GitWorktrees
+from .recovery import RecoveryCoordinator, RecoveryOutcome
 
 
 class AgentUnavailable(RuntimeError):
@@ -55,7 +57,7 @@ class HoldingService:
     """
 
     def __init__(self, settings: ServiceSettings, worker: TrustedWorker,
-                 *, online: Callable[[], bool]):
+                 *, online: Callable[[], bool], recovery_git: GitWorktrees | None = None):
         if not callable(worker) or not callable(getattr(worker, "ready", None)):
             raise AgentUnavailable("A trusted worker with a health check is mandatory")
         self.settings = settings
@@ -63,6 +65,8 @@ class HoldingService:
         self.engine = HoldingEngine(settings.database, worker, online=online)
         self._stop = threading.Event()
         self._started = False
+        self._recovery_git = recovery_git
+        self.last_recovery: tuple[RecoveryOutcome, ...] = ()
 
     def start(self) -> tuple[str, ...]:
         if self._started:
@@ -71,6 +75,12 @@ class HoldingService:
             raise AgentUnavailable("Coding agent unavailable; refusing to claim tasks")
         quarantined = self.engine.start()
         self._started = True
+        # Onboarding provides the exact canonical Git checkout; without it,
+        # recovery remains quarantined rather than making assumptions.
+        if self._recovery_git is not None:
+            self.last_recovery = RecoveryCoordinator(
+                self.engine.store, self._recovery_git, self.engine.lease
+            ).recover_all()
         return quarantined
 
     def request_shutdown(self) -> None:
