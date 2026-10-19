@@ -1,0 +1,162 @@
+"""Safe, restartable HTTP downloads for pinned setup artifacts.
+
+This is NOT an Ollama model-blob downloader: model pulls must be validated
+through Ollama's supported API/CLI and tested separately on Windows.
+"""
+from __future__ import annotations
+
+import hashlib
+from http.client import HTTPException
+import ipaddress
+import os
+from pathlib import Path
+import re
+import time
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+
+class DownloadError(Exception):
+    """An unrecoverable or currently exhausted bootstrap download."""
+
+
+class IntegrityError(DownloadError):
+    """Downloaded bytes did not match the pinned manifest."""
+
+
+_RANGE = re.compile(r"^bytes (\d+)-(\d+)/(\d+|\*)$")
+_TRANSIENT = {408, 425, 429, 500, 502, 503, 504}
+
+
+def _validate_url(url: str) -> None:
+    parts = urlsplit(url)
+    if parts.username is not None or parts.password is not None:
+        raise ValueError("URLs with embedded credentials are forbidden")
+    if parts.scheme == "https" and parts.hostname:
+        return
+    if parts.scheme == "http" and parts.hostname:
+        try:
+            if ipaddress.ip_address(parts.hostname).is_loopback:
+                return  # integration tests, local services only
+        except ValueError:
+            if parts.hostname == "localhost":
+                return
+    raise ValueError("Download URL must use HTTPS (or HTTP loopback)")
+
+
+class _SafeRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _validate_url(newurl)
+        if urlsplit(req.full_url).scheme == "https" and urlsplit(newurl).scheme != "https":
+            raise DownloadError("HTTPS redirect to insecure transport forbidden")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as fd:
+        for data in iter(lambda: fd.read(1024 * 1024), b""):
+            h.update(data)
+    return h.hexdigest()
+
+
+def download_pinned(
+    url: str,
+    destination: str | Path,
+    *,
+    sha256: str,
+    size: int,
+    max_attempts: int = 12,
+    timeout: float = 45.0,
+    retry_delay: float = 3.0,
+    progress=None,
+) -> Path:
+    """Download fixed-content asset with resume, checksum and atomic publish.
+
+    Keeps <destination>.part on transient failures and across restarts.
+    A server returning HTTP 200 to a Range request is handled by truncating
+    and restarting the partial file, never concatenating unrelated bytes.
+    max_attempts limits one call; caller can retry during a later session.
+    The expected SHA-256 and byte count must come from a trusted manifest.
+    """
+    _validate_url(url)
+    if not re.fullmatch(r"[a-fA-F0-9]{64}", sha256):
+        raise ValueError("Expected SHA-256 must be 64 hex characters")
+    if size < 0 or max_attempts < 1 or timeout <= 0 or retry_delay < 0:
+        raise ValueError("Invalid download limits")
+    expected = sha256.lower()
+    target = Path(destination)
+    if target.is_symlink():
+        raise DownloadError("Refusing symlinked destination")
+    if target.exists() and not target.is_file():
+        raise DownloadError("Destination is not a regular file")
+    if target.exists() and target.stat().st_size == size and _sha256(target) == expected:
+        return target
+    if target.exists():
+        raise IntegrityError("Existing destination does not match pinned checksum")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    partial = target.with_name(target.name + ".part")
+    if partial.is_symlink() or target.is_symlink():
+        raise DownloadError("Refusing symlinked download path")
+    if partial.exists() and not partial.is_file():
+        raise DownloadError("Partial destination is not a regular file")
+
+    opener = build_opener(_SafeRedirect())
+    last_error: Exception | None = None
+    for attempt in range(max_attempts):
+        offset = partial.stat().st_size if partial.exists() else 0
+        if offset > size:
+            raise IntegrityError("Partial file exceeds pinned size; manual repair required")
+        if offset == size:
+            if _sha256(partial) != expected:
+                raise IntegrityError("Complete partial has invalid checksum; repair required")
+            os.replace(partial, target)
+            return target
+
+        headers = {"User-Agent": "Atlas-Holding-Bootstrap/0.1", "Accept-Encoding": "identity"}
+        if offset:
+            headers["Range"] = f"bytes={offset}-"
+        try:
+            with opener.open(Request(url, headers=headers), timeout=timeout) as response:
+                status = response.status
+                if status not in (200, 206):
+                    raise DownloadError(f"Unsupported HTTP response {status}")
+                if status == 206:
+                    match = _RANGE.fullmatch(response.headers.get("Content-Range", ""))
+                    if not match or int(match.group(1)) != offset:
+                        raise DownloadError("Invalid Content-Range; unsafe to append")
+                    end = int(match.group(2))
+                    total = match.group(3)
+                    if end < offset or end >= size or (total != "*" and int(total) != size):
+                        raise DownloadError("Server range doesn't match pinned asset")
+                    if response.headers.get("Content-Encoding", "identity") != "identity":
+                        raise DownloadError("Encoded range cannot be verified")
+                file_mode = "ab" if status == 206 and offset else "wb"
+                count = offset if file_mode == "ab" else 0
+                with partial.open(file_mode) as fd:
+                    while count < size:
+                        chunk = response.read(min(1024 * 1024, size - count))
+                        if not chunk:
+                            break
+                        fd.write(chunk)
+                        count += len(chunk)
+                        if progress is not None:
+                            progress(count, size)
+                    fd.flush()
+                    os.fsync(fd.fileno())
+                if count == size:
+                    if _sha256(partial) != expected:
+                        raise IntegrityError("SHA-256 mismatch; partial kept for inspection")
+                    os.replace(partial, target)
+                    return target
+                last_error = DownloadError(f"Short transfer: {count}/{size} bytes; partial retained")
+        except HTTPError as exc:
+            if exc.code not in _TRANSIENT:
+                raise DownloadError(f"Permanent HTTP {exc.code}") from exc
+            last_error = exc
+        except (URLError, TimeoutError, ConnectionError, OSError, HTTPException) as exc:
+            last_error = exc
+        if attempt + 1 < max_attempts:
+            time.sleep(min(retry_delay * (2 ** min(attempt, 5)), 90.0))
+    raise DownloadError(f"Download interrupted after {max_attempts} attempts; partial preserved: {last_error}")
