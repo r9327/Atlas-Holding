@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import signal
 import threading
+import time
 from typing import Callable, Protocol
 
 from .autonomy import Mission
@@ -18,6 +19,7 @@ from .engine import HoldingEngine, Tick
 from .git_worktree import GitWorktrees
 from .recovery import RecoveryCoordinator, RecoveryOutcome
 from .resource_guard import ResourceGuard
+from .daemon_lease import LeaseError
 
 
 class AgentUnavailable(RuntimeError):
@@ -91,8 +93,23 @@ class HoldingService:
 
         service = cls(settings, _Unbound(), online=online, recovery_git=git)
         authenticated_git = AuthorizedGit(service.engine.store, git, service.engine.lease)
-        adapter = LocalProcessAgent(program, should_stop=lambda: (
-            service._stop.is_set() or service.engine._stop_requested()))
+        last_fence_check = [0.0]
+        def should_stop_agent() -> bool:
+            if service._stop.is_set() or service.engine._stop_requested():
+                return True
+            # During initial health checking no lease is held yet. Once started,
+            # an obsolete daemon must terminate its worker without waiting for
+            # the model timeout or allowing any more filesystem writes.
+            now = time.monotonic()
+            if service._started and now - last_fence_check[0] >= 1.0:
+                last_fence_check[0] = now
+                try:
+                    service.engine.lease.assert_owned()
+                except LeaseError:
+                    return True
+            return False
+
+        adapter = LocalProcessAgent(program, should_stop=should_stop_agent)
         worker = LocalCodeWorker(authenticated_git, adapter, health_directory=health_directory)
         service.worker = worker
         service.engine.worker = worker
