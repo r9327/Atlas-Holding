@@ -62,3 +62,11 @@ Des lots indépendants peuvent être développés séparément, mais jamais deux
 ## Discipline des PR
 
 **Draft pendant le développement**, tests ciblés et Doctor local avant toute certification. Une seule certification finale au candidat complet, puis re-certification sur un nouveau SHA uniquement si correction. Aucune interprétation d'un `skipped` comme `PASS`. Une documentation seule ne constitue pas l'implémentation.
+
+## Sélection LLM sans connaissance technique requise
+
+La Holding doit **choisir elle-même une configuration IA locale privilégiant la qualité du code**, à partir du matériel et de tests comparatifs, sans demander à l'utilisateur de sélectionner un nom de modèle. Elle réutilise les modèles installés et n'autorise de gros téléchargements qu'après affichage de leur volume et accord. La comparaison de modèles et l'affectation codeur/auditeur doivent être fondées sur des benchmarks/tests **mesurés**, pas sur des descriptions marketing. Voir [docs/LLM_AUTO_SELECTION.md](docs/LLM_AUTO_SELECTION.md) (contrat partagé par PR #2, #4, #8 et #9).
+
+- [ ] Premier lancement « configuration recommandée — priorité qualité » sans question technique sur les noms des modèles.
+- [ ] Matériel réellement mesuré, choix compatible prouvé, poids installés réutilisés et gros téléchargements consentis.
+- [ ] Bascule/réévaluation sans perte de préférences et refus d'un modèle non validé.
