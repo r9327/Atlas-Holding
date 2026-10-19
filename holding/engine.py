@@ -42,6 +42,10 @@ class HoldingEngine:
         # Never quarantine tasks belonging to another active daemon.
         self.lease.acquire()
         try:
+            # Back up and migrate before interrupted tasks may resume.
+            from .migrations import SchemaMigrator
+            SchemaMigrator(self.store, backup_dir=self.store.path.parent / 'backups').ensure(
+                lease_owner=self.lease.owner)
             interrupted = self.store.quarantine_interrupted(lease_owner=self.lease.owner)
         except BaseException:
             self.lease.release()

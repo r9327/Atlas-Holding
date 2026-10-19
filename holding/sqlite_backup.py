@@ -4,6 +4,7 @@ Backup uses sqlite3.Connection.backup to include committed WAL transactions.
 Restoration NEVER overwrites an existing database or user file.
 """
 from __future__ import annotations
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 import hashlib
@@ -31,6 +32,17 @@ def digest_file(path: Path) -> str:
     return hasher.hexdigest()
 
 
+def logical_digest(connection: sqlite3.Connection) -> str:
+    """Canonical SQL + user_version, independent of SQLite page-layout changes."""
+    hasher = hashlib.sha256()
+    hasher.update(str(connection.execute("PRAGMA user_version").fetchone()[0]).encode('ascii'))
+    hasher.update(b"\n")
+    for statement in connection.iterdump():
+        hasher.update(statement.encode('utf-8'))
+        hasher.update(b"\n")
+    return hasher.hexdigest()
+
+
 def create_snapshot(connection: sqlite3.Connection, target: str | Path) -> Snapshot:
     target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -43,10 +55,13 @@ def create_snapshot(connection: sqlite3.Connection, target: str | Path) -> Snaps
     published = False
     manifest_created = False
     try:
-        with sqlite3.connect(temporary) as output:
+        with closing(sqlite3.connect(temporary)) as output:
             connection.backup(output)
             if output.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                 raise BackupError("SQLite snapshot integrity failed")
+            # A standalone immutable snapshot must never require temp WAL files.
+            if output.execute("PRAGMA journal_mode=DELETE").fetchone()[0] != "delete":
+                raise BackupError("Could not normalize SQLite snapshot journal")
         digest = digest_file(temporary)
         count = temporary.stat().st_size
         if count == 0:
@@ -68,6 +83,9 @@ def create_snapshot(connection: sqlite3.Connection, target: str | Path) -> Snaps
         return Snapshot(target, digest, count)
     finally:
         temporary.unlink(missing_ok=True)
+        # Only sidecars belonging to our private temporary backup.
+        Path(str(temporary) + "-wal").unlink(missing_ok=True)
+        Path(str(temporary) + "-shm").unlink(missing_ok=True)
         if manifest_created and not published:
             manifest.unlink(missing_ok=True)
 
@@ -87,20 +105,21 @@ def restore_snapshot(snapshot: str | Path, destination: str | Path) -> Path:
         raise BackupError("Invalid checksum")
     if digest_file(snapshot) != expected:
         raise BackupError("Tampered snapshot")
-    with sqlite3.connect(f"file:{snapshot.resolve()}?mode=ro", uri=True) as original:
+    with closing(sqlite3.connect(f"file:{snapshot.resolve()}?mode=ro", uri=True)) as original:
         if original.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
             raise BackupError("SQLite snapshot corrupt")
+        expected_state = logical_digest(original)
         destination.parent.mkdir(parents=True, exist_ok=True)
         # Exclusively reserve the filename to refuse races with other writers.
         fd = os.open(destination, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         os.close(fd)
         try:
-            with sqlite3.connect(destination) as restored:
+            with closing(sqlite3.connect(destination)) as restored:
                 original.backup(restored)
                 if restored.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                     raise BackupError("Restored database corrupt")
-            if digest_file(destination) != expected:
-                raise BackupError("Restored database differs from verified snapshot")
+                if logical_digest(restored) != expected_state:
+                    raise BackupError("Restored logical database differs from verified snapshot")
         except BaseException:
             destination.unlink(missing_ok=True)
             raise

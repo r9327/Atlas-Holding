@@ -31,6 +31,11 @@ class SQLiteBackupTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT payload FROM checkpoints").fetchone()[0], "after-crash")
             self.assertEqual(db.execute("PRAGMA integrity_check").fetchone()[0], "ok")
 
+    def test_snapshot_does_not_leave_temporary_wal_or_shm(self):
+        self.snapshot()
+        children = sorted(p.name for p in self.root.iterdir() if p.name.startswith('.atlas-snapshot-'))
+        self.assertEqual(children, [])
+
     def test_immutable_snapshot(self):
         self.snapshot()
         with self.assertRaises(BackupError):
