@@ -36,3 +36,16 @@ La seule action récurrente de l'utilisateur est **d'envoyer une direction de ro
 - [ ] Clôture quand tous les lots sont prouvés `DONE` et aucune vérification bloquante ne reste : rapport final, arrêt de l'ordonnanceur, pas de génération infinie de nouvelles tâches.
 - [ ] En cas d'unique décision produit indécidable, enregistrer `REQUIRES_DECISION` mais continuer les autres lots sans sollicitation répétitive.
 - [ ] Test de replanification avec 3 lots dépendants et 2 lots déjà fusionnés ; aucune double PR, suppression dangereuse ou perte du journal après reboot.
+
+## Gouvernance RAM pendant les sessions de codage IA
+
+**Exigence utilisateur : éviter les pics importants pendant que les IA codent.** Budget mesuré pour **tout l'arbre des processus permanents et auxiliaires de Holding**, hors processus d'inférence des modèles IA (ex. Ollama) et hors exécution explicite d'audits lourds Doctor/Graphify/benchmarks, qui ont des budgets séparés.
+
+- [ ] Cible au repos / supervision : **≤ 250 Mo** RAM ; régime normal pendant le codage : **250–350 Mo** ; **seuil de non-régression 400 Mo** pour Holding et ses auxiliaires ordinaires. **Aucun pic de 750 Mo** masqué comme transitoire normal.
+- [ ] Le moteur garde un nombre borné de workers, buffers, historique chargé, processus et caches ; fermeture/libération après lot. SQLite et événements doivent être consommés en pagination / streaming plutôt qu'en mémoire totale.
+- [ ] Lors de l'activité IA ordinaire, inclure dans le compteur les processus Holding, l'UI si ouverte, IPC, plugins légers, Git, superviseurs et workers non-IA. Ne pas exclure arbitrairement les sous-processus au prétexte qu'ils travaillent pour les agents.
+- [ ] Doctor/Graphify **lourds** et leurs sous-processus peuvent dépasser ces seuils **uniquement dans une fenêtre d'audit identifiée**, avec type, horodatages, propriétaire, mémoire maximale, fin / nettoyage tracés ; un pic de codage ne peut pas être reclassé a posteriori comme audit.
+- [ ] Pas de scans Graphify, de chargement HTML WebEngine ou d'indexation exhaustive en arrière-plan sans nécessité ; déclencher, borner et libérer explicitement.
+- [ ] En cas de dépassement en régime ordinaire : capturer la cause par processus, éviter les boucles/fuites, libérer les caches et suspendre le lancement de nouveaux travaux si nécessaire, **sans tuer brutalement une écriture Git, une transaction SQLite ou la session du modèle**. Ne jamais masquer la mesure.
+
+**Preuves attendues** : benchmark Windows en cours de vraies missions IA, UI ouverte et fermée, longue durée (plusieurs heures), contrôle du RSS/private bytes de l'arbre complet et de la croissance après retour au repos. Graphiques séparés : « Holding pendant codage » et « audits lourds ». Un chiffre sans mesure ne vaut pas PASS.
