@@ -44,9 +44,9 @@ class AuthorizedGit:
         base = self.git._git('rev-parse', '--verify', 'refs/heads/main^{commit}')
         old = self.journal.get(mission_id, key)
         if old:
-            if old.status == 'APPLIED' and old.base_sha == base:
+            if old.status == 'APPLIED' and self.journal.inspect_recovery(mission_id, key) == 'APPLIED':
                 return self.git.inspect(mission_id)
-            raise GitSafetyError('Unfinished worktree creation requires recovery inspection')
+            raise GitSafetyError('Unfinished or modified worktree requires recovery inspection')
         self.journal.prepare(mission_id, key, 'CREATE',
                              intent={'base': 'main'}, base_sha=base)
         tree = self.git.create(mission_id)

@@ -149,7 +149,11 @@ class GitJournal:
         head = tree.base_sha
         if old.status == 'APPLIED':
             if old.kind == 'CREATE':
-                return 'APPLIED'
+                try:
+                    self.git._git('merge-base', '--is-ancestor', old.base_sha, 'HEAD', cwd=tree.path)
+                    return 'APPLIED'
+                except GitSafetyError:
+                    return 'INSPECT_REQUIRED'
             try:
                 self.git._git('merge-base', '--is-ancestor', old.result_sha, 'HEAD', cwd=tree.path)
                 return 'APPLIED'

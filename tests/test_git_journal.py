@@ -55,6 +55,17 @@ class GitJournalTests(unittest.TestCase):
         self.assertIn('holding/job', git(self.git.root, 'branch', '--list', 'holding/job'))
         self.assertEqual(self.actor.journal.get('job', 'worktree-create-v1').status, 'APPLIED')
 
+    def test_main_advance_does_not_duplicate_existing_worktree(self):
+        tree = self.actor.create('job')
+        original = tree.base_sha
+        (self.git.root / 'new-main.txt').write_text('external change')
+        git(self.git.root, 'add', 'new-main.txt')
+        git(self.git.root, 'commit', '-m', 'unrelated main update')
+        self.assertNotEqual(git(self.git.root, 'rev-parse', 'HEAD'), original)
+        resumed = self.actor.create('job')
+        self.assertEqual(resumed.base_sha, original)
+        self.assertEqual(resumed.path, tree.path)
+
     def test_commit_is_exactly_once_and_does_not_mark_done(self):
         tree = self.actor.create('job')
         (tree.path / 'feature.py').write_text('answer=42\n')
