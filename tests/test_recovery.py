@@ -3,6 +3,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from holding.autonomy import Mission, StandingGrant
 from holding.daemon_lease import DaemonLease
@@ -67,6 +68,22 @@ class RecoveryTests(unittest.TestCase):
         self.quarantine()
         with self.assertRaises(StoreError):
             self.recovery.recover('does-not-exist')
+
+    def test_one_bad_recovery_does_not_block_other_missions(self):
+        self.store.add_missions([Mission('other', REPO)])
+        self.quarantine()
+        with self.store._transaction():
+            self.store.db.execute("UPDATE missions SET state='RECOVERY_REQUIRED' WHERE id='other'")
+        original = self.recovery.recover
+        def one_bad(mission_id):
+            if mission_id == 'x':
+                raise StoreError('fault')
+            return original(mission_id)
+        with patch.object(self.recovery, 'recover', side_effect=one_bad):
+            outcomes = self.recovery.recover_all()
+        self.assertEqual([o.mission_id for o in outcomes], ['other','x'])
+        self.assertEqual(outcomes[-1].state,'RECOVERY_REQUIRED')
+        self.assertIn('RECOVERY_INSPECTION_ERROR',[r['event'] for r in self.store.events()])
 
     def test_no_journal_does_not_claim_safe_resume(self):
         self.quarantine()
