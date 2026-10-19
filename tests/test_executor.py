@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 import unittest
 from holding.executor import AuthorizedGit
+from holding.daemon_lease import DaemonLease, LeaseError
 from holding.git_worktree import GitWorktrees, GitSafetyError
 from holding.state_store import StateStore
 from holding.autonomy import StandingGrant
@@ -30,12 +31,22 @@ class AuthorizedGitTests(unittest.TestCase):
             VALUES(?,?,?,?,?,?,?,?,?,?,?,?)''',
             ('one',REPO,'code','[]',0,'READY','','',0,0,0,0))
         self.git=GitWorktrees(self.root,Path(self.tmp.name)/'trees',REPO)
-        self.actor=AuthorizedGit(self.store,self.git)
+        self.lease=DaemonLease(self.store.path, heartbeat=False)
+        self.lease.acquire()
+        self.addCleanup(self.lease.release)
+        self.actor=AuthorizedGit(self.store,self.git,self.lease)
     def grant(self,*ops,expiry=None):
         self.store.grant_for_onboarding(StandingGrant(REPO,frozenset(ops),
             int(time.time())+3600 if expiry is None else expiry))
     def claim(self):
         self.assertEqual(self.store.claim_next(online=False).mission_id,'one')
+    def test_stale_lease_cannot_write_git(self):
+        self.grant('code')
+        self.claim()
+        self.lease.release()
+        with self.assertRaises(LeaseError):
+            self.actor.create('one')
+
     def test_no_grant_no_dispatch(self):
         with self.assertRaises(GitSafetyError):self.actor.create('one')
     def test_grant_and_claim_required(self):

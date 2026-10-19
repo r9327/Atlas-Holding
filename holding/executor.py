@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from .git_worktree import GitWorktrees, Worktree, GitSafetyError
+from .daemon_lease import DaemonLease
 from .state_store import StateStore
 
 
@@ -13,11 +14,13 @@ class AuthorizedGit:
     execute(command) entry point and cannot force push or write main.
     """
 
-    def __init__(self, store: StateStore, git: GitWorktrees):
+    def __init__(self, store: StateStore, git: GitWorktrees, lease: DaemonLease):
         self.store = store
         self.git = git
+        self.lease = lease
 
     def _require(self, mission_id: str, *operations: str) -> None:
+        self.lease.assert_owned()
         rows = [job for job in self.store.missions() if job.id == mission_id]
         if len(rows) != 1 or rows[0].state != 'RUNNING':
             raise GitSafetyError('A claimed RUNNING mission is required')
@@ -34,8 +37,12 @@ class AuthorizedGit:
 
     def create(self, mission_id: str) -> Worktree:
         self._require(mission_id, 'code')
-        return self.git.create(mission_id)
+        tree = self.git.create(mission_id)
+        self.lease.assert_owned()
+        return tree
 
     def commit(self, mission_id: str, paths: tuple[str, ...], message: str) -> str:
         self._require(mission_id, 'code', 'commit')
-        return self.git.commit(mission_id, paths, message)
+        sha = self.git.commit(mission_id, paths, message)
+        self.lease.assert_owned()
+        return sha
