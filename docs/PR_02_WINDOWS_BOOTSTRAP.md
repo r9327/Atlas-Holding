@@ -20,3 +20,16 @@
 
 ## Dépendances / interdictions
 Dépend de #1 (règles). Fournit le bootstrap à #9. L'installateur lui-même et l'exécutable final ne sont pas encore livrés. Ne jamais déclarer installé un outil simplement parce que le downloader s'est lancé.
+
+## Ajout obligatoire — Sélection automatique du LLM (sans jargon)
+
+L'installateur ne doit **pas** demander « Quel modèle voulez-vous ? » ni imposer à l'utilisateur de comprendre quantification, paramètres ou backend. Par défaut il détecte matériel, modèles disponibles et cache, applique le profil `QUALITY_FIRST` puis propose « **Installer la meilleure configuration IA vérifiée pour ce PC** » avec taille de téléchargement et explication compréhensible.
+
+- Le modèle est filtré par compatibilité RAM/VRAM/disque/contexte/outils ; le choix final est confirmé par essais contrôlés, jamais par le seul nombre de paramètres.
+- Ne pas retélécharger un modèle déjà présent et fonctionnel. Possibilité de **reporter** un téléchargement lourd sur partage mobile, sans bloquer l'interface ; travail autonome impossible si aucun modèle validé.
+- Première configuration en un clic **après consentement pour les téléchargements lourds et les permissions** ; le nom/digest/quantification demeure dans la vue avancée seulement.
+- Ne pas promettre qu'un 24–30B tient dans 8 Go de VRAM ; détecter CPU offload et tester stabilité / contexte réel.
+- La calibration qualité et l'affectation alternée des modèles relèvent de #4 ; écran explicite et installation de #2 ; le contrat canonique est `docs/LLM_AUTO_SELECTION.md` dans #1.
+- [ ] Sur machine neuve/partiellement équipée, aucun choix technique de modèle exigé.
+- [ ] Sélection automatique vérifiée sur matériel 8 Go VRAM / 32 Go RAM ; fallback sûr si OOM.
+- [ ] Reprise après téléchargement interrompu, consentement sur les Go avant téléchargement, préservation des modèles existants.

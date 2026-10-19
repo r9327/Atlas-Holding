@@ -55,3 +55,15 @@ Pour **chaque** dépendance : `NOT_FOUND` → installer ; `FOUND_VALID` → réu
 ## Critère de DONE
 
 Le contrat de #2 n'est validé que lorsqu'un **vrai installateur** réalise ces contrôles sur Windows et que les scénarios ont des preuves. Les documents seuls ne sont jamais un test.
+
+## Critères supplémentaires — configurateur LLM automatique
+
+- [ ] `QUALITY_FIRST` est sélectionné par défaut : une recommandation en français (« Qualité maximale compatible »), pas une liste de noms de modèles.
+- [ ] Le setup détecte modèles Ollama déjà présents (ID/digest, format, capacité de tools et bon fonctionnement) et les compare avant de proposer un téléchargement.
+- [ ] Sélectionne un modèle de code par compatibilité mesurée CPU/RAM/VRAM/contexte, et non par les seuls paramètres ou la VRAM totale ; mémorise le profil et sa preuve.
+- [ ] Peut différer un téléchargement volumineux sans annoncer « IA prête » et expliquer en clair l'impact hors ligne.
+- [ ] Avertit avant téléchargement (nombre de Go, disque, destination) sur partage mobile ; aucun modèle supplémentaire implicite.
+- [ ] Si test échoue (OOM/timeout/tools mal supportés), propose une alternative compatible ou bloque proprement, sans boucle infinie.
+- [ ] « Détails techniques » facultatifs et requalification accessible via UI.
+
+La logique commune de benchmark et l'autorisation d'un second modèle relecteur sont du ressort de #4 ; source de vérité : `docs/LLM_AUTO_SELECTION.md` dans #1.
