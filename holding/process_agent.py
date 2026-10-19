@@ -85,12 +85,21 @@ class LocalProcessAgent:
         environment['GIT_TERMINAL_PROMPT'] = '0'
         flags = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0) if os.name == 'nt' else 0
         with tempfile.TemporaryFile() as stdout:
-            proc = subprocess.Popen([str(self.config.executable), *self.config.arguments],
-                                    stdin=subprocess.PIPE, stdout=stdout,
-                                    stderr=subprocess.DEVNULL, cwd=cwd,
-                                    env=environment, shell=False,
-                                    start_new_session=(os.name != 'nt'), creationflags=flags)
+            proc = None
+            job = None
             try:
+                if os.name == 'nt':
+                    from .windows_job import WindowsJob
+                    job = WindowsJob()
+                proc = subprocess.Popen([str(self.config.executable), *self.config.arguments],
+                                        stdin=subprocess.PIPE, stdout=stdout,
+                                        stderr=subprocess.DEVNULL, cwd=cwd,
+                                        env=environment, shell=False,
+                                        start_new_session=(os.name != 'nt'), creationflags=flags)
+                # Child receives no request until Windows Job attachment works.
+                # Failure to attach is fatal, never a fallback to an untracked tree.
+                if job is not None:
+                    job.attach(proc)
                 assert proc.stdin is not None
                 proc.stdin.write(request)
                 proc.stdin.close()
@@ -118,5 +127,17 @@ class LocalProcessAgent:
                     raise AgentProcessError('Agent protocol or status mismatch')
                 return response
             except BaseException:
-                self._stop_tree(proc)
+                if job is not None:
+                    try:
+                        job.terminate()
+                    except Exception:
+                        if proc is not None:
+                            self._stop_tree(proc)
+                elif proc is not None:
+                    self._stop_tree(proc)
                 raise
+            finally:
+                # KILL_ON_JOB_CLOSE terminates any descendants even if the
+                # original agent process exited after spawning a helper.
+                if job is not None:
+                    job.close()
