@@ -184,17 +184,17 @@ class SafeRoadmapReplanner:
         doc, jobs, specs, digest = self._parse(raw)
         with self.store._transaction():
             plan = self._classify(doc, jobs, specs, digest)
+            if plan.blocked:
+                raise StoreError("Roadmap amendment conflicts: " +
+                                 ",".join(plan.blocked[:20]))
+            if plan.version:
+                return plan
             self.store.db.execute("""CREATE TABLE IF NOT EXISTS roadmap_amendments (
                 seq INTEGER PRIMARY KEY AUTOINCREMENT,
                 version INTEGER NOT NULL REFERENCES roadmap_versions(version),
                 changed_ids_json TEXT NOT NULL,
                 recorded_epoch INTEGER NOT NULL
             )""")
-            if plan.blocked:
-                raise StoreError("Roadmap amendment conflicts: " +
-                                 ",".join(plan.blocked[:20]))
-            if plan.version:
-                return plan
             now = int(time.time())
             self.store.db.execute(
                 "INSERT INTO roadmap_versions(repo,digest,source,imported_epoch) "
