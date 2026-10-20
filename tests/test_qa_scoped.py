@@ -158,6 +158,24 @@ class ScopedDoctorRunnerTests(unittest.TestCase):
     def _write_successful_report(argv, **kwargs):
         return 0, json.dumps(_report()).encode()
 
+    def test_manual_scoped_qa_respects_pause_and_stop(self):
+        with StateStore(self.root / "suspended.sqlite") as state:
+            state.add_missions([Mission("mission", REPO)])
+            state.grant_for_onboarding(StandingGrant(
+                REPO, frozenset({"code", "local_test"}), int(time.time()) + 1000))
+            state.claim_next(online=False)
+            state.checkpoint("mission", SHA)
+            with patch.object(self.runner, "run") as run:
+                state.set_paused(True)
+                with self.assertRaisesRegex(StoreError, "paused or stopped"):
+                    self.runner.run_pending(state, "mission")
+                state.set_paused(False)
+                state.db.execute(
+                    "INSERT INTO settings(key,value) VALUES('stop_requested','1')")
+                with self.assertRaisesRegex(StoreError, "paused or stopped"):
+                    self.runner.run_pending(state, "mission")
+                run.assert_not_called()
+
     def test_local_tests_need_separate_grant(self):
         db_path = self.root / "no-test-permission.sqlite"
         with StateStore(db_path) as state:

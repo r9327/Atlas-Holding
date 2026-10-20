@@ -130,6 +130,22 @@ class QaInboxTests(unittest.TestCase):
         self.assertEqual(self.db.db.execute(
             "SELECT state FROM missions WHERE id='mission-299'").fetchone()[0], "DONE")
 
+    def test_signed_receipt_is_deferred_while_paused_or_stopped(self):
+        self.add_pending("a")
+        self.receipt("a")
+        self.db.set_paused(True)
+        self.assertEqual(self.inbox.poll().scanned, 0)
+        self.assertEqual(self.db.missions()[0].state, "QA_PENDING")
+        self.db.set_paused(False)
+        self.db.db.execute(
+            "INSERT INTO settings(key,value) VALUES('stop_requested','1')")
+        self.assertEqual(self.inbox.poll().scanned, 0)
+        self.assertEqual(self.db.missions()[0].state, "QA_PENDING")
+        self.db.db.execute(
+            "UPDATE settings SET value='0' WHERE key='stop_requested'")
+        self.assertEqual(self.inbox.poll().passed, 1)
+        self.assertEqual(self.db.missions()[0].state, "DONE")
+
     def test_receipt_names_are_exact_sha_and_path_safe(self):
         self.assertEqual(receipt_name("test.1", SHA), receipt_name("test.1", SHA))
         self.assertNotEqual(receipt_name("test.1", SHA), receipt_name("test.2", SHA))

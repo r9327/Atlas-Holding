@@ -103,6 +103,23 @@ class ProofStoreTests(unittest.TestCase):
         self.assertEqual(self.store.missions()[0].state, "DONE")
         self.assertEqual(self.store.missions()[0].evidence_sha, "b" * 40)
 
+    def test_direct_proof_apply_cannot_bypass_pause_or_stop(self):
+        receipt = self.signed_receipt()
+        self.store.set_paused(True)
+        with self.assertRaisesRegex(StoreError, "paused or stopped"):
+            self.verifier.apply(self.store, receipt, mission_id="first")
+        self.store.set_paused(False)
+        self.store.db.execute(
+            "INSERT INTO settings(key,value) VALUES('stop_requested','1')")
+        with self.assertRaisesRegex(StoreError, "paused or stopped"):
+            self.verifier.apply(self.store, receipt, mission_id="first")
+        self.assertEqual(self.store.missions()[0].state, "QA_PENDING")
+        self.store.db.execute(
+            "UPDATE settings SET value='0' WHERE key='stop_requested'")
+        self.assertEqual(
+            self.verifier.apply(self.store, receipt, mission_id="first").verdict,
+            "PASS")
+
     def test_receipt_is_not_replayable(self):
         name = self.signed_receipt()
         self.verifier.apply(self.store, name, mission_id="first")

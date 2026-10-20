@@ -48,12 +48,14 @@ class ScopedQaDispatcher:
     def tick(self, *, now_epoch: int | None = None) -> QaDispatch:
         now = int(time.time()) if now_epoch is None else now_epoch
         repo = self.runner.git.repository
-        if not any(grant.allows(repo, "local_test", now)
-                   for grant in self.store._grants()):
-            return QaDispatch("WAIT_FOR_GRANT", None, "No local_test grant")
-        # Claim via a short BEGIN IMMEDIATE transaction before launching
-        # any child. Two QA processes cannot run the same SHA concurrently.
+        # The same transaction fences operator Pause/STOP, grants and the
+        # exact-SHA claim, so no NEW QA work starts after suspension.
         with self.store._transaction():
+            if self.store.background_suspended():
+                return QaDispatch("PAUSED", None, "Holding paused or stopped")
+            if not any(grant.allows(repo, "local_test", now)
+                       for grant in self.store._grants()):
+                return QaDispatch("WAIT_FOR_GRANT", None, "No local_test grant")
             row = self.store.db.execute("""
                 SELECT m.id, m.candidate_sha
                   FROM missions AS m
@@ -92,6 +94,13 @@ class ScopedQaDispatcher:
             # A crash or transient Doctor failure must not relaunch forever.
             # Record only the exception TYPE to prevent leaking secrets/logs.
             with self.store._transaction():
+                if self.store.background_suspended():
+                    # If STOP arrives during Doctor, do not consume an error
+                    # attempt or leave a long, stale retry reservation.
+                    self.store.db.execute(
+                        "DELETE FROM scoped_qa_retries WHERE mission_id=? "
+                        "AND candidate_sha=?", (mid, candidate_sha))
+                    return QaDispatch("PAUSED", mid, "QA interrupted by Pause/STOP")
                 latest = self.store.db.execute(
                     "SELECT candidate_sha FROM missions WHERE id=? AND "
                     "repo=? AND state='QA_PENDING'", (mid, repo)).fetchone()

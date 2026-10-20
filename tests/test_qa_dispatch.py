@@ -124,6 +124,40 @@ class ScopedQaDispatchTests(unittest.TestCase):
                              "WAIT_FOR_GRANT")
             run.assert_not_called()
 
+    def test_pause_and_stop_prevent_new_qa_and_do_not_consume_attempts(self):
+        self.db.set_paused(True)
+        with patch.object(self.runner, "run") as run:
+            self.assertEqual(self.dispatch.tick(now_epoch=self.now).action, "PAUSED")
+            self.db.set_paused(False)
+            self.db.db.execute(
+                "INSERT INTO settings(key,value) VALUES('stop_requested','1')")
+            self.assertEqual(self.dispatch.tick(now_epoch=self.now).action, "PAUSED")
+            run.assert_not_called()
+        self.assertEqual(self.db.db.execute(
+            "SELECT count(*) FROM scoped_qa_retries").fetchone()[0], 0)
+        self.db.db.execute(
+            "UPDATE settings SET value='0' WHERE key='stop_requested'")
+        with patch.object(self.runner, "run", return_value=self.advice()) as run:
+            self.assertEqual(self.dispatch.tick(now_epoch=self.now).action,
+                             "SCOPED_TESTS_PASS")
+            run.assert_called_once()
+
+    def test_pause_during_runner_discards_claim_without_false_advisory(self):
+        def suspend_during_run(*_args):
+            self.db.set_paused(True)
+            return self.advice()
+        with patch.object(self.runner, "run", side_effect=suspend_during_run):
+            self.assertEqual(self.dispatch.tick(now_epoch=self.now).action, "PAUSED")
+        self.assertEqual(self.db.db.execute(
+            "SELECT count(*) FROM scoped_qa_retries").fetchone()[0], 0)
+        self.assertEqual(self.db.db.execute(
+            "SELECT count(*) FROM scoped_qa_advisories").fetchone()[0], 0)
+        self.assertEqual(self.db.missions()[0].state, "QA_PENDING")
+        self.db.set_paused(False)
+        with patch.object(self.runner, "run", return_value=self.advice()):
+            self.assertEqual(self.dispatch.tick(now_epoch=self.now + 1).action,
+                             "SCOPED_TESTS_PASS")
+
 
 if __name__ == "__main__":
     unittest.main()

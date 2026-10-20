@@ -108,6 +108,8 @@ class ProofVerifier:
         """
         from .state_store import StoreError
         with store._transaction():
+            if store.background_suspended():
+                raise StoreError("Holding paused or stopped; signed QA settlement deferred")
             row = store.db.execute(
                 "SELECT candidate_sha FROM missions WHERE id=? AND state='QA_PENDING'",
                 (mission_id,),

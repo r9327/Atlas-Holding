@@ -183,6 +183,18 @@ class StateStore:
         row = self.db.execute("SELECT value FROM settings WHERE key='paused'").fetchone()
         return row is not None and row["value"] == "1"
 
+    def background_suspended(self) -> bool:
+        """Durable Pause/STOP gate shared by daemon, scoped QA and proof intake.
+
+        Read inside BEGIN IMMEDIATE when claiming or settling work, so a
+        concurrent control-plane STOP cannot interleave with that mutation.
+        """
+        if self._paused():
+            return True
+        row = self.db.execute(
+            "SELECT value FROM settings WHERE key='stop_requested'").fetchone()
+        return row is not None and row["value"] == "1"
+
     def _assert_daemon_fence(self, lease_owner: str | None) -> None:
         """Verify ownership within BEGIN IMMEDIATE before changing mission state.
 
@@ -206,6 +218,8 @@ class StateStore:
             self._assert_daemon_fence(lease_owner)
             if self._paused():
                 return Decision("WAIT", None, "Holding paused")
+            if self.background_suspended():
+                return Decision("WAIT", None, "Holding stopped")
             choice = choose_next(self.missions(), self._grants(), now_epoch=now, online=online,
                                  supported_operations=supported_operations)
             if choice.action == "RUN" and choice.mission_id:

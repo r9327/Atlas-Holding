@@ -11,7 +11,7 @@ Windows E2E, and neither can replace authenticated GitHub certification.
 | Incremental new direction / safe replan | `roadmap_replan.py`, `control.py` | `test_roadmap_replan.py`, `test_replan_cli.py` | Live mid-flight DAG revision, restore after reboot, no lost checkpoints |
 | SQLite, WAL, leases, migrations | `state_store.py`, `migrations.py`, `daemon_lease.py` | `test_state_store.py`, `test_daemon_lease.py`, `test_migrations.py` | Local tests, double-process and crash/restart Windows |
 | Isolated worktree code execution | `git_worktree.py`, `git_journal.py`, `executor.py`, `code_worker.py` | `test_code_worker.py`, `test_local_agent_service.py`, `test_git_journal.py` | Actual disposable Git demo on Windows with secured child identity |
-| No false PASS | `proofs.py`, `qa_inbox.py`, `qa_entry.py` | `test_proof_store.py`, `test_qa_inbox.py`, `test_qa_entry.py` | Independent OS account/ACL + actual GitHub evidence issuer (#7) |
+| No false PASS | `proofs.py`, `qa_inbox.py`, `qa_entry.py` | `test_proof_store.py`, `test_qa_inbox.py`, `test_qa_entry.py` | Independent OS account/ACL + actual GitHub evidence issuer (#7); Pause/STOP must defer proof settlement |
 | Local targeted Doctor QA | `qa_scoped.py`, `qa_dispatch.py`, `qa_scoped_entry.py` | `test_qa_scoped.py`, `test_scoped_runner_process.py`, `test_qa_chain.py`, `test_qa_dispatch.py` | Run with actual `tools.doctor_certification` pinned to SHA, verify process-tree termination |
 | Recover after signed failure | `qa_repair.py`, `service.py` | `test_qa_repair_eligibility.py`, `test_local_agent_repair.py` | Run corrected new-SHA path end-to-end with signed failing proof |
 | Acceptance and closure | `coverage.py`, `closure.py` | `test_coverage.py`, `test_closure.py` | All imported requirements and every task mapped to an authoritative signed proof |
@@ -51,3 +51,10 @@ work (#4). No roadmap text may change Git grants or certification policy.
 **Certification state on 20 October 2026:** implementation changes exist on
 GitHub, but the repository test suite and Windows process-tree/RAM experiments
 have not been executed in this session. All checks are pending, not PASS.
+
+**Pause/STOP gate:** the SQLite dispatcher must not claim new scoped tests
+while paused/stopped; direct test runs and signed-proof settlement must also
+refuse work under the same durable controls. An in-flight scoped check cannot
+persist an advisory if suspension was recorded before settlement. This is a
+source/test contract pending executable CI and Windows verification; it does
+not claim instant termination of a running test process.

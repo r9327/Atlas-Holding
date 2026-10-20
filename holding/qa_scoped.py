@@ -192,6 +192,8 @@ class ScopedDoctorRunner:
 
     def run_pending(self, store: StateStore, mission_id: str) -> ScopedQaResult:
         """Persist one advisory for Control Center. No state transition to DONE."""
+        if store.background_suspended():
+            raise StoreError("Holding paused or stopped; scoped QA disabled")
         row = store.db.execute(
             "SELECT candidate_sha FROM missions WHERE id=? AND repo=? "
             "AND state='QA_PENDING'", (mission_id, self.git.repository)).fetchone()
@@ -205,6 +207,8 @@ class ScopedDoctorRunner:
             raise StoreError("No active exact-repository local_test permission")
         result = self.run(mission_id, row["candidate_sha"])
         with store._transaction():
+            if store.background_suspended():
+                raise StoreError("Holding paused or stopped during scoped QA")
             current = store.db.execute(
                 "SELECT candidate_sha FROM missions WHERE id=? AND repo=? "
                 "AND state='QA_PENDING'", (mission_id, self.git.repository)).fetchone()

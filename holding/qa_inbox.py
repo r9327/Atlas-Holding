@@ -53,6 +53,8 @@ class QaInbox:
         self._after_id = ""
 
     def poll(self) -> InboxResult:
+        if self.store.background_suspended():
+            return InboxResult(0, 0, 0, 0, 0)
         rows = self.store.db.execute(
             "SELECT id,candidate_sha FROM missions "
             "WHERE state='QA_PENDING' AND id>? ORDER BY id LIMIT ?",
