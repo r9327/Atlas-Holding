@@ -94,6 +94,42 @@ class OllamaTests(unittest.TestCase):
         self.assertEqual(context['requirements'], ['Add the answer field'])
         self.assertIn('src/existing.py', [x['path'] for x in context['source_files']])
 
+    def test_context_prioritizes_relevant_source_outside_first_40_files(self):
+        filler = self.root / 'aaa'
+        filler.mkdir()
+        for index in range(55):
+            (filler / f'boring_{index:03d}.py').write_text('unrelated = 1')
+        relevant = self.root / 'zzz' / 'quest'
+        relevant.mkdir(parents=True)
+        (relevant / 'quest_progress.py').write_text('def quest_progress(): return True')
+        payload = self.payload()
+        payload['acceptance'] = ['Repair quest progress recording']
+        op.dispatch(CONFIG, {'protocol': 1, 'action': 'plan_patch',
+                             'payload': payload}, self.root)
+        context = json.loads(Stub.recorded[-1]['messages'][1]['content'])
+        self.assertIn('zzz/quest/quest_progress.py',
+                      [file['path'] for file in context['source_files']])
+        self.assertLessEqual(len(context['source_files']), 40)
+        self.assertEqual(context['source_files'][0]['path'],
+                         'zzz/quest/quest_progress.py')
+
+    def test_signed_fail_sha_reaches_local_repair_prompt(self):
+        payload = self.payload()
+        payload['previous_failed_candidate_sha'] = 'b' * 40
+        payload['repair_objective'] = 'This freeform field must not be copied'
+        op.dispatch(CONFIG, {'protocol': 1, 'action': 'plan_patch',
+                             'payload': payload}, self.root)
+        prompt = json.loads(Stub.recorded[-1]['messages'][1]['content'])
+        self.assertEqual(prompt['previous_failed_candidate_sha'], 'b' * 40)
+        self.assertIn('root cause', prompt['repair_guidance'])
+        self.assertNotIn(payload['repair_objective'], Stub.recorded[-1]['messages'][1]['content'])
+        Stub.recorded.clear()
+        payload['previous_failed_candidate_sha'] = 'not-a-sha'
+        with self.assertRaises(op.AdapterError):
+            op.dispatch(CONFIG, {'protocol': 1, 'action': 'plan_patch',
+                                 'payload': payload}, self.root)
+        self.assertEqual(Stub.recorded, [])
+
     def test_pinned_model_digest_change_fail_closed(self):
         Stub.digest = 'b' * 64
         with self.assertRaisesRegex(op.AdapterError, 'digest changed'):

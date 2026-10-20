@@ -21,7 +21,8 @@ import urllib.request
 
 BASE = 'http://127.0.0.1:11434'
 _MODEL_DIGEST = re.compile(r'^[0-9a-f]{64}$')
-_ALLOWED_EXT = {'.py', '.toml', '.md', '.json', '.yaml', '.yml', '.txt', '.cfg'}
+_ALLOWED_EXT = {'.py', '.toml', '.md', '.json', '.yaml', '.yml', '.txt', '.cfg',
+                '.js', '.ts', '.tsx', '.html', '.css', '.qss'}
 _EXCLUDE = {'__pycache__', '.git', '.github', '.venv', 'venv', 'node_modules',
             '.pytest_cache', 'dist', 'build', 'out', '.mypy_cache', 'backups'}
 _PRIVATE = ('secret', 'token', 'credential', 'password', 'private', 'apikey', 'api_key',
@@ -100,32 +101,72 @@ def _installed_model(config: dict) -> dict:
     raise AdapterError('Pinned local model not installed or digest changed')
 
 
-def _snapshot(root: Path) -> list[dict]:
-    """Small source context, skipping secrets and all symlinked files/dirs."""
-    total = 0
-    files = []
+def _snapshot(root: Path, *, keywords=()) -> list[dict]:
+    """Select bounded relevant source files, not just first alphabetical files.
+
+    File metadata is scored first; only the chosen small source files are read.
+    Limits prevent a large repository from causing a RAM spike during coding.
+    No keyword ever bypasses the private-path or symlink exclusions.
+    """
+    stopwords = {'the', 'and', 'for', 'from', 'with', 'into', 'should',
+                 'must', 'add', 'fix', 'code', 'file', 'test', 'dans',
+                 'pour', 'avec', 'une', 'des', 'les', 'sur'}
+    tokens = sorted({
+        match for phrase in keywords if isinstance(phrase, str)
+        for match in re.findall(r'[a-z0-9_]{3,}', phrase.casefold())
+        if match not in stopwords
+    }, key=lambda term: (-len(term), term))[:24]
+    ranked = []
+    # A scan of paths and stat metadata is cheap; never read 20k contents.
+    candidate_limit = 20000
     for current, subdirs, names in os.walk(root, followlinks=False):
-        subdirs[:] = sorted(d for d in subdirs if d not in _EXCLUDE and
-                            not d.startswith('.') and not (Path(current) / d).is_symlink())
+        subdirs[:] = sorted(
+            d for d in subdirs if d not in _EXCLUDE
+            and not d.startswith('.')
+            and not any(private in d.casefold() for private in _PRIVATE)
+            and not (Path(current) / d).is_symlink())
         for filename in sorted(names):
-            if filename.startswith('.') or any(p in filename.lower() for p in _PRIVATE):
+            if filename.startswith('.') or any(p in filename.casefold() for p in _PRIVATE):
                 continue
             path = Path(current) / filename
-            if path.suffix.lower() not in _ALLOWED_EXT or path.is_symlink() or not path.is_file():
-                continue
-            if not path.resolve().is_relative_to(root):
+            if path.suffix.casefold() not in _ALLOWED_EXT or path.is_symlink():
                 continue
             try:
-                if path.stat().st_size > 12 * 1024:
+                if not path.is_file() or path.stat().st_size > 12 * 1024:
                     continue
-                raw = path.read_bytes()
-                content = raw.decode('utf-8')
-            except (OSError, UnicodeDecodeError):
+                if not path.resolve().is_relative_to(root):
+                    continue
+            except OSError:
                 continue
-            if len(raw) + total > 64 * 1024 or len(files) >= 40:
-                return files
-            files.append({'path': path.relative_to(root).as_posix(), 'content': content})
-            total += len(raw)
+            relative = path.relative_to(root).as_posix()
+            lower = relative.casefold()
+            stem = path.stem.casefold()
+            relevance = sum(
+                3 if token in stem else 2 if token in lower else 0
+                for token in tokens)
+            ranked.append((-relevance, lower, path, relative))
+            if len(ranked) >= candidate_limit:
+                break
+        if len(ranked) >= candidate_limit:
+            break
+    ranked.sort(key=lambda item: (item[0], item[1]))
+    total = 0
+    files = []
+    for _score, _sort_key, path, relative in ranked:
+        if len(files) >= 40:
+            break
+        try:
+            # Revalidate after discovery: an attacker may mutate a worktree.
+            if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(root):
+                continue
+            raw = path.read_bytes()
+            if len(raw) > 12 * 1024 or len(raw) + total > 64 * 1024:
+                continue
+            content = raw.decode('utf-8')
+        except (OSError, UnicodeDecodeError):
+            continue
+        files.append({'path': relative, 'content': content})
+        total += len(raw)
     return files
 
 
@@ -136,10 +177,23 @@ def _plan(config: dict, payload: dict, root: Path) -> dict:
     if (not isinstance(criteria, list) or not criteria or len(criteria) > 30 or
             any(not isinstance(x, str) or not x.strip() or len(x) > 1200 for x in criteria)):
         raise AdapterError('Missing or invalid original roadmap acceptance criteria')
-    context = _snapshot(root)
-    message = {'role': 'user', 'content': json.dumps({
+    context = _snapshot(root, keywords=criteria)
+    mission_context = {
         'mission': payload['mission_id'], 'repository': payload['repository'],
-        'requirements': criteria, 'source_files': context}, ensure_ascii=False)}
+        'requirements': criteria, 'source_files': context}
+    failed_sha = payload.get('previous_failed_candidate_sha')
+    if failed_sha is not None:
+        if not isinstance(failed_sha, str) or not re.fullmatch(r'[0-9a-f]{40}', failed_sha):
+            raise AdapterError('Invalid previous failed candidate SHA')
+        # This is a trusted fixed repair directive, NOT arbitrary instructions
+        # copied from a mission, a test log, or the model itself.
+        mission_context['previous_failed_candidate_sha'] = failed_sha
+        mission_context['repair_guidance'] = (
+            'Previous candidate failed independent QA. Inspect the included '
+            'current source and correct the root cause in a NEW commit. '
+            'Never claim tests or certification passed.')
+    message = {'role': 'user', 'content': json.dumps(
+        mission_context, ensure_ascii=False)}
     result = _http('POST', '/api/chat', payload={
         'model': config['model'], 'stream': False, 'format': _SCHEMA,
         'options': {'temperature': 0, 'num_ctx': config['num_ctx']},
