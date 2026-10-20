@@ -55,6 +55,10 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(asdict(control.requirement_coverage()),
                              sort_keys=True, separators=(",", ":")))
             return 0
+        if args.action == "closure":
+            verdict = asdict(control.closure_status())
+            print(json.dumps(verdict, sort_keys=True, separators=(",", ":")))
+            return 0 if verdict["ready"] else 1
         if args.action == "pause":
             control.pause()
         elif args.action == "resume":
