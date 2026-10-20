@@ -25,8 +25,9 @@ Cette PR Draft vérifie ensemble les contrats développés séparément dans :
 - Aucun token n'est fourni au coordinateur ou stocké dans SQLite.
 - Le transport réseau privilégié possède des routes fermées pour Draft/Ready,
   certification et merge exact-SHA. Il doit encore être placé derrière une
-  frontière IPC/ACL : l'importer dans le processus écrivain ne constituerait
-  pas une isolation de secrets.
+  identité Windows/ACL dédiée : le pont IPC borné, épinglé et sans héritage de
+  secrets est implémenté, mais lancer les deux processus sous le même compte ne
+  constituerait pas une isolation de secrets.
 - Le push reste bloqué tant qu'une preuve de non-divergence Git dédiée n'est pas fournie.
 - Un statut `SUCCEEDED` atteste l'effet de synchronisation observé, jamais la qualité produit.
 - Un contexte absent (ancienne base), corrompu ou incohérent bloque la récupération.
