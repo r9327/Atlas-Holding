@@ -1,6 +1,8 @@
 name: Foundation policy validation
 
 on:
+  push:
+    branches: [main]
   pull_request:
     branches: [main]
     types: [ready_for_review, labeled]
@@ -11,9 +13,10 @@ permissions:
 jobs:
   foundation-policy:
     if: >-
-      github.head_ref == 'feat/windows-local-holding-v0' &&
-      (github.event.action == 'ready_for_review' ||
-       github.event.label.name == 'ci:validate')
+      github.event_name == 'push' ||
+      (github.head_ref == 'feat/windows-local-holding-v0' &&
+       (github.event.action == 'ready_for_review' ||
+        github.event.label.name == 'ci:validate'))
     name: Foundation policy on ${{ matrix.os }}
     strategy:
       fail-fast: false
