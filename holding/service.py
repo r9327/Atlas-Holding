@@ -94,18 +94,24 @@ class HoldingService:
         service = cls(settings, _Unbound(), online=online, recovery_git=git)
         authenticated_git = AuthorizedGit(service.engine.store, git, service.engine.lease)
         last_fence_check = [0.0]
+        last_resource_check = [0.0]
         def should_stop_agent() -> bool:
             if service._stop.is_set() or service.engine._stop_requested():
                 return True
-            # During initial health checking no lease is held yet. Once started,
-            # an obsolete daemon must terminate its worker without waiting for
-            # the model timeout or allowing any more filesystem writes.
+            # Health probes run before acquiring the daemon lease. Once
+            # started, revoke execution quickly if another daemon takes over.
             now = time.monotonic()
             if service._started and now - last_fence_check[0] >= 1.0:
                 last_fence_check[0] = now
                 try:
                     service.engine.lease.assert_owned()
                 except LeaseError:
+                    return True
+            # Resource pressure may appear AFTER the initial dispatch check.
+            # Poll at most once per second; never sample disk/RAM every 25 ms.
+            if service._started and now - last_resource_check[0] >= 1.0:
+                last_resource_check[0] = now
+                if not service.resource_guard.check().safe:
                     return True
             return False
 
