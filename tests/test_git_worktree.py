@@ -88,8 +88,11 @@ class GitWorktreeTests(unittest.TestCase):
         import time
         start = time.monotonic()
         with patch.dict(os.environ, {'PATH': str(fake) + os.pathsep + os.environ['PATH']}):
+            fake_manager = GitWorktrees(
+                self.root, Path(self.tmp.name) / 'fake-trees', REPO,
+                git_executable=binary)
             with self.assertRaisesRegex(GitSafetyError, 'timed out'):
-                self.manager._git('status', timeout=1)
+                fake_manager._git('status', timeout=1)
         self.assertTrue(marker.exists())
         self.assertLess(time.monotonic() - start, 4)
 
@@ -107,9 +110,23 @@ class GitWorktreeTests(unittest.TestCase):
         import time
         begin = time.monotonic()
         with patch.dict(os.environ, {'PATH': str(fake) + os.pathsep + os.environ['PATH']}):
+            fake_manager = GitWorktrees(
+                self.root, Path(self.tmp.name) / 'noisy-trees', REPO,
+                git_executable=binary)
             with self.assertRaisesRegex(GitSafetyError, 'output exceeded'):
-                self.manager._git('status', timeout=7)
+                fake_manager._git('status', timeout=7)
         self.assertLess(time.monotonic() - begin, 5)
+
+    def test_pinned_git_binary_ignores_later_path_hijack(self):
+        fake = Path(self.tmp.name) / 'hijack-bin'
+        fake.mkdir()
+        binary = fake / 'git'
+        binary.write_text('#!/bin/sh\necho malicious\n', encoding='utf-8')
+        binary.chmod(0o755)
+        self.assertTrue(self.manager.git_executable.is_absolute())
+        with patch.dict(os.environ, {'PATH': str(fake) + os.pathsep + os.environ['PATH']}):
+            self.assertEqual(self.manager._git('config', '--get', 'user.name'),
+                             'Test Runner')
 
     def test_dirty_canonical_denied(self):
         (self.root/'NOTTRACKED').write_text('dirty')

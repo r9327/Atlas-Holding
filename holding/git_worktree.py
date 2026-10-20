@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 
@@ -26,12 +27,28 @@ class Worktree:
 
 
 class GitWorktrees:
-    def __init__(self, canonical_root: str | Path, workspace: str | Path, repository: str):
+    def __init__(self, canonical_root: str | Path, workspace: str | Path,
+                 repository: str, *, git_executable: str | Path | None = None):
         if not _REPO.fullmatch(repository) or any(part in ('.', '..') for part in repository.split('/')):
             raise GitSafetyError('Expected explicit owner/repo')
         self.root = Path(canonical_root).resolve(strict=True)
         self.workspace = Path(workspace).resolve()
         self.repository = repository
+        # Freeze the executable path at supervisor initialization: a later
+        # untrusted PATH change must never swap Git for an arbitrary program.
+        candidate = git_executable if git_executable is not None else shutil.which('git')
+        if not candidate:
+            raise GitSafetyError('Trusted Git executable is not installed')
+        executable = Path(candidate)
+        if not executable.is_absolute():
+            raise GitSafetyError('Git executable path must be absolute')
+        try:
+            resolved = executable.resolve(strict=True)
+        except OSError as exc:
+            raise GitSafetyError('Trusted Git executable cannot be resolved') from exc
+        if not resolved.is_file():
+            raise GitSafetyError('Trusted Git executable must be a regular file')
+        self.git_executable = resolved
         if self.root == self.workspace or self.root in self.workspace.parents or self.workspace in self.root.parents:
             raise GitSafetyError('Workspace must be isolated from the canonical checkout')
 
@@ -59,7 +76,7 @@ class GitWorktrees:
                     job = WindowsJob()
                 started = time.monotonic()
                 process = subprocess.Popen(
-                    ['git', '-C', str(cwd or self.root), *args],
+                    [str(self.git_executable), '-C', str(cwd or self.root), *args],
                     stdout=output, stderr=errors, stdin=subprocess.DEVNULL,
                     env=environment, shell=False,
                     start_new_session=(os.name != 'nt'),
