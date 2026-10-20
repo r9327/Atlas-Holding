@@ -57,6 +57,17 @@ class ControlPlane:
     def resume(self) -> None:
         self.store.set_paused(False)
 
+    def request_recovery(self, mission_id: str) -> None:
+        """Request one new auditable inspection without bypassing quarantine."""
+        from .state_store import StoreError
+        with self.store._transaction():
+            row = self.store.db.execute(
+                "SELECT state FROM missions WHERE id=?", (mission_id,)
+            ).fetchone()
+            if row is None or row['state'] != 'RECOVERY_REQUIRED':
+                raise StoreError("Only quarantined missions can be re-inspected")
+            self.store._event(mission_id, 'RECOVERY_SCAN_REQUESTED')
+
     def request_stop(self) -> None:
         with self.store._transaction():
             self.store.db.execute("INSERT INTO settings(key,value) VALUES('stop_requested','1') "

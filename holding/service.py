@@ -71,6 +71,7 @@ class HoldingService:
         self._recovery_git = recovery_git
         self.resource_guard = ResourceGuard(settings.database.parent)
         self.last_recovery: tuple[RecoveryOutcome, ...] = ()
+        self._recovery_seen: dict[str, int] = {}
 
     @classmethod
     def from_local_agent(cls, settings: ServiceSettings, *, program,
@@ -121,6 +122,38 @@ class HoldingService:
         service.engine.worker = worker
         return service
 
+    def _recovery_generations(self) -> dict[str, int]:
+        """A quarantined task is inspected once per interruption/operator request."""
+        if self._recovery_git is None:
+            return {}
+        rows = self.engine.store.db.execute("""
+            SELECT m.id, COALESCE(MAX(e.seq), 0) AS generation
+            FROM missions m
+            LEFT JOIN events e ON e.mission_id=m.id
+              AND e.event IN ('RUNNING_TO_RECOVERY_REQUIRED',
+                              'RECOVERY_SCAN_REQUESTED')
+            WHERE m.state='RECOVERY_REQUIRED' AND m.repo=?
+            GROUP BY m.id
+        """, (self._recovery_git.repository,))
+        return {row['id']: int(row['generation']) for row in rows}
+
+    def _recover_new_interruptions(self) -> None:
+        current = self._recovery_generations()
+        self._recovery_seen = {
+            mission_id: gen for mission_id, gen in self._recovery_seen.items()
+            if mission_id in current
+        }
+        if any(self._recovery_seen.get(mid) != gen for mid, gen in current.items()):
+            self.last_recovery = RecoveryCoordinator(
+                self.engine.store, self._recovery_git, self.engine.lease
+            ).recover_all()
+            self._recovery_seen.update(current)
+            # Missions recovered to READY or QA_PENDING must not remain cached.
+            active = self._recovery_generations()
+            self._recovery_seen = {
+                mid: gen for mid, gen in self._recovery_seen.items() if mid in active
+            }
+
     def start(self) -> tuple[str, ...]:
         if self._started:
             raise RuntimeError("Service has already started")
@@ -134,6 +167,7 @@ class HoldingService:
             self.last_recovery = RecoveryCoordinator(
                 self.engine.store, self._recovery_git, self.engine.lease
             ).recover_all()
+            self._recovery_seen = self._recovery_generations()
         return quarantined
 
     def request_shutdown(self) -> None:
@@ -157,13 +191,9 @@ class HoldingService:
                 if not resources.safe:
                     result = Tick("RESOURCE_PRESSURE", None, resources.reason)
                 elif self.worker.ready():
-                    if self._recovery_git is not None and any(
-                        m.state == 'RECOVERY_REQUIRED' for m in self.engine.store.missions()
-                    ):
+                    if self._recovery_git is not None:
                         try:
-                            self.last_recovery = RecoveryCoordinator(
-                                self.engine.store, self._recovery_git, self.engine.lease
-                            ).recover_all()
+                            self._recover_new_interruptions()
                         except LeaseError:
                             return Tick('LEASE_LOST', None, 'Lease lost during recovery')
                     result = self.engine.tick()
