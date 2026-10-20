@@ -1,1 +1,1 @@
-"""Atlas Holding core primitives."""
+"""Atlas Holding foundational policy contracts and core primitives."""
