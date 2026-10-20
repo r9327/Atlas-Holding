@@ -6,9 +6,10 @@ must verify official CI/Doctor evidence before final promotion.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -87,7 +88,10 @@ class ScopedDoctorRunner:
                     cmd, cwd=tree.path, stdin=subprocess.DEVNULL,
                     stdout=output, stderr=subprocess.DEVNULL,
                     timeout=self.timeout_seconds, check=False,
-                    env={"PATH": str(self.interpreter.parent),
+                    env={**{key: value for key, value in os.environ.items()
+                             if key.upper() in {
+                                 "PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP",
+                                 "TMPDIR", "LANG", "PYTHONIOENCODING"}},
                          "PYTHONNOUSERSITE": "1", "PYTHONUTF8": "1",
                          "GIT_TERMINAL_PROMPT": "0",
                          "NO_PROXY": "127.0.0.1,localhost"})
