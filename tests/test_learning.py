@@ -43,6 +43,35 @@ class LearningTests(unittest.TestCase):
         x = replace(trial("new", 10), passed=11)
         self.assertEqual(evaluate_candidate(trial("old", 8), x).action, "REJECT")
 
+    def test_partial_or_different_trial_count_cannot_win(self):
+        candidate = replace(trial("new", 10), passed=19, total=20)
+        decision = evaluate_candidate(trial("old", 8), candidate)
+        self.assertEqual(decision.action, "REJECT")
+        self.assertIn("complete comparison corpus", decision.reason)
+
+    def test_non_integer_or_malformed_evidence_is_rejected_not_crashed(self):
+        malformed = (
+            replace(trial("new"), passed=True),
+            replace(trial("new"), total=10.5),
+            replace(trial("new"), suite_sha256=None),
+            replace(trial("new"), regressions=0.5),
+        )
+        for candidate in malformed:
+            with self.subTest(candidate=candidate):
+                self.assertEqual(
+                    evaluate_candidate(trial("old", 8), candidate).action,
+                    "REJECT",
+                )
+
+    def test_invalid_minimum_trial_shape_is_rejected(self):
+        for minimum in (True, 0, -1, 10.5):
+            with self.subTest(minimum=minimum):
+                self.assertEqual(
+                    evaluate_candidate(trial("old", 8), trial("new", 9),
+                                       min_trials=minimum).action,
+                    "REJECT",
+                )
+
     def test_same_strategy_is_kept(self):
         self.assertEqual(evaluate_candidate(trial("old", 8), trial("old", 10)).action, "KEEP")
 
