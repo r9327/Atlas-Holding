@@ -40,13 +40,15 @@ class QaInboxTests(unittest.TestCase):
         self.assertEqual(claimed.mission_id, name)
         self.db.checkpoint(name, SHA)
 
-    def receipt(self, mission_id, *, candidate=SHA, verdict="PASS", key=KEY):
+    def receipt(self, mission_id, *, candidate=SHA, verdict="PASS",
+                key=KEY, runner=None):
         artifact = self.evidence / ("artifact-" + mission_id + ".txt")
         artifact.write_text("trusted independent test report", encoding="utf-8")
         payload = {
             "schema": 1, "mission_id": mission_id, "sha": candidate,
             "verdict": verdict,
-            "runner": "github_certification" if verdict == "PASS" else "doctor_atlas",
+            "runner": runner or (
+                "github_certification" if verdict == "PASS" else "doctor_atlas"),
             "artifact": artifact.name,
             "artifact_sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
         }
@@ -75,6 +77,15 @@ class QaInboxTests(unittest.TestCase):
         self.assertEqual(result.rejected, 1)
         self.assertEqual(self.db.missions()[0].state, "QA_PENDING")
         self.assertEqual(self.db.missions()[0].failures_without_progress, 0)
+
+    def test_signed_scoped_doctor_pass_does_not_complete_mission(self):
+        self.add_pending("a")
+        self.receipt("a", verdict="PASS", runner="doctor_atlas")
+        result = self.inbox.poll()
+        self.assertEqual(result.passed, 0)
+        self.assertEqual(result.rejected, 1)
+        self.assertEqual(self.db.missions()[0].state, "QA_PENDING")
+        self.assertEqual(self.db.missions()[0].evidence_sha, "")
 
     def test_fail_blocks_and_never_unlocks(self):
         self.add_pending("a")
