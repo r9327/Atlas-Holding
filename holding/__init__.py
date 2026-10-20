@@ -1,1 +1,1 @@
-"""Atlas Holding policy, offline core, measured agents, and privileged adapters."""
+"""Atlas Holding policy, offline core, measured agents, MCP, and adapters."""
