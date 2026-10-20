@@ -20,3 +20,20 @@
 
 ## Dépendances
 #1 et API #3. Consommer les contrats `docs/LOCAL_MCP.md` et `docs/TOOLCHAIN.md` de #1 sans recopier un second règlement.
+# État d'implémentation
+
+Un noyau MCP local moderne est désormais implémenté dans `holding/mcp_stdio.py`
+et lançable avec `python -m holding.mcp_entry` : JSON-RPC 2.0 borné sur stdio,
+framing une ligne/un message, `server/discover` MCP `2026-07-28`, `tools/list`,
+`tools/call`, erreurs bornées, ordre déterministe et arrêt propre sur EOF. Le seul
+outil livré est `holding.health`, local et en lecture seule. Il ne contacte aucun
+service et n'exécute aucun plugin.
+
+Cette base ne constitue pas encore le hub complet : les adaptateurs Context7 /
+Firecrawl, le cache durable, les délais/processus isolés et la comptabilité
+SQLite restent à brancher et tester. Aucune capacité réseau n'est revendiquée.
+
+Contrats officiels suivis :
+- https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio
+- https://modelcontextprotocol.io/specification/2026-07-28/server/discover
+- https://modelcontextprotocol.io/specification/2026-07-28/server/tools
