@@ -57,6 +57,8 @@ def _run_limited_doctor(command: list[str], *, cwd: Path,
             if os.name == "nt":
                 from .windows_job import WindowsJob
                 job = WindowsJob()
+            if should_stop is not None and should_stop():
+                raise ScopedQaError("Scoped Doctor interrupted by controller")
             start = time.monotonic()
             proc = subprocess.Popen(
                 command, cwd=cwd, stdin=subprocess.DEVNULL,
@@ -222,6 +224,9 @@ class ScopedDoctorRunner:
         with store._transaction():
             if store.background_suspended():
                 raise StoreError("Holding paused or stopped during scoped QA")
+            if not any(grant.allows(self.git.repository, "local_test", int(time.time()))
+                       for grant in store._grants()):
+                raise StoreError("Scoped QA grant revoked during execution")
             current = store.db.execute(
                 "SELECT candidate_sha FROM missions WHERE id=? AND repo=? "
                 "AND state='QA_PENDING'", (mission_id, self.git.repository)).fetchone()

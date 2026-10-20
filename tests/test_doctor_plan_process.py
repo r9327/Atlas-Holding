@@ -43,6 +43,15 @@ class BoundedPlannerTests(unittest.TestCase):
                 cwd=self.root, timeout_seconds=5)
         self.assertLess(time.monotonic() - started, 4)
 
+    def test_stopped_before_launch_never_starts_python(self):
+        from unittest.mock import patch
+        with patch("holding.doctor_plan.subprocess.Popen") as popen:
+            with self.assertRaisesRegex(DoctorPlanError, "interrupted by controller"):
+                _run_bounded_planning(
+                    [sys.executable, "-c", "print(1)"],
+                    cwd=self.root, timeout_seconds=4, should_stop=lambda: True)
+            popen.assert_not_called()
+
     def test_live_pause_interrupts_planning(self):
         started = time.monotonic()
         with self.assertRaisesRegex(DoctorPlanError, "interrupted by controller"):

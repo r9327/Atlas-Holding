@@ -61,6 +61,8 @@ def _run_bounded_planning(command: list[str], *, cwd: Path,
             if os.name == "nt":
                 from .windows_job import WindowsJob
                 job = WindowsJob()
+            if should_stop is not None and should_stop():
+                raise DoctorPlanError("Doctor planning interrupted by controller")
             started = time.monotonic()
             proc = subprocess.Popen(
                 command, cwd=cwd, stdin=subprocess.DEVNULL,

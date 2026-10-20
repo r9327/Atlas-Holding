@@ -158,6 +158,26 @@ class ScopedDoctorRunnerTests(unittest.TestCase):
     def _write_successful_report(argv, **kwargs):
         return 0, json.dumps(_report()).encode()
 
+    def test_revoked_grant_during_execution_prevents_advisory(self):
+        with StateStore(self.root / "revoke.sqlite") as state:
+            state.add_missions([Mission("mission", REPO)])
+            state.grant_for_onboarding(StandingGrant(
+                REPO, frozenset(("code", "local_test")), int(time.time()) + 1000))
+            state.claim_next(online=False)
+            state.checkpoint("mission", SHA)
+            def revoke_during_run(*_args, **_kwargs):
+                state.revoke(REPO)
+                return ScopedQaResult(
+                    SHA, BASE, "SCOPED_TESTS_PASS", ("tests.test_code",), "d" * 64)
+            from holding.qa_scoped import ScopedQaResult
+            with patch.object(self.runner, "run", side_effect=revoke_during_run):
+                with self.assertRaisesRegex(StoreError, "grant revoked"):
+                    self.runner.run_pending(state, "mission")
+            self.assertEqual(state.missions()[0].state, "QA_PENDING")
+            self.assertIsNone(state.db.execute(
+                "SELECT name FROM sqlite_master WHERE name='scoped_qa_advisories'"
+            ).fetchone())
+
     def test_manual_scoped_qa_respects_pause_and_stop(self):
         with StateStore(self.root / "suspended.sqlite") as state:
             state.add_missions([Mission("mission", REPO)])

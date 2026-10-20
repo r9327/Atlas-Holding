@@ -43,6 +43,15 @@ class ScopedRunnerProcessTests(unittest.TestCase):
                 cwd=self.root, timeout_seconds=5)
         self.assertLess(time.monotonic() - start, 4)
 
+    def test_stopped_before_launch_never_starts_scoped_doctor(self):
+        from unittest.mock import patch
+        with patch("holding.qa_scoped.subprocess.Popen") as popen:
+            with self.assertRaisesRegex(ScopedQaError, "interrupted by controller"):
+                _run_limited_doctor(
+                    [sys.executable, "-c", "print(1)"],
+                    cwd=self.root, timeout_seconds=4, should_stop=lambda: True)
+            popen.assert_not_called()
+
     def test_live_pause_interrupts_scoped_qa(self):
         started = time.monotonic()
         with self.assertRaisesRegex(ScopedQaError, "interrupted by controller"):
