@@ -85,6 +85,18 @@ class DoctorPlanTests(unittest.TestCase):
         with self.assertRaisesRegex(DoctorPlanError, 'modified the worktree'):
             self.planner.plan('sample', sha)
 
+    def test_changed_doctor_source_requires_independent_review(self):
+        sha = self._create()
+        work = self.git.inspect('sample')
+        doctor = work.path / 'tools' / 'atlas_doctor.py'
+        doctor.write_text(doctor.read_text() + "# changed trusted planner\n")
+        git(work.path, 'add', 'tools/atlas_doctor.py')
+        git(work.path, 'commit', '-m', 'tamper: modify Doctor')
+        new_sha = git(work.path, 'rev-parse', 'HEAD')
+        self.assertNotEqual(new_sha, sha)
+        with self.assertRaisesRegex(DoctorPlanError, 'Doctor.*changed'):
+            self.planner.plan('sample', new_sha)
+
     def test_incorrect_report_sha_refused(self):
         self._script('wrong_sha')
         sha = self._create()

@@ -60,6 +60,27 @@ class DoctorPlanner:
                                  'refs/heads/main^{commit}', cwd=work.path)
         if not _SHA.fullmatch(main_sha):
             raise DoctorPlanError('Invalid main comparison SHA')
+        try:
+            self.git._git('merge-base', '--is-ancestor', main_sha, candidate_sha,
+                          cwd=work.path)
+        except GitSafetyError as exc:
+            raise DoctorPlanError('Candidate has an outdated or unrelated base') from exc
+        # Doctor cannot independently audit changes to its own trust boundary.
+        # Those diffs must use protected external certification instead.
+        protected = (
+            '.github/workflows', 'tools/atlas_doctor.py', 'tools/atlas_doctor_lib',
+            'tools/doctor_certification.py', 'tools/doctor_policy_authority.py',
+            'tools/doctor_github_provenance.py', 'tools/atlas_integrity.py',
+            'tools/atlas_meta_integrity.py', 'tools/ci_scope_gate.py',
+            'tools/ci_required_certification.py', 'tools/phase_certification_verdict.py',
+            'PHASE_CERTIFICATION.md', 'ZERO_TRUST_RULES.md',
+            'GITHUB_PROTECTION.md', 'DEVELOPMENT_GUARDRAILS.md',
+        )
+        changed = self.git._git('diff', '--name-only',
+                                f'{main_sha}..{candidate_sha}', '--', *protected,
+                                cwd=work.path)
+        if changed:
+            raise DoctorPlanError('Doctor or certification policy changed; independent review required')
         # Fixed arguments: no --run-tests, no --install, no external calls.
         cmd = [str(self.interpreter), '-B', '-m', 'tools.atlas_doctor',
                'certify', '--base-ref', main_sha,
