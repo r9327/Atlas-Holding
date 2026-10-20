@@ -138,14 +138,9 @@ class SafeRoadmapReplanner:
         doc, jobs, specs, digest = self._parse(raw)
         return self._classify(doc, jobs, specs, digest)
 
-    def append_direction(self, raw: str, *, source: str) -> ReplanResult:
-        """Merge an explicit incremental direction with existing requirements.
-
-        The user need not re-send every already completed mission. An omitted
-        mission from a *delta* is always preserved. A conflict or simultaneous
-        edit aborts rather than losing the latest SQLite state.
-        """
-        doc, jobs, specifications, delta_digest = self._parse(raw, incremental=True)
+    def _expand_direction(self, raw: str) -> tuple[str, str]:
+        """Merge explicit incremental requirements with all stored prior work."""
+        doc, _jobs, specifications, delta_digest = self._parse(raw, incremental=True)
         merged: dict[str, dict] = {}
         for row in self.store.db.execute(
                 "SELECT s.id,s.spec_json FROM mission_specs s "
@@ -158,14 +153,22 @@ class SafeRoadmapReplanner:
             if not isinstance(item, dict) or item.get("id") != row["id"]:
                 raise StoreError("Existing roadmap identity mismatch")
             merged[row["id"]] = item
-        # Incoming missions are explicit replacements. Revision of a mission
-        # that has already started remains blocked by apply(), never inferred.
         for mid, encoded in specifications.items():
             merged[mid] = json.loads(encoded)
         expanded = json.dumps({"repo": doc["repo"], "missions": list(merged.values())},
                               ensure_ascii=False, separators=(",", ":"))
         if len(expanded.encode("utf-8")) > MAX_ROADMAP_BYTES:
             raise StoreError("Expanded roadmap exceeds 2 MiB")
+        return expanded, delta_digest
+
+    def preview_direction(self, raw: str) -> ReplanResult:
+        """Read-only classification of a new user direction."""
+        expanded, _ = self._expand_direction(raw)
+        return self.preview(expanded)
+
+    def append_direction(self, raw: str, *, source: str) -> ReplanResult:
+        """Add goals without re-sending or dropping any previous roadmap lot."""
+        expanded, delta_digest = self._expand_direction(raw)
         provenance = f"{source} delta_sha256:{delta_digest}"
         if len(provenance) > 500:
             raise StoreError("Direction source provenance exceeds 500 characters")
