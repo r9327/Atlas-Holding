@@ -46,8 +46,10 @@ def main(argv: list[str] | None = None) -> int:
             with ControlPlane(args.db) as control:
                 if args.action == "import":
                     imported = asdict(control.import_roadmap(raw, source=source))
-                else:
+                elif args.action == "replan":
                     imported = asdict(control.amend_roadmap(raw, source=source))
+                else:
+                    imported = asdict(control.append_roadmap_direction(raw, source=source))
         except StoreError as exc:
             parser.error(f"roadmap rejected: {exc}")
         print(json.dumps(imported, sort_keys=True, separators=(",", ":")))
