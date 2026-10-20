@@ -4,6 +4,7 @@ import unittest
 
 from holding.github_full_evidence import FullEvidence, GitHubEvidenceError
 from holding.github_mutation_gate import prepare_github_mutation
+from holding.git_sync_gate import GitPushState, PushDisposition
 
 
 REPO = "r9327/Dof-Atlas"
@@ -32,6 +33,8 @@ def prepare(operation, **overrides):
         branch=BRANCH, candidate_sha=SHA, now_epoch=NOW,
         expected_account_id="github:r9327", expected_policy_sha="c" * 40,
     )
+    if operation == "github.push":
+        values["push_state"] = push_state()
     values.update(overrides)
     return prepare_github_mutation(raw, **values)
 
@@ -41,12 +44,54 @@ def pr_state(*, draft):
             "head_branch": BRANCH, "complete": True}
 
 
+def push_state(**overrides):
+    values = dict(
+        repository=REPO, branch=BRANCH, candidate_sha=SHA, local_head=SHA,
+        remote_main_head="d" * 40, remote_branch_head="e" * 40,
+        candidate_contains_main=True, remote_branch_is_ancestor=True,
+        observed_at=NOW - 10,
+    )
+    values.update(overrides)
+    return GitPushState(**values)
+
+
 class GitHubMutationGateTests(unittest.TestCase):
     def test_push_intent_executes_and_certifies_nothing(self):
         intent = prepare("github.push")
         self.assertEqual(intent.operation, "github.push")
+        self.assertEqual(intent.push_disposition, PushDisposition.FAST_FORWARD)
+        self.assertEqual(intent.remote_main_head, "d" * 40)
         self.assertFalse(intent.executes_action)
         self.assertFalse(intent.certifies_quality)
+
+    def test_push_requires_fresh_fetched_main_and_exact_local_head(self):
+        for state in (
+            push_state(observed_at=NOW - 61),
+            push_state(local_head="f" * 40),
+            push_state(candidate_contains_main=False),
+            push_state(repository="other/repo"),
+        ):
+            with self.subTest(state=state), self.assertRaises(GitHubEvidenceError):
+                prepare("github.push", push_state=state)
+
+    def test_push_never_rewrites_a_diverged_remote_branch(self):
+        with self.assertRaisesRegex(GitHubEvidenceError, "diverged"):
+            prepare("github.push", push_state=push_state(
+                remote_branch_is_ancestor=False))
+
+    def test_new_and_already_published_branches_are_idempotent(self):
+        new = prepare("github.push", push_state=push_state(
+            remote_branch_head=None, remote_branch_is_ancestor=None))
+        current = prepare("github.push", push_state=push_state(
+            remote_branch_head=SHA))
+        self.assertEqual(new.push_disposition, PushDisposition.NEW_BRANCH)
+        self.assertEqual(
+            current.push_disposition, PushDisposition.ALREADY_UP_TO_DATE)
+
+    def test_contradictory_new_branch_topology_is_rejected(self):
+        with self.assertRaisesRegex(GitHubEvidenceError, "contradictory"):
+            prepare("github.push", push_state=push_state(
+                remote_branch_head=None, remote_branch_is_ancestor=False))
 
     def test_authorization_integrity_and_scope_are_exact(self):
         raw, _ = authorization("github.push")

@@ -13,6 +13,7 @@ import re
 from typing import Any
 
 from .github_full_evidence import FullEvidence, GitHubEvidenceError
+from .git_sync_gate import GitPushState, PushDisposition, validate_push_state
 
 
 MAX_RECEIPT_BYTES = 64 * 1024
@@ -37,6 +38,9 @@ class GitHubMutationIntent:
     pr_number: int | None
     authorization_sha256: str
     evidence_run_id: int | None
+    push_disposition: PushDisposition | None = None
+    remote_main_head: str | None = None
+    remote_branch_head: str | None = None
     executes_action: bool = False
     certifies_quality: bool = False
 
@@ -127,6 +131,7 @@ def prepare_github_mutation(
     expected_policy_sha: str,
     pr_state: dict[str, Any] | None = None,
     full_evidence: FullEvidence | None = None,
+    push_state: GitPushState | None = None,
 ) -> GitHubMutationIntent:
     """Validate prerequisites and return a non-executing immutable intent."""
     authorization_digest = _receipt(
@@ -138,7 +143,19 @@ def prepare_github_mutation(
     )
     pr_number = None
     run_id = None
-    if operation in {"github.pr_draft", "github.pr_ready", "github.ci_trigger"}:
+    push_disposition = None
+    remote_main_head = None
+    remote_branch_head = None
+    if operation == "github.push":
+        if pr_state is not None or full_evidence is not None:
+            raise GitHubEvidenceError("Unexpected GitHub evidence for this operation")
+        push_disposition = validate_push_state(
+            push_state, repository=repository, branch=branch,
+            candidate_sha=candidate_sha, now_epoch=now_epoch,
+        )
+        remote_main_head = push_state.remote_main_head
+        remote_branch_head = push_state.remote_branch_head
+    elif operation in {"github.pr_draft", "github.pr_ready", "github.ci_trigger"}:
         if not isinstance(pr_state, dict) or set(pr_state) != {
                 "number", "draft", "state", "head_sha", "head_branch", "complete"}:
             raise GitHubEvidenceError("Current PR state is required")
@@ -172,9 +189,10 @@ def prepare_github_mutation(
             raise GitHubEvidenceError("Merge lacks exact-head FULL GitHub evidence")
         pr_number = full_evidence.pr_number
         run_id = full_evidence.run_id
-    elif pr_state is not None or full_evidence is not None:
+    elif pr_state is not None or full_evidence is not None or push_state is not None:
         raise GitHubEvidenceError("Unexpected GitHub evidence for this operation")
     return GitHubMutationIntent(
         operation, repository, branch, candidate_sha, pr_number,
-        authorization_digest, run_id,
+        authorization_digest, run_id, push_disposition,
+        remote_main_head, remote_branch_head,
     )
