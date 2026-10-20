@@ -136,6 +136,9 @@ class LocalCodeWorker:
         if mission.operation != 'code':
             raise CodePlanError('This worker handles only code missions')
         criteria = self._acceptance(mission)
+        # Verify BOTH standing grants before spending CPU/VRAM on generation or
+        # creating a worktree. A 'code'-only grant is never commit permission.
+        self.git._require(mission.id, 'code', 'commit')
         if not self.ready():
             raise AgentProcessError('Agent health check failed')
         # Supervisor, not the model, chooses/reuses the exact worktree.

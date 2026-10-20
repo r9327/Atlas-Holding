@@ -119,6 +119,19 @@ else:
         with self.assertRaises(Exception):worker(Mission('job',REPO))
         self.assertFalse((self.root/'trees'/'job').exists())
 
+    def test_code_only_grant_must_not_launch_model_or_create_worktree(self):
+        self.store.revoke(REPO)
+        self.store.grant_for_onboarding(StandingGrant(
+            REPO, frozenset({'code'}), int(time.time())+500))
+        worker = self.worker(self.plan())
+        from unittest.mock import patch
+        with patch.object(worker.agent, 'request',
+                          side_effect=AssertionError('Model must not launch')) as run:
+            with self.assertRaisesRegex(Exception, 'commit permission'):
+                worker(Mission('job', REPO))
+            run.assert_not_called()
+        self.assertFalse((self.root/'trees'/'job').exists())
+
     def test_agent_direct_mutation_denied(self):
         worker=self.worker(self.plan(),direct_mutation=True)
         with self.assertRaisesRegex(CodePlanError,'modified worktree'):worker(Mission('job',REPO))
