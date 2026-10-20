@@ -24,11 +24,18 @@ mission `DONE`.
    descendant processes. The process must run under **restricted Windows
    identity and ACLs** established by the installer; process-tree control
    is not a security sandbox.
-4. `scoped_qa_advisories` stores the actual scoped outcome and exact SHA;
+4. `holding.qa_scoped_entry --watch` provides unattended, single-writer
+   **advisory** test scheduling once the installer has launched the restricted
+   QA process. Example: add `--watch --poll-seconds 5` in place of
+   `--mission my-task` to the command above. `ScopedQaDispatcher` atomically
+   reserves a mission/SHA, writes bounded backoff (up to three attempts),
+   prevents a second supervisor from launching the same tests concurrently,
+   and does not retest a candidate already assessed.
+5. `scoped_qa_advisories` stores the actual scoped outcome and exact SHA;
    `ControlPlane.snapshot().scoped_qa_counts` and
    `ControlPlane.scoped_qa_missions()` expose these **advisory** results.
    FULL-required / plan-blocked / failed tests are not successful.
-5. Only an independent **signed** exact-SHA receipt consumed by
+6. Only an independent **signed** exact-SHA receipt consumed by
    `holding.qa_entry` / `QaInbox` can transition `QA_PENDING` to `DONE`.
    Locally generated reports and the coding agent have **no signing API**.
 
@@ -48,9 +55,10 @@ mission `DONE`.
 - Build an installer-controlled restricted Windows account/ACL profile,
   key isolation, executable pins, canonical repo data permissions and
   end-to-end tests on a real Windows machine.
-- Wire a dedicated QA worker supervisor to dispatch the new CLI after each
-  `QA_PENDING`, with bounded retries and resource budgets, without operator
-  commands per mission.
+- Configure the Windows installer to launch and supervise the implemented
+  `--watch` process under a restricted identity, recover after reboot and
+  verify resource limits. The watch scheduler itself is not an installed
+  Windows service yet.
 - Implement a **separate attestation producer** that validates authoritative
   GitHub CI/Doctor evidence, checks required steps and exact SHA, and issues
   signed receipts from outside the code worker's security boundary.
