@@ -67,6 +67,7 @@ class ProvisionPlanTests(unittest.TestCase):
         plan = make_plan(sample(git=Component("WEIRD_STATUS")), online=True)
         actions = {item.name: item.action for item in plan.actions}
         self.assertEqual(actions["git"], "INSPECT")
+        self.assertEqual(plan.state, "INSPECTION_REQUIRED")
 
 
 if __name__ == "__main__":
