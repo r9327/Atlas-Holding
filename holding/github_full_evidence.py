@@ -150,6 +150,10 @@ def validate_full_evidence(
         raise GitHubEvidenceError("Not the protected Phase Certification workflow")
     _check_datetime(run.get("created_at"), now)
     _check_datetime(run.get("updated_at"), now)
+    created = datetime.fromisoformat(run["created_at"].replace("Z", "+00:00"))
+    completed = datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00"))
+    if completed < created:
+        raise GitHubEvidenceError("Workflow completion predates its creation")
     run_id = run.get("id")
     if type(run_id) is not int or run_id < 1:
         raise GitHubEvidenceError("Invalid workflow run ID")
@@ -197,7 +201,6 @@ def observe_full_pr(client: GitHubEvidenceClient, pr_number: int, *,
     protected = {}
     for source in _PROTECTED_SOURCES:
         # Candidate cannot overwrite the verification code/policy it is graded by.
-        from urllib.parse import quote
         candidate = client.get("contents/" + source + "?ref=" + sha)
         baseline = client.get("contents/" + source + "?ref=main")
         protected[source] = (candidate.get("sha"), baseline.get("sha"))
