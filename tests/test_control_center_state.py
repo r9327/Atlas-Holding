@@ -2,12 +2,14 @@ import json
 import unittest
 
 from holding.control_center_state import (
-    ControlCenterStateError, MAX_LOG_PAGE, consume_dashboard_snapshot,
+    ControlCenterStateError, MAX_LOG_PAGE, MAX_SNAPSHOT_AGE_SECONDS,
+    consume_dashboard_snapshot,
 )
 
 
 SHA = "a" * 40
 DIGEST = "b" * 64
+NOW = 1_800_000_020
 
 
 def snapshot():
@@ -50,7 +52,7 @@ def snapshot():
 def consume(payload):
     return consume_dashboard_snapshot(
         json.dumps(payload).encode("utf-8"), trusted_engine_id="engine-1",
-        expected_sequence=42,
+        expected_sequence=42, now_epoch=NOW,
     )
 
 
@@ -85,6 +87,23 @@ class ControlCenterStateTests(unittest.TestCase):
         payload["sequence"] = 41
         with self.assertRaisesRegex(ControlCenterStateError, "sequence"):
             consume(payload)
+
+    def test_stale_future_or_ambiguous_snapshot_is_rejected(self):
+        for generated_at in (
+                NOW - MAX_SNAPSHOT_AGE_SECONDS - 1, NOW + 6):
+            payload = snapshot()
+            payload["generated_at"] = generated_at
+            with self.subTest(generated_at=generated_at), self.assertRaisesRegex(
+                    ControlCenterStateError, "stale or from the future"):
+                consume(payload)
+        raw = json.dumps(snapshot()).encode("utf-8")
+        raw = raw.replace(b'"schema_version": 1',
+                          b'"schema_version": 1, "schema_version": 1', 1)
+        with self.assertRaisesRegex(ControlCenterStateError, "duplicate JSON"):
+            consume_dashboard_snapshot(
+                raw, trusted_engine_id="engine-1", expected_sequence=42,
+                now_epoch=NOW,
+            )
         payload = snapshot()
         payload["engine_id"] = "other-engine"
         with self.assertRaisesRegex(ControlCenterStateError, "identity"):

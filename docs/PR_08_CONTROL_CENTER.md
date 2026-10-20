@@ -1,4 +1,15 @@
-# PR 08 — Application Windows Control Center (SPECIFICATION, NON IMPLEMENTEE)
+# PR 08 — Application Windows Control Center (IMPLEMENTATION PARTIELLE)
+
+## État technique
+
+`holding/control_center_state.py` fournit une projection d'affichage immutable,
+bornée et liée aux preuves exact-SHA. Les snapshots ambigus (clés JSON
+dupliquées), futurs ou vieux de plus de 30 secondes sont refusés afin qu'un état
+ancien ne soit jamais présenté comme « live ».
+
+La fenêtre PySide6, l'IPC authentifié, le tray et les scénarios UI/HDPI restent
+à implémenter et à mesurer sur Windows réel ; aucune validation native n'est
+revendiquée par ce contrat de données.
 
 **But :** à partir du Bureau Windows, voir en direct **ce que fait la Holding**, sans consulter des logs ou relancer "go" ; fermer/minimiser la fenêtre sans interrompre le moteur.
 

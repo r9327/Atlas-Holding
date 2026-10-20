@@ -1,4 +1,4 @@
-# PR #8 — Control Center : gates supplémentaires (non implémentés)
+# PR #8 — Control Center : gates supplémentaires (partiels)
 
 Référence : `docs/OPERATIONAL_READINESS.md` de la PR #1.
 

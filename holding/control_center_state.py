@@ -13,6 +13,7 @@ from typing import Any
 
 
 MAX_SNAPSHOT_BYTES = 2 * 1024 * 1024
+MAX_SNAPSHOT_AGE_SECONDS = 30
 MAX_LOG_PAGE = 200
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
@@ -21,6 +22,15 @@ _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$")
 
 class ControlCenterStateError(ValueError):
     pass
+
+
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ControlCenterStateError("Snapshot contains duplicate JSON keys")
+        result[key] = value
+    return result
 
 
 @dataclass(frozen=True)
@@ -246,16 +256,20 @@ def _log(value: Any, task_ids: set[str], plugin_names: set[str]) -> LogView:
 
 def consume_dashboard_snapshot(
     raw: bytes, *, trusted_engine_id: str, expected_sequence: int,
+    now_epoch: int,
 ) -> DashboardState:
     """Validate an authenticated engine snapshot for read-only display."""
     trusted_engine_id = _identifier(trusted_engine_id, "trusted engine id")
     expected_sequence = _integer(
         expected_sequence, "expected sequence", maximum=2**63 - 1,
     )
+    now_epoch = _integer(now_epoch, "current time", maximum=4_102_444_800)
     if not isinstance(raw, bytes) or not 1 <= len(raw) <= MAX_SNAPSHOT_BYTES:
         raise ControlCenterStateError("Invalid bounded snapshot payload")
     try:
-        payload = json.loads(raw)
+        payload = json.loads(raw, object_pairs_hook=_unique_object)
+    except ControlCenterStateError:
+        raise
     except (UnicodeError, ValueError) as exc:
         raise ControlCenterStateError("Snapshot is not valid JSON") from exc
     data = _object(payload, {
@@ -271,6 +285,12 @@ def consume_dashboard_snapshot(
     if data["network"] not in {
             "OFFLINE", "ONLINE_STABLE", "SYNCING", "CI_PENDING", "ERROR"}:
         raise ControlCenterStateError("Invalid network state")
+    generated_at = _integer(
+        data["generated_at"], "generation time", maximum=4_102_444_800,
+    )
+    if (generated_at > now_epoch + 5
+            or now_epoch - generated_at > MAX_SNAPSHOT_AGE_SECONDS):
+        raise ControlCenterStateError("Snapshot timestamp is stale or from the future")
 
     if not isinstance(data["tasks"], list) or len(data["tasks"]) > 1_000:
         raise ControlCenterStateError("Invalid bounded task list")
@@ -306,7 +326,7 @@ def consume_dashboard_snapshot(
 
     return DashboardState(
         trusted_engine_id, sequence,
-        _integer(data["generated_at"], "generation time", maximum=4_102_444_800),
+        generated_at,
         data["network"],
         _integer(data["pending_external"], "pending external count", maximum=100_000),
         tasks, agents, plugins, logs, cursor,
