@@ -134,7 +134,7 @@ class GitWorktrees:
                 raise GitSafetyError('Untracked deleted path is not allowed')
         self._git('add', '--', *paths, cwd=tree.path)
         staged = self._git('diff', '--cached', '--name-only', '-z', cwd=tree.path)
-        actual = {item for item in staged.split('\\0') if item}
+        actual = {item for item in staged.split('\0') if item}
         if not actual or actual - set(paths):
             raise GitSafetyError('Unexpected staged file (possible pathspec injection)')
         self._git('diff', '--cached', '--check', cwd=tree.path)
@@ -145,7 +145,7 @@ class GitWorktrees:
         if not _SHA.fullmatch(sha):
             raise GitSafetyError('Invalid commit')
         committed = {item for item in self._git('diff-tree', '--no-commit-id', '--name-only',
-                                                '-r', '-z', 'HEAD', cwd=tree.path).split('\\0') if item}
+                                                '-r', '-z', 'HEAD', cwd=tree.path).split('\0') if item}
         if not committed or committed - set(paths):
             raise GitSafetyError('Committed path set was unexpected: quarantine worktree')
         return sha
