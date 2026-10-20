@@ -71,7 +71,7 @@ class ScopedQaDispatchTests(unittest.TestCase):
                              "RETRY_LATER")
             self.assertEqual(self.dispatch.tick(now_epoch=self.now + 90).action,
                              "RUNNER_BLOCKED")
-            self.assertEqual(self.dispatch.tick(now_epoch=self.now + 10000).action,
+            self.assertEqual(self.dispatch.tick(now_epoch=self.now + 300).action,
                              "IDLE")
         self.assertEqual(run.call_count, 3)
         status = self.db.db.execute(
