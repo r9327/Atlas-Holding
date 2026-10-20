@@ -24,12 +24,17 @@ def _protect_windows_file(path: Path) -> None:
 
     from holding.windows_secret_acl import current_process_sid
 
-    completed = subprocess.run(
-        ["icacls", str(path), "/inheritance:r", "/grant:r",
-         f"*{current_process_sid()}:(F)"],
+    sid = current_process_sid()
+    owner = subprocess.run(
+        ["icacls", str(path), "/setowner", f"*{sid}"],
         capture_output=True, check=False, text=True,
     )
-    if completed.returncode:
+    completed = subprocess.run(
+        ["icacls", str(path), "/inheritance:r", "/grant:r",
+         f"*{sid}:(F)"],
+        capture_output=True, check=False, text=True,
+    )
+    if owner.returncode or completed.returncode:
         raise RuntimeError("Unable to establish the Windows test-file ACL")
 
 
