@@ -7,9 +7,16 @@ bornée et liée aux preuves exact-SHA. Les snapshots ambigus (clés JSON
 dupliquées), futurs ou vieux de plus de 30 secondes sont refusés afin qu'un état
 ancien ne soit jamais présenté comme « live ».
 
-La fenêtre PySide6, l'IPC authentifié, le tray et les scénarios UI/HDPI restent
-à implémenter et à mesurer sur Windows réel ; aucune validation native n'est
-revendiquée par ce contrat de données.
+`holding/control_center_ui.py` fournit maintenant une première fenêtre PySide6
+passive : tableaux roadmap/agents/plugins/journal, données non éditables, aucune
+barre de pourcentage inventée et refus des replays ou changements d'identité du
+moteur. La fermeture de cette fenêtre ne possède aucune référence ni commande
+sur le moteur.
+
+L'IPC authentifié, les actions pause/reprise/stop, le tray et les scénarios
+visuels HDPI restent à implémenter et à mesurer sur Windows réel. Les tests Qt
+offscreen vérifient le contrat widget sur Ubuntu et Windows, mais ne sont pas une
+validation native d'affichage ou de cycle de vie desktop.
 
 **But :** à partir du Bureau Windows, voir en direct **ce que fait la Holding**, sans consulter des logs ou relancer "go" ; fermer/minimiser la fenêtre sans interrompre le moteur.
 
