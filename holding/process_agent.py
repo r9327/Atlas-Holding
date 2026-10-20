@@ -117,6 +117,8 @@ class LocalProcessAgent:
         self.last_job_peak_bytes = None
         if action not in ('health', 'plan_patch'):
             raise AgentProcessError('Unsupported agent action')
+        if self.should_stop():
+            raise AgentInterrupted('Controller suspended before adapter dispatch')
         if not cwd.is_absolute() or not cwd.is_dir():
             raise AgentProcessError('Agent worktree must be an existing absolute directory')
         # Verify immediately before each process launch, not just at onboarding.
@@ -151,6 +153,8 @@ class LocalProcessAgent:
                     from .windows_job import WindowsJob
                     job = WindowsJob(
                         max_job_memory_bytes=LOCAL_ADAPTER_JOB_LIMIT_BYTES)
+                if self.should_stop():
+                    raise AgentInterrupted('Controller suspended before adapter launch')
                 started = time.monotonic()
                 # Inventory/health checks must never use a coding-generation
                 # timeout (potentially hours). Health is an inexpensive probe.
