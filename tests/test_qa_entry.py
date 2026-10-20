@@ -58,7 +58,7 @@ class QaEntryTests(unittest.TestCase):
         artifact = self.evidence / "tests.json"
         artifact.write_text('{"tests": "PASS"}', encoding="utf-8")
         payload = {"schema": 1, "mission_id": "first", "sha": SHA, "verdict": "PASS",
-                   "runner": "doctor_atlas", "artifact": artifact.name,
+                   "runner": "github_certification", "artifact": artifact.name,
                    "artifact_sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()}
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"),
                              ensure_ascii=False).encode()
