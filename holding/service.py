@@ -20,6 +20,7 @@ from .git_worktree import GitWorktrees
 from .recovery import RecoveryCoordinator, RecoveryOutcome
 from .resource_guard import ResourceGuard
 from .daemon_lease import LeaseError
+from .state_store import StoreError
 
 
 class AgentUnavailable(RuntimeError):
@@ -208,7 +209,9 @@ class HoldingService:
                     if self._qa_repair is not None:
                         try:
                             self._qa_repair.requeue_one()
-                        except LeaseError:
+                        except (LeaseError, StoreError) as failure:
+                            if isinstance(failure, StoreError) and str(failure) != 'DAEMON_LEASE_LOST':
+                                raise
                             return Tick('LEASE_LOST', None, 'Lease lost during QA repair')
                     result = self.engine.tick()
                 else:
