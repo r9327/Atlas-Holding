@@ -61,11 +61,16 @@ class WindowsJob:
         k32.SetInformationJobObject.restype = wintypes.BOOL
         k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
         k32.AssignProcessToJobObject.restype = wintypes.BOOL
+        k32.QueryInformationJobObject.argtypes = [
+            wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+            wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+        k32.QueryInformationJobObject.restype = wintypes.BOOL
         k32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
         k32.TerminateJobObject.restype = wintypes.BOOL
         k32.CloseHandle.argtypes = [wintypes.HANDLE]
         k32.CloseHandle.restype = wintypes.BOOL
         self._k32 = k32
+        self._extended_limits_type = ExtendedLimits
         self._handle = k32.CreateJobObjectW(None, None)
         if not self._handle:
             raise WindowsJobError('CreateJobObjectW failed')
@@ -87,6 +92,20 @@ class WindowsJob:
             raise WindowsJobError('Cannot attach stopped process to Windows Job Object')
         if not self._k32.AssignProcessToJobObject(self._handle, process._handle):
             raise WindowsJobError('AssignProcessToJobObject failed; refusing unsafe agent')
+
+    def peak_job_memory_bytes(self) -> int:
+        """Observed peak committed bytes in this child Job, not full Holding RAM."""
+        if self._handle is None:
+            raise WindowsJobError('Cannot query closed Windows Job Object')
+        import ctypes
+        from ctypes import wintypes
+        info = self._extended_limits_type()
+        returned = wintypes.DWORD()
+        if not self._k32.QueryInformationJobObject(
+                self._handle, 9, ctypes.byref(info), ctypes.sizeof(info),
+                ctypes.byref(returned)):
+            raise WindowsJobError('Could not query Windows Job memory peak')
+        return int(info.PeakJobMemoryUsed)
 
     def terminate(self) -> None:
         if self._handle is not None and not self._k32.TerminateJobObject(self._handle, 1):

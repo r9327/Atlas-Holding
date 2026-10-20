@@ -18,6 +18,13 @@ class WindowsJobTests(unittest.TestCase):
         self.assertIsNone(job._handle)
 
     @unittest.skipUnless(os.name == 'nt', 'Requires real Windows Job Objects')
+    def test_empty_windows_job_peak_is_nonnegative(self):
+        with WindowsJob() as job:
+            self.assertGreaterEqual(job.peak_job_memory_bytes(), 0)
+        with self.assertRaises(WindowsJobError):
+            job.peak_job_memory_bytes()
+
+    @unittest.skipUnless(os.name == 'nt', 'Requires real Windows Job Objects')
     def test_memory_quota_configures_a_real_job_object(self):
         with WindowsJob(max_job_memory_bytes=256 * 1024 ** 2) as job:
             self.assertIsNotNone(job._handle)

@@ -52,6 +52,12 @@ work (#4). No roadmap text may change Git grants or certification policy.
 GitHub, but the repository test suite and Windows process-tree/RAM experiments
 have not been executed in this session. All checks are pending, not PASS.
 
+**Resource telemetry:** the normal Windows agent Job reports its measured
+peak committed memory through `CODER_ADAPTER_JOB_PEAK_BYTES` events. This is
+advisory and excludes the separate Ollama inference server, supervisor and
+Control Center. It is not proof of the 400MB total Holding budget; full
+Windows process-tree benchmarks remain mandatory.
+
 **Pause/STOP gate:** the SQLite dispatcher must not claim new scoped tests
 while paused/stopped; direct test runs and signed-proof settlement must also
 refuse work under the same durable controls. An in-flight scoped check cannot

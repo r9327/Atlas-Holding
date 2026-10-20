@@ -70,6 +70,8 @@ class LocalProcessAgent:
     def __init__(self, config: AgentProgram, *, should_stop: Callable[[], bool] = lambda: False):
         self.config = config
         self.should_stop = should_stop
+        # None = not measured (e.g. non-Windows). Never report it as zero.
+        self.last_job_peak_bytes: int | None = None
 
     def _verify_installed_files(self) -> None:
         if self.config.pinned_executable_sha256 is None:
@@ -112,6 +114,7 @@ class LocalProcessAgent:
             proc.wait(timeout=5)
 
     def request(self, action: str, payload: dict, *, cwd: Path) -> dict:
+        self.last_job_peak_bytes = None
         if action not in ('health', 'plan_patch'):
             raise AgentProcessError('Unsupported agent action')
         if not cwd.is_absolute() or not cwd.is_dir():
@@ -197,6 +200,12 @@ class LocalProcessAgent:
                 # KILL_ON_JOB_CLOSE terminates any descendants even if the
                 # original agent process exited after spawning a helper.
                 if job is not None:
+                    try:
+                        self.last_job_peak_bytes = job.peak_job_memory_bytes()
+                    except Exception:
+                        # Quota enforcement remains active; lack of telemetry
+                        # must never be misreported as a measured zero peak.
+                        self.last_job_peak_bytes = None
                     job.close()
                 elif os.name != 'nt' and proc is not None:
                     # A parent can exit successfully after spawning helpers.

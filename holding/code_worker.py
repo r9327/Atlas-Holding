@@ -166,6 +166,14 @@ class LocalCodeWorker:
                     'Previous candidate failed independent QA; identify root '
                     'cause and deliver a new tested correction SHA')
         response = self.agent.request('plan_patch', request, cwd=worktree.path)
+        peak_bytes = self.agent.last_job_peak_bytes
+        if type(peak_bytes) is int and peak_bytes >= 0:
+            # Advisory metrics only. The Ollama inference server, supervisor
+            # and GUI are separate processes and are not included here.
+            with self.git.store._transaction():
+                self.git.store._assert_daemon_fence(self.git.lease.owner)
+                self.git.store._event(
+                    mission.id, 'CODER_ADAPTER_JOB_PEAK_BYTES', str(peak_bytes))
         # The child is not trusted to edit files directly. Any direct changes
         # are quarantined by the normal worker failure/recovery path.
         if self.git.git._git('status', '--porcelain', cwd=worktree.path):
