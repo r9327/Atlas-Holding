@@ -79,10 +79,14 @@ class LocalProcessAgent:
         # A minimum environment. Deliberately no GitHub token, API key, profile
         # secret, or credential helper inherited from the daemon.
         environment = {k: v for k, v in os.environ.items() if k.upper() in {
-            'PATH', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP', 'TMPDIR', 'HOME',
-            'USERPROFILE', 'LOCALAPPDATA', 'LANG', 'PYTHONUTF8', 'PYTHONIOENCODING',
+            'PATH', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP', 'TMPDIR',
+            'LANG', 'PYTHONUTF8', 'PYTHONIOENCODING',
         }}
+        # Environment redaction reduces accidental leakage but does not
+        # sandbox a same-user process: Windows ACL isolation is still required.
         environment['GIT_TERMINAL_PROMPT'] = '0'
+        environment['PYTHONNOUSERSITE'] = '1'
+        environment['NO_PROXY'] = '127.0.0.1,localhost'
         flags = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0) if os.name == 'nt' else 0
         # A large write to Popen(stdin=PIPE) can block forever if the child
         # never reads stdin: the timeout below has not started yet. Instead,
@@ -98,6 +102,9 @@ class LocalProcessAgent:
                     from .windows_job import WindowsJob
                     job = WindowsJob()
                 started = time.monotonic()
+                # Inventory/health checks must never use a coding-generation
+                # timeout (potentially hours). Health is an inexpensive probe.
+                deadline = min(self.config.timeout_seconds, 15.0) if action == 'health' else self.config.timeout_seconds
                 proc = subprocess.Popen([str(self.config.executable), *self.config.arguments],
                                         stdin=input_file, stdout=stdout,
                                         stderr=subprocess.DEVNULL, cwd=cwd,
@@ -110,7 +117,7 @@ class LocalProcessAgent:
                 while proc.poll() is None:
                     if self.should_stop():
                         raise AgentProcessError('Agent interrupted by controller')
-                    if time.monotonic() - started > self.config.timeout_seconds:
+                    if time.monotonic() - started > deadline:
                         raise AgentProcessError('Agent execution timed out')
                     if os.fstat(stdout.fileno()).st_size > self.config.output_limit:
                         raise AgentProcessError('Agent output exceeded limit')
