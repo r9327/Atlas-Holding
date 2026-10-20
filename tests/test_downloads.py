@@ -1,12 +1,15 @@
 """Local network test server. No Internet or third-party packages needed."""
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import os
 from pathlib import Path
 import socket
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
+from holding import downloads
 from holding.downloads import download_pinned, DownloadError, IntegrityError
 
 DATA = (b"Holding reliable bootstrap\n" * 65536) + b"END"
@@ -109,6 +112,21 @@ class DownloadTests(unittest.TestCase):
         self.target.symlink_to(other)
         with self.assertRaises(DownloadError):
             self.call()
+
+    def test_linked_parent_is_refused_before_download(self):
+        with patch.object(downloads, "_is_link_like",
+                          side_effect=lambda path: path == self.target.parent):
+            with self.assertRaisesRegex(DownloadError, "symlink or junction"):
+                self.call()
+
+    def test_hardlinked_partial_is_refused(self):
+        original = Path(self.temp.name) / "shared-partial"
+        original.write_bytes(DATA[:100])
+        partial = self.target.with_name(self.target.name + ".part")
+        os.link(original, partial)
+        with self.assertRaisesRegex(DownloadError, "hard links"):
+            self.call()
+        self.assertEqual(original.read_bytes(), DATA[:100])
 
     def test_invalid_url_and_digest(self):
         with self.assertRaises(ValueError):

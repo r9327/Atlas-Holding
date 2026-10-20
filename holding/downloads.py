@@ -29,6 +29,19 @@ _RANGE = re.compile(r"^bytes (\d+)-(\d+)/(\d+|\*)$")
 _TRANSIENT = {408, 425, 429, 500, 502, 503, 504}
 
 
+def _is_link_like(path: Path) -> bool:
+    return path.is_symlink() or (
+        hasattr(path, "is_junction") and path.is_junction()
+    )
+
+
+def _reject_linked_ancestors(path: Path) -> None:
+    """Refuse existing symlink/junction parents before creating download data."""
+    for ancestor in (path, *path.parents):
+        if ancestor.exists() and _is_link_like(ancestor):
+            raise DownloadError("Refusing download path below symlink or junction")
+
+
 def _validate_url(url: str) -> None:
     parts = urlsplit(url)
     if parts.username is not None or parts.password is not None:
@@ -87,7 +100,7 @@ def download_pinned(
         raise ValueError("Invalid download limits")
     expected = sha256.lower()
     target = Path(destination)
-    if target.is_symlink():
+    if _is_link_like(target):
         raise DownloadError("Refusing symlinked destination")
     if target.exists() and not target.is_file():
         raise DownloadError("Destination is not a regular file")
@@ -95,12 +108,16 @@ def download_pinned(
         return target
     if target.exists():
         raise IntegrityError("Existing destination does not match pinned checksum")
+    _reject_linked_ancestors(target.parent)
     target.parent.mkdir(parents=True, exist_ok=True)
+    _reject_linked_ancestors(target.parent)
     partial = target.with_name(target.name + ".part")
-    if partial.is_symlink() or target.is_symlink():
+    if _is_link_like(partial) or _is_link_like(target):
         raise DownloadError("Refusing symlinked download path")
     if partial.exists() and not partial.is_file():
         raise DownloadError("Partial destination is not a regular file")
+    if partial.exists() and partial.stat().st_nlink != 1:
+        raise DownloadError("Partial destination must not have hard links")
 
     opener = build_opener(_SafeRedirect())
     last_error: Exception | None = None
