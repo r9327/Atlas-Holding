@@ -81,24 +81,27 @@ def choose_next(
         ):
             return Decision("BLOCKED", job.id, "Missing or stale completion evidence")
 
+    # A complete user roadmap can contain thousands of chained missions.
+    # Explicit DFS frames avoid Python's recursion limit (and a daemon crash).
     visiting: set[str] = set()
     visited: set[str] = set()
-
-    def detect_cycle(node: str) -> bool:
-        if node in visiting:
-            return True
-        if node in visited:
-            return False
-        visiting.add(node)
-        for dep in by_id[node].dependencies:
-            if detect_cycle(dep):
-                return True
-        visiting.remove(node)
-        visited.add(node)
-        return False
-
-    if any(detect_cycle(job.id) for job in jobs):
-        return Decision("BLOCKED", None, "Dependency cycle")
+    for job in jobs:
+        if job.id in visited:
+            continue
+        stack: list[tuple[str, bool]] = [(job.id, False)]
+        while stack:
+            node, leaving = stack.pop()
+            if leaving:
+                visiting.remove(node)
+                visited.add(node)
+                continue
+            if node in visited:
+                continue
+            if node in visiting:
+                return Decision("BLOCKED", None, "Dependency cycle")
+            visiting.add(node)
+            stack.append((node, True))
+            stack.extend((dep, False) for dep in reversed(by_id[node].dependencies))
     if not jobs or all(job.state in TERMINAL for job in jobs):
         return Decision("COMPLETE", None, "No outstanding missions")
     if any(job.state == "RUNNING" for job in jobs):
