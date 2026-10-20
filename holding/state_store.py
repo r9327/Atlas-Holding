@@ -236,7 +236,8 @@ class StateStore:
             self._assert_daemon_fence(lease_owner)
             self._transition(mission_id, "RUNNING", "QA_PENDING")
             self.db.execute(
-                "UPDATE missions SET candidate_sha=?,evidence_sha='' WHERE id=?",
+                "UPDATE missions SET candidate_sha=?,evidence_sha='', "
+                "failures_without_progress=0 WHERE id=?",
                 (candidate_sha.lower(), mission_id),
             )
 
