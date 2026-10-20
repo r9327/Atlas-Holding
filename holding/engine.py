@@ -17,7 +17,19 @@ from .state_store import StateStore, StoreError
 
 
 class Worker(Protocol):
-    def __call__(self, mission: Mission) -> str: ...
+    def __call__(self, mission: Mission) -> object: ...
+
+
+class WorkerDeferred(RuntimeError):
+    """A safe precondition is temporarily absent; consume no retry budget."""
+
+
+class WorkerInspectionRequired(RuntimeError):
+    """A mutation may have happened and must never be replayed blindly."""
+
+
+class WorkerBlocked(RuntimeError):
+    """A deterministic safety gate refuses this mission."""
 
 
 @dataclass(frozen=True)
@@ -102,9 +114,33 @@ class HoldingEngine:
         try:
             # Actual execution must be implemented by a trusted, separately
             # permission-checked adapter. Never execute a raw LLM command here.
-            sha = self.worker(mission)
+            outcome = self.worker(mission)
             self.lease.assert_owned()
-            self.store.checkpoint(mission.id, sha, lease_owner=self.lease.owner)
+            from .sync_worker import VerifiedGitHubSync
+            if isinstance(outcome, VerifiedGitHubSync):
+                self.store.complete_github_sync_mission(
+                    mission.id, sync_operation=outcome.sync_operation,
+                    branch=outcome.branch, candidate_sha=outcome.candidate_sha,
+                    idempotency_key=outcome.idempotency_key,
+                    lease_owner=self.lease.owner)
+                return Tick('DONE', mission.id, 'Verified external effect')
+            if not isinstance(outcome, str):
+                raise TypeError('Trusted worker returned an unsupported outcome')
+            self.store.checkpoint(
+                mission.id, outcome, lease_owner=self.lease.owner)
+        except WorkerDeferred as deferred:
+            self.store.defer_running(
+                mission.id, type(deferred).__name__, lease_owner=self.lease.owner)
+            return Tick('WAIT_FOR_NETWORK', mission.id, str(deferred))
+        except WorkerInspectionRequired as uncertain:
+            self.store.interrupt_running(
+                mission.id, lease_owner=self.lease.owner,
+                reason=str(uncertain))
+            return Tick('RECOVERY_REQUIRED', mission.id, str(uncertain))
+        except WorkerBlocked as blocked:
+            self.store.block_running(
+                mission.id, str(blocked), lease_owner=self.lease.owner)
+            return Tick('BLOCKED', mission.id, str(blocked))
         except AgentInterrupted:
             try:
                 self.store.interrupt_running(

@@ -22,6 +22,11 @@ Cette PR Draft vérifie ensemble les contrats développés séparément dans :
 9. Après un délai minimal, la récupération réobserve GitHub sans muter : elle clôture
    un effet exact déjà visible. Seuls Draft/Ready strictement inchangés libèrent un
    retry borné ; CI et merge restent en inspection tant que leur effet est ambigu.
+10. Le worker runtime `push` résout un unique worktree issu de dépendances déjà
+    certifiées, émet un reçu frais et ne marque la mission `DONE` que si le journal
+    contient l'effet distant `SUCCEEDED` au même dépôt, branche, SHA et idempotency key.
+    Une attente réseau ne consomme pas le budget, une divergence bloque et une issue
+    ambiguë place la mission en récupération sans second push.
 
 ## Limites explicites
 
@@ -41,6 +46,8 @@ Cette PR Draft vérifie ensemble les contrats développés séparément dans :
 - Un statut `SUCCEEDED` atteste l'effet de synchronisation observé, jamais la qualité produit.
 - Un contexte absent (ancienne base), corrompu ou incohérent bloque la récupération.
 - Cette PR ne rend pas les PR #1, #3 ou #7 prêtes à fusionner et ne remplace pas leur certification finale.
+- Le worker `push` existe mais le bootstrap multi-rôle ne l'installe pas encore à
+  côté du worker de code ; cette activation reste un lot séparé.
 
 ## Contrats GitHub vérifiés
 

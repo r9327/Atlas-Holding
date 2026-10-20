@@ -394,6 +394,57 @@ class StateStore:
                 "UPDATE missions SET failures_without_progress=? WHERE id=?", (attempts, mission_id)
             )
 
+    def defer_running(self, mission_id: str, reason: str, *, lease_owner: str) -> None:
+        """Return a safely untouched external mission to READY without a retry."""
+        with self._transaction():
+            self._assert_daemon_fence(lease_owner)
+            self._transition(mission_id, "RUNNING", "READY", reason[:160])
+
+    def block_running(self, mission_id: str, reason: str, *, lease_owner: str) -> None:
+        """Persist a deterministic external safety refusal without fake retries."""
+        with self._transaction():
+            self._assert_daemon_fence(lease_owner)
+            self._transition(mission_id, "RUNNING", "BLOCKED", reason[:160])
+
+    def complete_github_sync_mission(
+        self, mission_id: str, *, sync_operation: str, branch: str,
+        candidate_sha: str, idempotency_key: str, lease_owner: str,
+    ) -> None:
+        """Set DONE only from this exact operation's settled durable journal."""
+        operation_map = {
+            "push": "github.push", "ready_for_review": "github.pr_ready",
+            "merge": "github.merge",
+        }
+        if (sync_operation not in operation_map.values()
+                or not BRANCH_RE.fullmatch(branch) or branch.startswith("refs/")
+                or branch in {"main", "master"} or ".." in branch or "//" in branch
+                or not SHA_RE.fullmatch(candidate_sha)
+                or not DIGEST_RE.fullmatch(idempotency_key)):
+            raise StoreError("Invalid verified GitHub synchronization result")
+        with self._transaction():
+            self._assert_daemon_fence(lease_owner)
+            mission = self.db.execute(
+                "SELECT repo,operation,external_required FROM missions "
+                "WHERE id=? AND state='RUNNING'", (mission_id,)).fetchone()
+            if (mission is None or not bool(mission["external_required"])
+                    or operation_map.get(mission["operation"]) != sync_operation):
+                raise StoreError("Mission does not match GitHub synchronization result")
+            proof = self.db.execute(
+                """SELECT 1 FROM github_sync_attempts
+                   WHERE operation=? AND repo=? AND branch=? AND candidate_sha=?
+                   AND idempotency_key=? AND status='SUCCEEDED' LIMIT 1""",
+                (sync_operation, mission["repo"], branch,
+                 candidate_sha.lower(), idempotency_key)).fetchone()
+            if proof is None:
+                raise StoreError("GitHub synchronization has no settled exact-SHA proof")
+            self._transition(
+                mission_id, "RUNNING", "DONE",
+                f"verified sync:{sync_operation}:{idempotency_key}")
+            self.db.execute(
+                "UPDATE missions SET candidate_sha=?,evidence_sha=?,"
+                "failures_without_progress=0 WHERE id=?",
+                (candidate_sha.lower(), candidate_sha.lower(), mission_id))
+
     def interrupt_running(self, mission_id: str, *, lease_owner: str, reason: str) -> None:
         """Quarantine an interrupted worker without consuming its retry budget.
 
