@@ -120,6 +120,11 @@ class ControlPlane:
         from .roadmap_replan import SafeRoadmapReplanner
         return SafeRoadmapReplanner(self.store).preview(raw)
 
+    def append_roadmap_direction(self, raw: str, *, source: str):
+        """Add user directions without requiring all old roadmap tasks again."""
+        from .roadmap_replan import SafeRoadmapReplanner
+        return SafeRoadmapReplanner(self.store).append_direction(raw, source=source)
+
     def amend_roadmap(self, raw: str, *, source: str):
         """Apply only safe READY-state amendments, retaining SHA/proof history."""
         from .roadmap_replan import SafeRoadmapReplanner
