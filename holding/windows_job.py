@@ -10,17 +10,25 @@ import os
 
 
 class WindowsJobError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, code: str = 'WINDOWS_JOB_ERROR') -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class WindowsJob:
     def __init__(self, *, max_job_memory_bytes: int | None = None) -> None:
         if os.name != 'nt':
-            raise WindowsJobError('Windows Job Objects are only available on Windows')
+            raise WindowsJobError(
+                'Windows Job Objects are only available on Windows',
+                code='UNSUPPORTED_PLATFORM',
+            )
         if max_job_memory_bytes is not None and (
                 type(max_job_memory_bytes) is not int
                 or not 32 * 1024 ** 2 <= max_job_memory_bytes <= 1024 ** 3):
-            raise WindowsJobError('Invalid bounded Windows Job memory quota')
+            raise WindowsJobError(
+                'Invalid bounded Windows Job memory quota',
+                code='INVALID_MEMORY_QUOTA',
+            )
         self.max_job_memory_bytes = max_job_memory_bytes
         import ctypes
         from ctypes import wintypes
@@ -73,7 +81,11 @@ class WindowsJob:
         self._extended_limits_type = ExtendedLimits
         self._handle = k32.CreateJobObjectW(None, None)
         if not self._handle:
-            raise WindowsJobError('CreateJobObjectW failed')
+            error = ctypes.get_last_error()
+            raise WindowsJobError(
+                f'CreateJobObjectW failed with WinError {error}',
+                code=f'CREATE_JOB_{error}',
+            )
         limits = ExtendedLimits()
         # Always kill descendants on close; optionally limit committed memory
         # for the whole child Job (JOB_OBJECT_LIMIT_JOB_MEMORY = 0x00000200).
@@ -84,19 +96,34 @@ class WindowsJob:
             limits.JobMemoryLimit = max_job_memory_bytes
         if not k32.SetInformationJobObject(self._handle, 9, ctypes.byref(limits),
                                            ctypes.sizeof(limits)):
+            error = ctypes.get_last_error()
             self.close()
-            raise WindowsJobError('Could not configure kill-on-close Job Object')
+            raise WindowsJobError(
+                f'Could not configure kill-on-close Job Object: WinError {error}',
+                code=f'CONFIGURE_JOB_{error}',
+            )
 
     def attach(self, process) -> None:
         if self._handle is None or process.poll() is not None:
-            raise WindowsJobError('Cannot attach stopped process to Windows Job Object')
+            raise WindowsJobError(
+                'Cannot attach stopped process to Windows Job Object',
+                code='PROCESS_EXITED_BEFORE_ATTACH',
+            )
         if not self._k32.AssignProcessToJobObject(self._handle, process._handle):
-            raise WindowsJobError('AssignProcessToJobObject failed; refusing unsafe agent')
+            import ctypes
+            error = ctypes.get_last_error()
+            raise WindowsJobError(
+                f'AssignProcessToJobObject failed with WinError {error}; refusing unsafe agent',
+                code=f'ASSIGN_PROCESS_{error}',
+            )
 
     def peak_job_memory_bytes(self) -> int:
         """Observed peak committed bytes in this child Job, not full Holding RAM."""
         if self._handle is None:
-            raise WindowsJobError('Cannot query closed Windows Job Object')
+            raise WindowsJobError(
+                'Cannot query closed Windows Job Object',
+                code='QUERY_CLOSED_JOB',
+            )
         import ctypes
         from ctypes import wintypes
         info = self._extended_limits_type()
@@ -104,12 +131,21 @@ class WindowsJob:
         if not self._k32.QueryInformationJobObject(
                 self._handle, 9, ctypes.byref(info), ctypes.sizeof(info),
                 ctypes.byref(returned)):
-            raise WindowsJobError('Could not query Windows Job memory peak')
+            error = ctypes.get_last_error()
+            raise WindowsJobError(
+                f'Could not query Windows Job memory peak: WinError {error}',
+                code=f'QUERY_JOB_{error}',
+            )
         return int(info.PeakJobMemoryUsed)
 
     def terminate(self) -> None:
         if self._handle is not None and not self._k32.TerminateJobObject(self._handle, 1):
-            raise WindowsJobError('TerminateJobObject failed')
+            import ctypes
+            error = ctypes.get_last_error()
+            raise WindowsJobError(
+                f'TerminateJobObject failed with WinError {error}',
+                code=f'TERMINATE_JOB_{error}',
+            )
 
     def close(self) -> None:
         if self._handle is not None:

@@ -139,15 +139,19 @@ class HoldingEngine:
         except Exception as exc:
             # An old daemon must never reset a mission after replacement.
             # The fence is checked inside BEGIN IMMEDIATE, not just before it.
+            failure_reason = type(exc).__name__
+            structured_code = getattr(exc, 'code', None)
+            if isinstance(structured_code, str) and structured_code:
+                failure_reason += ':' + structured_code[:80]
             try:
-                self.store.fail_running(mission.id, type(exc).__name__,
+                self.store.fail_running(mission.id, failure_reason,
                                         lease_owner=self.lease.owner)
             except StoreError as fence:
                 if str(fence) == 'DAEMON_LEASE_LOST':
                     self._stop.set()
                     return Tick('LEASE_LOST', mission.id, 'Lease lost during task failure')
                 raise
-            return Tick('RETRY_OR_BLOCKED', mission.id, type(exc).__name__)
+            return Tick('RETRY_OR_BLOCKED', mission.id, failure_reason)
         return Tick('QA_PENDING', mission.id, 'Awaiting authenticated tests and Doctor evidence')
 
     def run(self, *, idle_seconds: float = 2, max_ticks: int | None = None) -> Tick:

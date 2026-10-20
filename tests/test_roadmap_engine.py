@@ -106,4 +106,13 @@ class EngineTests(unittest.TestCase):
             self.assertTrue(all(m.state != 'DONE' for m in engine.store.missions()))
             self.assertNotIn('tokens',out.reason)
 
+    def test_failed_adapter_exposes_only_structured_error_code(self):
+        class CodedFailure(RuntimeError):
+            code = 'SAFE_DIAGNOSTIC'
+        def crash(_):raise CodedFailure('secret detail')
+        with HoldingEngine(self.path,crash,online=lambda:False) as engine:
+            engine.start();out=engine.tick()
+            self.assertEqual(out.reason,'CodedFailure:SAFE_DIAGNOSTIC')
+            self.assertNotIn('secret',out.reason)
+
 if __name__ == '__main__': unittest.main()
