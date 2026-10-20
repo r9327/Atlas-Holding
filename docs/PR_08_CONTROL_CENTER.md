@@ -24,7 +24,7 @@
 
 ## Écran IA compréhensible, sans choix technique obligatoire
 
-Le premier lancement affiche **« Atlas choisit la meilleure configuration IA pour votre PC »**, avec choix implicite `Qualité maximale compatible` et détails optionnels, plutôt qu'un sélecteur brut de noms de modèles. Le bouton **« Installer ma configuration recommandée »** doit afficher l'espace occupé, les gros téléchargements et leurs autorisations avant téléchargement. L'utilisateur peut reporter sans entrer dans la configuration avancée.
+Le premier lancement affiche **« Atlas choisit la meilleure configuration IA pour votre PC »**, avec profil **par défaut `Meilleur compromis qualité / temps`** et détails optionnels (profil « Qualité maximale » disponible uniquement en option), plutôt qu'un sélecteur brut de noms de modèles. Le bouton **« Installer ma configuration recommandée »** doit afficher l'espace occupé, les gros téléchargements et leurs autorisations avant téléchargement. L'utilisateur peut reporter sans entrer dans la configuration avancée.
 
 Après installation : cartes **« IA de développement : prête / en cours de test / indisponible »** et **« IA de vérification : prête / facultative »** ; les modèles peuvent être identiques par défaut. Afficher la justification réelle (tests passés, limites de RAM/VRAM, date, éventuellement lenteur), le volume sur le disque et un bouton **« Réévaluer automatiquement »**. Les modèles/tags/quantifications sont dans « Détails avancés ».
 
@@ -43,3 +43,13 @@ Après installation : cartes **« IA de développement : prête / en cours de te
 - [ ] Tests Windows réels avec longues sessions et simulations de flux (50+ lots / 1000 logs) ; vérifier le **pic de l'arbre de processus**, l'absence de fuite entre ouvertures Graphify, et que la fermeture de l'UI ne gonfle pas ni n'interrompt le moteur.
 
 Ce sont des **objectifs et gates futurs**, pas des consommations de l'EXE déjà mesurées.
+
+## Visibilité de l'efficacité et de la stagnation (décision utilisateur du 20/10/2026 — À IMPLÉMENTER)
+
+- [ ] Profil par défaut affiché : **Meilleur compromis qualité/temps**, sans sélection de modèle obligatoire ; variante « Qualité maximale » optionnelle et jamais au détriment des tests/sécurités.
+- [ ] Pour chaque tâche, afficher temps écoulé, classe de difficulté, étape en cours (codage/tests/certification/attente), dernier progrès **démontré**, modèle/rôle choisi, tentatives et raison d'escalade ou de blocage. Pas de pourcentage ni de qualité « 9/10 » inventés.
+- [ ] Historique compact : durée médiane sur tâches comparables, taux de succès validé, corrections et régressions, consommation mesurée, économies calculées uniquement à partir de mesures répétables.
+- [ ] Statut explicite « progresse », « réévalue sa stratégie », « attente externe », « bloqué » : ne pas confondre une longue certification avec une IA en boucle.
+- [ ] Rafraîchissement économe, données issues de SQLite/événements et jamais de métriques simulées en production ; tests d'UI et d'absence de fuite RAM sur longues sessions.
+
+**Ces vues sont des critères de sortie futurs et non des fonctions actuellement disponibles dans l'EXE.**
