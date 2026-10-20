@@ -54,7 +54,8 @@ def _document(raw: str) -> dict[str, Any]:
     return doc
 
 
-def _parse_missions(doc: dict[str, Any]) -> tuple[tuple[Mission, ...], dict[str, str]]:
+def _parse_missions(doc: dict[str, Any], *,
+                    allow_external_dependencies: bool = False) -> tuple[tuple[Mission, ...], dict[str, str]]:
     jobs = []
     specifications: dict[str, str] = {}
     for item in doc['missions']:
