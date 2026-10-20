@@ -99,7 +99,10 @@ class Installation:
     def build_service(self) -> HoldingService:
         git = GitWorktrees(self.canonical_root,self.workspace,self.repository)
         git.inspect_canonical()
-        program = AgentProgram(self.executable,self.arguments,timeout_seconds=self.timeout_seconds)
+        program = AgentProgram(self.executable, self.arguments,
+            timeout_seconds=self.timeout_seconds,
+            pinned_executable_sha256=self.executable_sha256,
+            pinned_arguments=tuple((arg, self.argument_sha256[arg]) for arg in self.arguments))
         return HoldingService.from_local_agent(ServiceSettings(self.database), program=program,
             git=git,health_directory=self.health_directory,online=lambda:False)
 

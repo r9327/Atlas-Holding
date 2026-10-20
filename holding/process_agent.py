@@ -7,6 +7,8 @@ security boundary against malicious native executables.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -35,6 +37,8 @@ class AgentProgram:
     arguments: tuple[str, ...] = ()
     timeout_seconds: float = 120.0
     output_limit: int = 512 * 1024
+    pinned_executable_sha256: str | None = None
+    pinned_arguments: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self):
         if (not self.executable.is_absolute() or not self.executable.is_file() or
@@ -46,6 +50,15 @@ class AgentProgram:
             raise ValueError('Agent output limit is invalid')
         if any(not isinstance(a, str) or '\x00' in a or len(a) > 4096 for a in self.arguments):
             raise ValueError('Invalid trusted agent arguments')
+        if self.pinned_executable_sha256 is not None:
+            if (len(self.pinned_executable_sha256) != 64 or
+                    any(ch not in '0123456789abcdef' for ch in self.pinned_executable_sha256)):
+                raise ValueError('Invalid agent executable checksum')
+            if (len(self.pinned_arguments) != len(self.arguments) or
+                    tuple(path for path, _ in self.pinned_arguments) != self.arguments):
+                raise ValueError('Every executable argument needs an exact file pin')
+        elif self.pinned_arguments:
+            raise ValueError('Argument pins require a pinned executable')
 
 
 class LocalProcessAgent:
@@ -54,6 +67,26 @@ class LocalProcessAgent:
     def __init__(self, config: AgentProgram, *, should_stop: Callable[[], bool] = lambda: False):
         self.config = config
         self.should_stop = should_stop
+
+    def _verify_installed_files(self) -> None:
+        if self.config.pinned_executable_sha256 is None:
+            return  # In-process test/trusted caller, not installer-configured.
+        pins = ((str(self.config.executable), self.config.pinned_executable_sha256),
+                *self.config.pinned_arguments)
+        for name, expected in pins:
+            path = Path(name)
+            if (not path.is_absolute() or not path.is_file() or path.is_symlink() or
+                    len(expected) != 64 or any(c not in '0123456789abcdef' for c in expected)):
+                raise AgentProcessError('Trusted agent file pin is invalid')
+            digest = hashlib.sha256()
+            try:
+                with path.open('rb') as handle:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b''):
+                        digest.update(chunk)
+            except OSError as exc:
+                raise AgentProcessError('Trusted agent file could not be read') from exc
+            if not hmac.compare_digest(digest.hexdigest(), expected):
+                raise AgentProcessError('Trusted agent file changed after installation')
 
     @staticmethod
     def _stop_tree(proc: subprocess.Popen) -> None:
@@ -80,6 +113,8 @@ class LocalProcessAgent:
             raise AgentProcessError('Unsupported agent action')
         if not cwd.is_absolute() or not cwd.is_dir():
             raise AgentProcessError('Agent worktree must be an existing absolute directory')
+        # Verify immediately before each process launch, not just at onboarding.
+        self._verify_installed_files()
         request = json.dumps({'protocol': 1, 'action': action, 'payload': payload},
                              separators=(',', ':'), ensure_ascii=False).encode('utf-8')
         if len(request) > 64 * 1024:
