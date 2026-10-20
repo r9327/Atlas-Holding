@@ -17,6 +17,8 @@ import sys
 from typing import Callable
 from urllib import request
 
+from .probe_process import run_probe
+
 _PROBE_ENVIRONMENT = {
     "PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "TMPDIR",
     "LANG", "LC_ALL", "PYTHONUTF8", "PYTHONIOENCODING",
@@ -78,9 +80,8 @@ def _command(executable: str, args: tuple[str, ...], *, timeout: float = 2.0) ->
         NO_PROXY="127.0.0.1,localhost",
     )
     try:
-        completed = subprocess.run([executable, *args], capture_output=True, text=True,
-                                   stdin=subprocess.DEVNULL, timeout=timeout, check=False,
-                                   env=environment)
+        completed = run_probe([executable, *args], environment=environment,
+                              timeout=timeout)
     except (OSError, subprocess.TimeoutExpired):
         return -1, ""
     return completed.returncode, (completed.stdout or completed.stderr)[:8192].strip()

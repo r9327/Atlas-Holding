@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -13,6 +14,30 @@ from holding import inventory as inv
 
 
 class InventoryTests(unittest.TestCase):
+    def test_timed_out_probe_cannot_leave_a_descendant_running(self):
+        with tempfile.TemporaryDirectory() as root:
+            heartbeat = Path(root) / "descendant-heartbeat"
+            descendant = (
+                "import pathlib,sys,time; p=pathlib.Path(sys.argv[1]); "
+                "exec(\"while True:\\n p.open('a').write('x')\\n time.sleep(.03)\")"
+            )
+            parent = (
+                "import subprocess,sys,time; "
+                "subprocess.Popen([sys.executable,'-c',sys.argv[1],sys.argv[2]]); "
+                "time.sleep(60)"
+            )
+            result = inv._command(
+                sys.executable,
+                ("-c", parent, descendant, str(heartbeat)),
+                timeout=2,
+            )
+            self.assertEqual(result, (-1, ""))
+            self.assertTrue(heartbeat.is_file(), "descendant never started")
+            size_after_timeout = heartbeat.stat().st_size
+            self.assertGreater(size_after_timeout, 0)
+            time.sleep(.25)
+            self.assertEqual(heartbeat.stat().st_size, size_after_timeout)
+
     def test_program_probe_does_not_inherit_session_secrets(self):
         before = os.environ.get("GITHUB_TOKEN")
         os.environ["GITHUB_TOKEN"] = "must-not-reach-probe"
