@@ -14,7 +14,7 @@ import time
 
 from .autonomy import Mission, choose_next
 from .roadmap_import import (
-    MAX_ROADMAP_BYTES, RoadmapImporter, _document, _parse_missions,
+    MAX_ROADMAP_BYTES, _document, _parse_missions,
 )
 from .state_store import StateStore, StoreError
 
