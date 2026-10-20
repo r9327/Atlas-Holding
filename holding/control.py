@@ -20,6 +20,7 @@ class ControlSnapshot:
     last_event_seq: int
     scoped_qa_counts: dict[str, int] = field(default_factory=dict)
     repair_counts: dict[str, int] = field(default_factory=dict)
+    coder_job_peak_bytes: int | None = None
 
 
 class ControlPlane:
@@ -52,7 +53,24 @@ class ControlPlane:
         return ControlSnapshot(self._setting("paused"), self._setting("stop_requested"),
                                lease is not None and lease["expires_epoch"] > int(time.time()),
                                counts, last, self.scoped_qa_counts(),
-                               self.qa_repair_counts())
+                               self.qa_repair_counts(), self.latest_coder_job_peak())
+
+    def latest_coder_job_peak(self) -> int | None:
+        """Latest measured normal coder Job commit peak, never an inferred zero.
+
+        This excludes inference outside the adapter's Job, other services
+        and the GUI; it cannot certify the 400MB total Holding RAM budget.
+        """
+        row = self.store.db.execute(
+            "SELECT detail FROM events WHERE event='CODER_ADAPTER_JOB_PEAK_BYTES' "
+            "ORDER BY seq DESC LIMIT 1").fetchone()
+        if row is None:
+            return None
+        raw = row["detail"]
+        if not isinstance(raw, str) or not raw.isascii() or not raw.isdigit():
+            return None
+        value = int(raw) if len(raw) <= 20 else -1
+        return value if 0 <= value <= 1024 ** 4 else None
 
     def qa_repair_counts(self) -> dict[str, int]:
         """Show actual durable QA retries, never projected completion."""

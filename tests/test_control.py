@@ -94,6 +94,16 @@ class ControlTests(unittest.TestCase):
             self.assertEqual(counts, {
                 "attempts": 1, "missions": 1, "blocked": 1})
 
+    def test_coder_job_peak_is_measured_event_not_estimated_usage(self):
+        with ControlPlane(self.path) as control:
+            self.assertIsNone(control.snapshot().coder_job_peak_bytes)
+            control.store._event('a', 'CODER_ADAPTER_JOB_PEAK_BYTES', str(40 * 1024 ** 2))
+            self.assertEqual(control.snapshot().coder_job_peak_bytes, 40 * 1024 ** 2)
+            control.store._event('a', 'CODER_ADAPTER_JOB_PEAK_BYTES', 'not measured')
+            self.assertIsNone(control.snapshot().coder_job_peak_bytes)
+            control.store._event('a', 'CODER_ADAPTER_JOB_PEAK_BYTES', '-1')
+            self.assertIsNone(control.snapshot().coder_job_peak_bytes)
+
     def test_live_lease_is_reported_as_lease_only(self):
         with HoldingEngine(self.path, lambda m: SHA, online=lambda: False) as engine:
             engine.start()
