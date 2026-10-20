@@ -43,7 +43,7 @@ class SafeRoadmapReplanner:
         )""")
 
     @staticmethod
-    def _parse(raw: str):
+    def _parse(raw: str, *, incremental: bool = False):
         if not isinstance(raw, str):
             raise StoreError("Roadmap revision must be text")
         try:
