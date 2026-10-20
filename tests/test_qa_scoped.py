@@ -133,7 +133,7 @@ class ScopedDoctorRunnerTests(unittest.TestCase):
         with StateStore(db_path) as state:
             state.add_missions([Mission("mission", REPO)])
             state.grant_for_onboarding(StandingGrant(
-                REPO, frozenset({"code"}), int(time.time()) + 1000))
+                REPO, frozenset({"code", "local_test"}), int(time.time()) + 1000))
             self.assertEqual(state.claim_next(online=False).mission_id, "mission")
             state.checkpoint("mission", SHA)
             with patch("holding.qa_scoped.subprocess.run",
@@ -150,6 +150,20 @@ class ScopedDoctorRunnerTests(unittest.TestCase):
     @staticmethod
     def _write_successful_report(argv, **kwargs):
         return 0, json.dumps(_report()).encode()
+
+    def test_local_tests_need_separate_grant(self):
+        db_path = self.root / "no-test-permission.sqlite"
+        with StateStore(db_path) as state:
+            state.add_missions([Mission("mission", REPO)])
+            state.grant_for_onboarding(StandingGrant(
+                REPO, frozenset({"code"}), int(time.time()) + 1000))
+            self.assertEqual(state.claim_next(online=False).mission_id, "mission")
+            state.checkpoint("mission", SHA)
+            with patch("holding.qa_scoped._run_limited_doctor") as executable:
+                with self.assertRaisesRegex(StoreError, "local_test permission"):
+                    self.runner.run_pending(state, "mission")
+                executable.assert_not_called()
+
 
     def test_without_pending_exact_mission_no_test_process_launches(self):
         with StateStore(self.root / "state.sqlite") as state:
