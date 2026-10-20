@@ -35,6 +35,12 @@ per intermediate commit. **Only after the complete PR and self-review**, mark
 Ready for review once so GitHub validates the final exact SHA; if checks fail,
 return to Draft, fix and certify the updated candidate.
 
+During Draft development, the repository label `ci:validate` may be applied to
+request one Linux/Windows matrix for the current exact PR head. This is a
+development validation only: it neither changes Draft state nor grants FULL,
+release, merge, or final-certification authority. Remove and reapply the label
+to validate a later candidate explicitly; ordinary pushes remain quiet.
+
 ## Operator-facing commands (code exists, installation pending)
 
 ```powershell

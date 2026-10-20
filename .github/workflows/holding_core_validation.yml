@@ -3,14 +3,20 @@ name: Holding Core Python 3.13 validation
 on:
   pull_request:
     branches: [main]
-    types: [ready_for_review]
+    # Draft development stays quiet by default. Applying the explicit
+    # ci:validate label requests one exact-head matrix without pretending the
+    # PR is ready for final review.
+    types: [ready_for_review, labeled]
 
 permissions:
   contents: read
 
 jobs:
   core-tests:
-    if: github.head_ref == 'feat/03-offline-orchestrator'
+    if: >-
+      github.head_ref == 'feat/03-offline-orchestrator' &&
+      (github.event.action == 'ready_for_review' ||
+       github.event.label.name == 'ci:validate')
     name: Core unittest on ${{ matrix.os }}
     strategy:
       fail-fast: false
