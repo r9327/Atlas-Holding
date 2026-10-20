@@ -62,10 +62,16 @@ class ClientSafetyTests(unittest.TestCase):
                    return_value=opener):
             client = GitHubEvidenceClient("r9327/Dof-Atlas", "secret")
             for route in ("", "../secrets", "/users/x", "https://evil.test/x",
-                          "pulls/../actions", "pulls\\1"):
+                          "pulls/../actions", "pulls\\1", "pulls/%2e%2e/actions",
+                          "pulls/1#fragment", "pulls/1 bad"):
                 with self.subTest(route=route), self.assertRaises(GitHubEvidenceError):
                     client.get(route)
         self.assertEqual(opener.urls, [])
+
+    def test_repository_path_segments_cannot_traverse(self):
+        for repo in ("../actions", "owner/..", "./repo", "owner/."):
+            with self.subTest(repo=repo), self.assertRaises(GitHubEvidenceError):
+                GitHubEvidenceClient(repo, "secret")
 
     def test_oversized_payload_rejected_without_unbounded_read(self):
         response = _Response(b"x" * (2 * 1024 * 1024 + 1))

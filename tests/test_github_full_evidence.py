@@ -125,16 +125,20 @@ class FullEvidenceTests(unittest.TestCase):
 class _MockGitHub:
     repo = REPO
 
-    def __init__(self, fixture, *, incomplete=False):
+    def __init__(self, fixture, *, incomplete=False, moved_head=False):
         self.fixture = fixture
         self.incomplete = incomplete
+        self.moved_head = moved_head
         self.queried = []
 
     def get(self, route):
         self.queried.append(route)
         data = self.fixture
         if route == "pulls/230":
-            return deepcopy(data["pull"])
+            pull = deepcopy(data["pull"])
+            if self.moved_head and self.queried.count(route) > 1:
+                pull["head"]["sha"] = "b" * 40
+            return pull
         if route.startswith("contents/"):
             return {"sha": "blob-1"}
         if route.startswith("actions/workflows/"):
@@ -155,6 +159,13 @@ class ApiObservationTests(unittest.TestCase):
         self.assertEqual(sum(route.startswith("contents/") for route in client.queried),
                          2 * len(_PROTECTED_SOURCES))
         self.assertEqual(len([r for r in client.queried if r.startswith("actions/runs/")]), 1)
+        self.assertEqual(client.queried.count("pulls/230"), 2)
+
+    def test_head_move_during_api_collection_refuses_stale_evidence(self):
+        client = _MockGitHub(fixtures(), moved_head=True)
+        with self.assertRaisesRegex(GitHubEvidenceError, "exact-HEAD"):
+            observe_full_pr(client, 230, now=NOW)
+        self.assertEqual(client.queried.count("pulls/230"), 2)
 
     def test_incomplete_page_is_not_accepted(self):
         client = _MockGitHub(fixtures(), incomplete=True)

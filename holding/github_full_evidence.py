@@ -50,7 +50,8 @@ class GitHubEvidenceClient:
     """Allowlisted, bounded GitHub HTTPS GETs using a separately held token."""
 
     def __init__(self, repo: str, token: str):
-        if not isinstance(repo, str) or not _REPO.fullmatch(repo):
+        if (not isinstance(repo, str) or not _REPO.fullmatch(repo)
+                or any(part in (".", "..") for part in repo.split("/"))):
             raise GitHubEvidenceError("Expected exact owner/repository")
         if not isinstance(token, str) or not token or any(c in token for c in "\r\n"):
             raise GitHubEvidenceError("Trusted GitHub API credential is required")
@@ -63,7 +64,8 @@ class GitHubEvidenceClient:
         if (not isinstance(route, str) or not route
                 or route.startswith("/") or "://" in route
                 or any(part in ("", ".", "..") for part in route.split("/"))
-                or "\\" in route):
+                or "\\" in route or "%" in route or "#" in route
+                or any(character.isspace() for character in route)):
             raise GitHubEvidenceError("Unsafe GitHub API route")
         url = "https://api.github.com/repos/" + self.repo + "/" + route
         req = request.Request(url, headers={
@@ -230,9 +232,13 @@ def observe_full_pr(client: GitHubEvidenceClient, pr_number: int, *,
                 or not isinstance(jobs.get("jobs"), list)):
             raise GitHubEvidenceError("Incomplete FULL job inventory")
         try:
+            # The head may advance while jobs, checks and protected blobs are
+            # fetched. Re-read the PR and validate the complete record against
+            # that final state before returning any authority-bearing result.
+            current_pull = client.get(f"pulls/{pr_number}")
             return validate_full_evidence(
                 repo=client.repo, pr_number=pr_number, sha=sha,
-                pull=pull, run=run, jobs=jobs["jobs"],
+                pull=current_pull, run=run, jobs=jobs["jobs"],
                 checks=checks["check_runs"], protected=protected, now=now)
         except GitHubEvidenceError:
             continue
