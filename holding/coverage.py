@@ -33,6 +33,7 @@ class CoverageSummary:
     incomplete: int
     missions_total: int
     ready_to_close: bool
+    unmapped_missions: int = 0
 
 
 class RequirementCoverage:
@@ -109,9 +110,15 @@ class RequirementCoverage:
                 blocked += n
             else:
                 incomplete += n
-        # Empty/missing specification tables can never prove a completed roadmap.
+        # Every mission, even one inserted without a roadmap specification,
+        # must block closure until explicit acceptance coverage is imported.
+        all_missions = self.store.db.execute(
+            "SELECT COUNT(*) FROM missions").fetchone()[0]
+        untracked = max(0, int(all_missions) - missions)
         return CoverageSummary(total, proven, awaiting, blocked, incomplete,
-                               missions, total > 0 and total == proven)
+                               int(all_missions),
+                               total > 0 and total == proven and untracked == 0,
+                               untracked)
 
     def page(self, *, after_mission_id: str = "", after_criterion: int = -1,
              limit: int = 100) -> tuple[Requirement, ...]:
