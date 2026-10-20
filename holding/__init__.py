@@ -1,1 +1,1 @@
-"""Optional code-intelligence policies for Atlas Holding."""
+"""Atlas Holding foundational and optional code-intelligence policies."""
