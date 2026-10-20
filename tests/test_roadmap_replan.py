@@ -73,6 +73,14 @@ class RoadmapReplanTests(unittest.TestCase):
             (change.version,)).fetchone()[0]
         self.assertIn("delta_sha256:", source)
 
+    def test_incremental_direction_rejects_dependency_absent_from_saved_dag(self):
+        missing = dict(C, depends_on=["never-imported"])
+        before = len(self.store.missions())
+        with self.assertRaisesRegex(StoreError, "Unknown dependency"):
+            self.replan.append_direction(
+                document(missing), source="ui:bad-dependency")
+        self.assertEqual(len(self.store.missions()), before)
+
     def test_incremental_direction_cannot_modify_started_mission(self):
         self.assertEqual(self.store.claim_next(online=False).mission_id, "a")
         self.store.checkpoint("a", SHA)
