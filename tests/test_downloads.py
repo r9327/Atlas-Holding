@@ -1,6 +1,7 @@
 """Local network test server. No Internet or third-party packages needed."""
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
 import os
 from pathlib import Path
 import socket
@@ -18,6 +19,7 @@ from holding.downloads import (
     DownloadError,
     InsufficientSpaceError,
     IntegrityError,
+    TransferJournalError,
 )
 
 DATA = (b"Holding reliable bootstrap\n" * 65536) + b"END"
@@ -32,6 +34,9 @@ class Server(BaseHTTPRequestHandler):
         return
 
     def do_GET(self):
+        if self.behavior == "not_found":
+            self.send_error(404)
+            return
         data = DATA
         start = 0
         r = self.headers.get("Range")
@@ -126,6 +131,11 @@ class DownloadTests(unittest.TestCase):
             self.call()
         self.assertEqual(partial.read_bytes(), DATA[:70000])
         self.assertFalse(self.target.exists())
+        journal = json.loads(
+            self.target.with_name(self.target.name + ".transfer.json").read_text()
+        )
+        self.assertEqual(journal["state"], "FAILED")
+        self.assertEqual(journal["partial_bytes"], 70000)
 
     def test_symlink_is_refused(self):
         other = Path(self.temp.name) / "other"
@@ -180,6 +190,10 @@ class DownloadTests(unittest.TestCase):
             with self.assertRaises(InsufficientSpaceError):
                 self.call(free_space_reserve=0)
         self.assertEqual(partial.read_bytes(), DATA[:-64])
+        journal = json.loads(
+            self.target.with_name(self.target.name + ".transfer.json").read_text()
+        )
+        self.assertEqual(journal["state"], "BLOCKED")
 
     def test_cancellation_preserves_partial_for_later_resume(self):
         observed = 0
@@ -194,12 +208,63 @@ class DownloadTests(unittest.TestCase):
         self.assertEqual(partial.stat().st_size, observed)
         self.assertGreater(observed, 0)
         self.assertFalse(self.target.exists())
+        journal = json.loads(
+            self.target.with_name(self.target.name + ".transfer.json").read_text()
+        )
+        self.assertEqual(journal["state"], "CANCELLED")
+        self.assertEqual(journal["partial_bytes"], observed)
+        self.assertEqual(journal["attempts"], 1)
         self.assertEqual(self.call().read_bytes(), DATA)
+        complete = json.loads(
+            self.target.with_name(self.target.name + ".transfer.json").read_text()
+        )
+        self.assertEqual(complete["state"], "COMPLETE")
+        self.assertEqual(complete["attempts"], 2)
 
     def test_cancellation_before_request_creates_no_partial(self):
         with self.assertRaisesRegex(DownloadCancelled, "before the next request"):
             self.call(cancelled=lambda: True)
         self.assertFalse(self.target.with_name(self.target.name + ".part").exists())
+
+    def test_journal_omits_url_query_secrets_and_rejects_new_pin(self):
+        secret_url = self.url + "?token=must-not-persist"
+        download_pinned(
+            secret_url, self.target, sha256=HASH, size=len(DATA),
+            retry_delay=0, manifest_id="bootstrap-v1",
+        )
+        journal_path = self.target.with_name(self.target.name + ".transfer.json")
+        raw = journal_path.read_text(encoding="utf-8")
+        self.assertNotIn("must-not-persist", raw)
+        self.assertEqual(json.loads(raw)["url"], self.url)
+        with self.assertRaisesRegex(TransferJournalError, "pinned manifest"):
+            download_pinned(
+                secret_url, self.target, sha256=HASH, size=len(DATA),
+                retry_delay=0, manifest_id="bootstrap-v2",
+            )
+
+    def test_interrupted_attempt_is_persisted_for_restart(self):
+        Server.behavior = "drop_once"
+        with self.assertRaises(DownloadError):
+            self.call(max_attempts=1, manifest_id="drop-test")
+        journal = json.loads(
+            self.target.with_name(self.target.name + ".transfer.json").read_text()
+        )
+        partial = self.target.with_name(self.target.name + ".part")
+        self.assertEqual(journal["state"], "INTERRUPTED")
+        self.assertEqual(journal["partial_bytes"], partial.stat().st_size)
+        self.assertEqual(journal["attempts"], 1)
+        self.assertTrue(journal["error"])
+
+    def test_permanent_http_failure_is_not_retried_and_is_journaled(self):
+        Server.behavior = "not_found"
+        with self.assertRaisesRegex(DownloadError, "Permanent HTTP 404"):
+            self.call(max_attempts=3)
+        journal = json.loads(
+            self.target.with_name(self.target.name + ".transfer.json").read_text()
+        )
+        self.assertEqual(journal["state"], "FAILED")
+        self.assertEqual(journal["attempts"], 1)
+        self.assertEqual(journal["error"], "HTTP_404")
 
     def test_invalid_url_and_digest(self):
         with self.assertRaises(ValueError):

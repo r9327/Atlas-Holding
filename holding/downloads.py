@@ -7,12 +7,15 @@ from __future__ import annotations
 
 import hashlib
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from http.client import HTTPException
 import ipaddress
+import json
 import os
 from pathlib import Path
 import re
 import shutil
+import tempfile
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -37,6 +40,10 @@ class InsufficientSpaceError(DownloadError):
 
 class DownloadCancelled(DownloadError):
     """The caller cancelled cleanly; resumable bytes remain on disk."""
+
+
+class TransferJournalError(DownloadError):
+    """Persistent transfer metadata is invalid or belongs to another pin."""
 
 
 _RANGE = re.compile(r"^bytes (\d+)-(\d+)/(\d+|\*)$")
@@ -138,6 +145,91 @@ def _require_disk_space(parent: Path, remaining: int, reserve: int) -> None:
         )
 
 
+def _canonical_journal_url(url: str) -> str:
+    parts = urlsplit(url)
+    # Query strings commonly contain expiring signatures. They are needed for
+    # the request but must never be copied into persistent diagnostic state.
+    return f"{parts.scheme}://{parts.netloc}{parts.path}"
+
+
+class _TransferJournal:
+    """Atomic sidecar describing one pinned transfer across restarts."""
+
+    def __init__(self, target: Path, *, manifest_id: str, url: str,
+                 sha256: str, size: int):
+        if (not isinstance(manifest_id, str) or not manifest_id
+                or len(manifest_id) > 200 or not manifest_id.isprintable()):
+            raise ValueError("Manifest ID must be 1-200 printable characters")
+        self.path = target.with_name(target.name + ".transfer.json")
+        self.identity = {
+            "manifest_id": manifest_id,
+            "url": _canonical_journal_url(url),
+            "sha256": sha256,
+            "size": size,
+        }
+        self.attempts = 0
+        if self.path.exists():
+            if _is_link_like(self.path) or not self.path.is_file():
+                raise TransferJournalError("Transfer journal is not a regular file")
+            try:
+                payload = json.loads(self.path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                raise TransferJournalError("Transfer journal is unreadable") from exc
+            if not isinstance(payload, dict):
+                raise TransferJournalError("Transfer journal must contain an object")
+            actual = {key: payload.get(key) for key in self.identity}
+            if actual != self.identity:
+                raise TransferJournalError(
+                    "Transfer journal does not match the pinned manifest"
+                )
+            attempts = payload.get("attempts", 0)
+            if type(attempts) is not int or attempts < 0:
+                raise TransferJournalError("Transfer journal attempt count is invalid")
+            self.attempts = attempts
+
+    def record(self, state: str, partial_bytes: int, *, error: str = "",
+               new_attempt: bool = False) -> None:
+        if new_attempt:
+            self.attempts += 1
+        payload = {
+            **self.identity,
+            "state": state,
+            "partial_bytes": partial_bytes,
+            "attempts": self.attempts,
+            "error": error[:200],
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        temporary_name = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w", encoding="utf-8", dir=self.path.parent,
+                prefix=self.path.name + ".", suffix=".tmp", delete=False,
+            ) as handle:
+                temporary_name = handle.name
+                json.dump(payload, handle, ensure_ascii=True, sort_keys=True)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary_name, self.path)
+            temporary_name = None
+        except OSError as exc:
+            raise TransferJournalError("Could not persist transfer journal") from exc
+        finally:
+            if temporary_name is not None:
+                try:
+                    Path(temporary_name).unlink()
+                except OSError:
+                    pass
+
+
+def _error_label(error: Exception | None) -> str:
+    if error is None:
+        return "UnknownTransferError"
+    if isinstance(error, HTTPError):
+        return f"HTTP_{error.code}"
+    return type(error).__name__
+
+
 def _publish_without_overwrite(partial: Path, target: Path, *,
                                expected: str, size: int) -> Path:
     """Atomically publish verified bytes without replacing a concurrent file."""
@@ -174,6 +266,7 @@ def download_pinned(
     timeout: float = 45.0,
     retry_delay: float = 3.0,
     free_space_reserve: int = _DEFAULT_FREE_RESERVE,
+    manifest_id: str | None = None,
     cancelled=None,
     progress=None,
 ) -> Path:
@@ -197,10 +290,6 @@ def download_pinned(
         raise DownloadError("Refusing symlinked destination")
     if target.exists() and not target.is_file():
         raise DownloadError("Destination is not a regular file")
-    if target.exists() and target.stat().st_size == size and _sha256(target) == expected:
-        return target
-    if target.exists():
-        raise IntegrityError("Existing destination does not match pinned checksum")
     _reject_linked_ancestors(target.parent)
     target.parent.mkdir(parents=True, exist_ok=True)
     _reject_linked_ancestors(target.parent)
@@ -208,6 +297,19 @@ def download_pinned(
         partial = target.with_name(target.name + ".part")
         if _is_link_like(partial) or _is_link_like(target):
             raise DownloadError("Refusing symlinked download path")
+        journal = _TransferJournal(
+            target,
+            manifest_id=manifest_id if manifest_id is not None else expected,
+            url=url,
+            sha256=expected,
+            size=size,
+        )
+        if target.exists():
+            if target.stat().st_size == size and _sha256(target) == expected:
+                journal.record("COMPLETE", size)
+                return target
+            journal.record("FAILED", 0, error="IntegrityError")
+            raise IntegrityError("Existing destination does not match pinned checksum")
         if partial.exists() and not partial.is_file():
             raise DownloadError("Partial destination is not a regular file")
         if partial.exists() and partial.stat().st_nlink != 1:
@@ -217,16 +319,30 @@ def download_pinned(
         last_error: Exception | None = None
         for attempt in range(max_attempts):
             if cancelled is not None and cancelled():
+                journal.record(
+                    "CANCELLED", partial.stat().st_size if partial.exists() else 0,
+                    error="DownloadCancelled",
+                )
                 raise DownloadCancelled("Download cancelled before the next request")
             offset = partial.stat().st_size if partial.exists() else 0
             if offset > size:
+                journal.record("FAILED", offset, error="IntegrityError")
                 raise IntegrityError("Partial file exceeds pinned size; manual repair required")
             if offset == size:
                 if _sha256(partial) != expected:
+                    journal.record("FAILED", offset, error="IntegrityError")
                     raise IntegrityError("Complete partial has invalid checksum; repair required")
-                return _publish_without_overwrite(partial, target, expected=expected,
-                                                  size=size)
-            _require_disk_space(target.parent, size - offset, free_space_reserve)
+                result = _publish_without_overwrite(
+                    partial, target, expected=expected, size=size,
+                )
+                journal.record("COMPLETE", size)
+                return result
+            try:
+                _require_disk_space(target.parent, size - offset, free_space_reserve)
+            except InsufficientSpaceError:
+                journal.record("BLOCKED", offset, error="InsufficientSpaceError")
+                raise
+            journal.record("DOWNLOADING", offset, new_attempt=True)
 
             headers = {"User-Agent": "Atlas-Holding-Bootstrap/0.1", "Accept-Encoding": "identity"}
             if offset:
@@ -255,6 +371,9 @@ def download_pinned(
                     with partial.open(file_mode) as fd:
                         while count < size:
                             if cancelled is not None and cancelled():
+                                journal.record(
+                                    "CANCELLED", count, error="DownloadCancelled"
+                                )
                                 raise DownloadCancelled(
                                     f"Download cancelled at {count}/{size} bytes"
                                 )
@@ -270,15 +389,41 @@ def download_pinned(
                     if count == size:
                         if _sha256(partial) != expected:
                             raise IntegrityError("SHA-256 mismatch; partial kept for inspection")
-                        return _publish_without_overwrite(partial, target, expected=expected,
-                                                          size=size)
+                        result = _publish_without_overwrite(
+                            partial, target, expected=expected, size=size,
+                        )
+                        journal.record("COMPLETE", size)
+                        return result
                     last_error = DownloadError(f"Short transfer: {count}/{size} bytes; partial retained")
+            except DownloadCancelled:
+                raise
+            except InsufficientSpaceError:
+                journal.record(
+                    "BLOCKED", partial.stat().st_size if partial.exists() else 0,
+                    error="InsufficientSpaceError",
+                )
+                raise
+            except DownloadError as exc:
+                journal.record(
+                    "FAILED", partial.stat().st_size if partial.exists() else 0,
+                    error=_error_label(exc),
+                )
+                raise
             except HTTPError as exc:
                 if exc.code not in _TRANSIENT:
-                    raise DownloadError(f"Permanent HTTP {exc.code}") from exc
+                    failure = DownloadError(f"Permanent HTTP {exc.code}")
+                    journal.record(
+                        "FAILED", partial.stat().st_size if partial.exists() else 0,
+                        error=f"HTTP_{exc.code}",
+                    )
+                    raise failure from exc
                 last_error = exc
             except (URLError, TimeoutError, ConnectionError, OSError, HTTPException) as exc:
                 last_error = exc
+            journal.record(
+                "INTERRUPTED", partial.stat().st_size if partial.exists() else 0,
+                error=_error_label(last_error),
+            )
             if attempt + 1 < max_attempts:
                 time.sleep(min(retry_delay * (2 ** min(attempt, 5)), 90.0))
         raise DownloadError(f"Download interrupted after {max_attempts} attempts; partial preserved: {last_error}")
