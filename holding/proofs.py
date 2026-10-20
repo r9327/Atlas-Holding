@@ -28,6 +28,7 @@ class VerifiedProof:
     verdict: str
     artifact: str
     proof_digest: str
+    runner: str
 
 
 class ProofVerifier:
@@ -97,7 +98,7 @@ class ProofVerifier:
         if not hmac.compare_digest(actual, payload["artifact_sha256"]):
             raise ProofError("Changed evidence artifact")
         return VerifiedProof(mission_id, sha, payload["verdict"], name,
-                             hashlib.sha256(raw).hexdigest())
+                             hashlib.sha256(raw).hexdigest(), payload["runner"])
 
     def apply(self, store, receipt_name: str, *, mission_id: str) -> VerifiedProof:
         """Atomically settle QA_PENDING using verified signed evidence.
@@ -114,6 +115,11 @@ class ProofVerifier:
             if row is None or not SHA.fullmatch(row["candidate_sha"]):
                 raise StoreError("No pending candidate to validate")
             proof = self.verify(receipt_name, mission_id=mission_id, sha=row["candidate_sha"])
+            # Local Doctor results are useful for correction, never for the
+            # final FULL certification gate. Even a properly signed scoped
+            # Doctor PASS must not unlock dependent work as certified.
+            if proof.verdict == "PASS" and proof.runner != "github_certification":
+                raise ProofError("A local Doctor PASS is advisory, not final certification")
             store.db.execute("""CREATE TABLE IF NOT EXISTS signed_proofs (
                 mission_id TEXT PRIMARY KEY REFERENCES missions(id),
                 candidate_sha TEXT NOT NULL,
