@@ -50,7 +50,10 @@ class ProofVerifier:
         receipt_file = self.root / receipt_name
         if not receipt_file.is_file() or receipt_file.is_symlink():
             raise ProofError("No regular evidence receipt")
-        raw = receipt_file.read_bytes()
+        # Read at most one byte past the limit. A corrupt multi-GB receipt
+        # must never be loaded into the daemon's memory before rejection.
+        with receipt_file.open("rb") as stream:
+            raw = stream.read(32769)
         if not 0 < len(raw) <= 32768:
             raise ProofError("Receipt size out of bounds")
         try:
@@ -84,7 +87,13 @@ class ProofVerifier:
             raise ProofError("Missing or unsafe evidence artifact")
         if not isinstance(payload["artifact_sha256"], str):
             raise ProofError("Invalid evidence checksum")
-        actual = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        # Doctor artifacts may be large. Hash in bounded chunks so QA does
+        # not cause unclassified Holding RAM spikes during regular coding.
+        digest = hashlib.sha256()
+        with artifact.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        actual = digest.hexdigest()
         if not hmac.compare_digest(actual, payload["artifact_sha256"]):
             raise ProofError("Changed evidence artifact")
         return VerifiedProof(mission_id, sha, payload["verdict"], name,
