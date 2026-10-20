@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import patch
 
 from holding.qa_scoped import ScopedQaResult
+from holding.qa_dispatch import QaDispatch
 from holding.qa_scoped_entry import main
 
 SHA = "a" * 40
@@ -68,9 +69,8 @@ class ScopedEntryTests(unittest.TestCase):
         args = self.arguments.copy()
         index = args.index("--mission")
         args[index:index + 2] = ["--watch", "--once"]
-        outcome = type("Result", (), {
-            "action": "SCOPED_TESTS_PASS", "mission_id": "mission",
-            "reason": "Scoped advisory recorded"})()
+        outcome = QaDispatch("SCOPED_TESTS_PASS", "mission",
+                             "Scoped advisory recorded")
         result = StringIO()
         with patch("holding.qa_scoped_entry.GitWorktrees"), \
              patch("holding.qa_scoped_entry.StateStore"), \
@@ -88,9 +88,8 @@ class ScopedEntryTests(unittest.TestCase):
         args = self.arguments.copy()
         index = args.index("--mission")
         args[index:index + 2] = ["--watch", "--once"]
-        outcome = type("Result", (), {
-            "action": "FULL_REQUIRED", "mission_id": "mission",
-            "reason": "Needs independent certification"})()
+        outcome = QaDispatch("FULL_REQUIRED", "mission",
+                             "Needs independent certification")
         with patch("holding.qa_scoped_entry.GitWorktrees"), \
              patch("holding.qa_scoped_entry.StateStore"), \
              patch("holding.qa_scoped_entry.ScopedDoctorRunner"), \
