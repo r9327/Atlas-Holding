@@ -62,6 +62,7 @@ class Decision:
 def choose_next(
     missions: Iterable[Mission], grants: Iterable[StandingGrant],
     *, now_epoch: int, online: bool, retry_limit: int = 3,
+    supported_operations: frozenset[str] | None = None,
 ) -> Decision:
     """Select independent, authorized work without requesting routine clicks."""
     if retry_limit < 1:
@@ -132,6 +133,11 @@ def choose_next(
             continue
         if job.external_required and not online:
             deferred.append(Decision("WAIT_FOR_NETWORK", job.id, "External verification pending"))
+            continue
+        # A code-only adapter must not claim unsupported plan/test/merge
+        # missions and burn retries. Continue independent supported work.
+        if supported_operations is not None and job.operation not in supported_operations:
+            deferred.append(Decision("WAIT_FOR_WORKER", job.id, "No trusted worker for operation"))
             continue
         return Decision("RUN", job.id, "Ready and authorized")
     if blocked:
