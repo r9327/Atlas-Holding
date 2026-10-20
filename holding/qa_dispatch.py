@@ -50,26 +50,40 @@ class ScopedQaDispatcher:
         if not any(grant.allows(repo, "local_test", now)
                    for grant in self.store._grants()):
             return QaDispatch("WAIT_FOR_GRANT", None, "No local_test grant")
-        # A single bounded SELECT; no full mission graph or evidence directory
-        # scan is loaded into memory for hundreds of queued candidates.
-        row = self.store.db.execute("""
-            SELECT m.id, m.candidate_sha
-              FROM missions AS m
-         LEFT JOIN scoped_qa_advisories AS a ON a.mission_id=m.id
-                                                AND a.candidate_sha=m.candidate_sha
-         LEFT JOIN scoped_qa_retries AS r ON r.mission_id=m.id
-                                            AND r.candidate_sha=m.candidate_sha
-             WHERE m.repo=? AND m.state='QA_PENDING'
-               AND length(m.candidate_sha)=40
-               AND a.mission_id IS NULL
-               AND (r.mission_id IS NULL OR r.next_epoch<=?)
-             ORDER BY m.updated_at ASC,m.id ASC LIMIT 1
-        """, (repo, now)).fetchone()
-        if row is None:
-            return QaDispatch("IDLE", None, "No untested exact-SHA candidate")
-        mid, candidate_sha = row["id"], row["candidate_sha"]
-        if not _SHA.fullmatch(candidate_sha):
-            return QaDispatch("INVALID_SHA", mid, "Candidate SHA failed validation")
+        # Claim via a short BEGIN IMMEDIATE transaction before launching
+        # any child. Two QA processes cannot run the same SHA concurrently.
+        with self.store._transaction():
+            row = self.store.db.execute("""
+                SELECT m.id, m.candidate_sha
+                  FROM missions AS m
+             LEFT JOIN scoped_qa_advisories AS a ON a.mission_id=m.id
+                                                    AND a.candidate_sha=m.candidate_sha
+             LEFT JOIN scoped_qa_retries AS r ON r.mission_id=m.id
+                                                AND r.candidate_sha=m.candidate_sha
+                 WHERE m.repo=? AND m.state='QA_PENDING'
+                   AND length(m.candidate_sha)=40
+                   AND a.mission_id IS NULL
+                   AND (r.mission_id IS NULL OR r.next_epoch<=?)
+                 ORDER BY m.updated_at ASC,m.id ASC LIMIT 1
+            """, (repo, now)).fetchone()
+            if row is None:
+                return QaDispatch("IDLE", None, "No untested exact-SHA candidate")
+            mid, candidate_sha = row["id"], row["candidate_sha"]
+            if not _SHA.fullmatch(candidate_sha):
+                return QaDispatch("INVALID_SHA", mid, "Candidate SHA failed validation")
+            previous = self.store.db.execute(
+                "SELECT attempts FROM scoped_qa_retries WHERE mission_id=? "
+                "AND candidate_sha=?", (mid, candidate_sha)).fetchone()
+            attempts = previous["attempts"] if previous else 0
+            lease_until = now + self.runner.timeout_seconds + 180
+            self.store.db.execute("""INSERT INTO scoped_qa_retries
+                (mission_id,candidate_sha,attempts,next_epoch) VALUES(?,?,?,?)
+                ON CONFLICT(mission_id) DO UPDATE SET
+                candidate_sha=excluded.candidate_sha,
+                attempts=excluded.attempts,next_epoch=excluded.next_epoch""",
+                (mid, candidate_sha, attempts, lease_until))
+            self.store._event(mid, "SCOPED_QA_CLAIMED",
+                              f"{candidate_sha}:{lease_until}")
         try:
             outcome = self.runner.run_pending(self.store, mid)
         except (ScopedQaError, StoreError, OSError, ValueError) as exc:
