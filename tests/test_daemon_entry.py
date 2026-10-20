@@ -87,7 +87,11 @@ json.dump({'schema_version':1,'request_id':r['request_id'],'status':'OK',
 
     def test_schema_two_wires_pinned_github_health_and_push_role(self):
         self.enable_github(); self.save()
-        with Installation.load(self.config).build_service() as service:
+        installation = Installation.load(self.config)
+        self.assertEqual(
+            Path(installation.github.broker.command[1]),
+            Path(installation.github.broker.command[1]).resolve(strict=True))
+        with installation.build_service() as service:
             self.assertEqual(
                 service.worker.available_operations(), frozenset({'code', 'push'}))
             self.assertIsNotNone(service._github_health)

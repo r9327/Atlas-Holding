@@ -86,27 +86,33 @@ class Installation:
         if (not isinstance(raw_pins, dict) or not 1 <= len(raw_pins) <= 128):
             raise BootstrapError('Invalid privileged broker file pins')
         pins = []
+        canonical_paths = {}
+        seen_canonical = set()
         for raw_path, digest in raw_pins.items():
             if (not isinstance(raw_path, str) or len(raw_path) > 4096
                     or not isinstance(digest, str)
                     or not _DIGEST.fullmatch(digest)):
                 raise BootstrapError('Invalid privileged broker file pin')
             path = Path(raw_path)
+            if (not path.is_absolute() or '..' in path.parts or path.is_symlink()):
+                raise BootstrapError('Pinned broker path is unsafe')
             try:
                 canonical = path.resolve(strict=True)
             except OSError:
                 raise BootstrapError('Pinned broker file is unavailable') from None
-            if not path.is_absolute() or path != canonical:
-                raise BootstrapError('Pinned broker path is not canonical')
-            if not path.is_file() or path.is_symlink():
+            if canonical in seen_canonical:
+                raise BootstrapError('Duplicate canonical broker file pin')
+            if not canonical.is_file() or canonical.is_symlink():
                 raise BootstrapError('Pinned broker path is not a regular file')
             try:
-                observed = _hash_file(path)
+                observed = _hash_file(canonical)
             except OSError:
                 raise BootstrapError('Pinned broker file is unavailable') from None
             if not hmac.compare_digest(observed, digest):
                 raise BootstrapError('Pinned broker file changed since onboarding')
-            pins.append(BrokerFilePin(path, digest))
+            seen_canonical.add(canonical)
+            canonical_paths[raw_path] = canonical
+            pins.append(BrokerFilePin(canonical, digest))
         raw_spool = info['broker_spool_root']
         if not isinstance(raw_spool, str) or len(raw_spool) > 4096:
             raise BootstrapError('Invalid privileged broker spool path')
@@ -114,11 +120,17 @@ class Installation:
         if (not spool.is_absolute() or not spool.is_dir() or spool.is_symlink()
                 or '..' in spool.parts):
             raise BootstrapError('Invalid privileged broker spool directory')
+        try:
+            spool = spool.resolve(strict=True)
+        except OSError:
+            raise BootstrapError('Invalid privileged broker spool directory') from None
         timeout = info['broker_timeout_seconds']
         if type(timeout) is not int or not 1 <= timeout <= 120:
             raise BootstrapError('Invalid privileged broker timeout')
-        broker = BrokerProcessConfig(
-            tuple(raw_command), tuple(pins), spool, timeout)
+        command = tuple(
+            str(canonical_paths[item]) if item in canonical_paths else item
+            for item in raw_command)
+        broker = BrokerProcessConfig(command, tuple(pins), spool, timeout)
         try:
             # Constructor validation proves command/code coverage before the
             # service is built; per-call validation detects later tampering.
