@@ -1,6 +1,8 @@
 import os
+import subprocess
+import sys
 import unittest
-from holding.windows_job import WindowsJob, WindowsJobError
+from holding.windows_job import CREATE_SUSPENDED, WindowsJob, WindowsJobError
 
 
 class WindowsJobTests(unittest.TestCase):
@@ -35,6 +37,37 @@ class WindowsJobTests(unittest.TestCase):
             with self.subTest(limit=invalid), self.assertRaises(WindowsJobError) as raised:
                 WindowsJob(max_job_memory_bytes=invalid)
             self.assertEqual(raised.exception.code, 'INVALID_MEMORY_QUOTA')
+
+    @unittest.skipUnless(os.name == 'nt', 'Requires real Windows Job Objects')
+    def test_child_is_assigned_atomically_at_process_creation(self):
+        with WindowsJob() as job:
+            process = subprocess.Popen(
+                [sys.executable, '-c', 'print(42)'],
+                stdout=subprocess.PIPE,
+                creationflags=CREATE_SUSPENDED,
+            )
+            job.attach_suspended(process)
+            stdout, _ = process.communicate(timeout=5)
+        self.assertEqual(process.returncode, 0)
+        self.assertEqual(stdout.strip(), b'42')
+
+    @unittest.skipUnless(os.name == 'nt', 'Requires real Windows Job Objects')
+    def test_atomically_assigned_child_is_terminated_by_job(self):
+        process = None
+        try:
+            with WindowsJob() as job:
+                process = subprocess.Popen(
+                    [sys.executable, '-c', 'import time; time.sleep(60)'],
+                    creationflags=CREATE_SUSPENDED,
+                )
+                job.attach_suspended(process)
+                job.terminate()
+                process.wait(timeout=3)
+            self.assertNotEqual(process.returncode, 0)
+        finally:
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.wait(timeout=3)
 
 
 if __name__ == '__main__':

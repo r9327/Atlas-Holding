@@ -19,6 +19,8 @@ import tempfile
 import time
 
 from .git_worktree import GitWorktrees, GitSafetyError
+from .process_agent import LocalProcessAgent
+from .windows_job import CREATE_SUSPENDED
 
 _SHA = re.compile(r'^[0-9a-f]{40}$')
 _MAX_REPORT = 1024 * 1024
@@ -46,8 +48,6 @@ def _run_bounded_planning(command: list[str], *, cwd: Path,
     survive and keep reading files. Use a POSIX process group or a Windows Job
     Object, and never inherit Git credentials or proxy configuration.
     """
-    from .process_agent import LocalProcessAgent
-
     environment = {key: value for key, value in os.environ.items()
                    if key.upper() in {"PATH", "SYSTEMROOT", "WINDIR",
                                       "TEMP", "TMP", "TMPDIR", "LANG",
@@ -70,9 +70,9 @@ def _run_bounded_planning(command: list[str], *, cwd: Path,
                 env=environment, shell=False,
                 start_new_session=(os.name != "nt"),
                 creationflags=(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-                               if os.name == "nt" else 0))
+                               | CREATE_SUSPENDED if os.name == "nt" else 0))
             if job is not None:
-                job.attach(proc)
+                job.attach_suspended(proc)
             while proc.poll() is None:
                 if should_stop is not None and should_stop():
                     raise DoctorPlanError("Doctor planning interrupted by controller")
@@ -93,7 +93,9 @@ def _run_bounded_planning(command: list[str], *, cwd: Path,
                 try:
                     job.terminate()
                 except Exception:
-                    if proc is not None:
+                    pass
+                finally:
+                    if proc is not None and proc.poll() is None:
                         LocalProcessAgent._stop_tree(proc)
             elif proc is not None:
                 LocalProcessAgent._stop_tree(proc)

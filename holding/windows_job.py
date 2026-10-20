@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import os
 
+CREATE_SUSPENDED = 0x00000004
+
 
 class WindowsJobError(RuntimeError):
     def __init__(self, message: str, *, code: str = 'WINDOWS_JOB_ERROR') -> None:
@@ -61,6 +63,17 @@ class WindowsJob:
                 ('PeakJobMemoryUsed', ctypes.c_size_t),
             ]
 
+        class ThreadEntry(ctypes.Structure):
+            _fields_ = [
+                ('dwSize', wintypes.DWORD),
+                ('cntUsage', wintypes.DWORD),
+                ('th32ThreadID', wintypes.DWORD),
+                ('th32OwnerProcessID', wintypes.DWORD),
+                ('tpBasePri', wintypes.LONG),
+                ('tpDeltaPri', wintypes.LONG),
+                ('dwFlags', wintypes.DWORD),
+            ]
+
         k32 = ctypes.WinDLL('kernel32', use_last_error=True)
         k32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
         k32.CreateJobObjectW.restype = wintypes.HANDLE
@@ -77,8 +90,19 @@ class WindowsJob:
         k32.TerminateJobObject.restype = wintypes.BOOL
         k32.CloseHandle.argtypes = [wintypes.HANDLE]
         k32.CloseHandle.restype = wintypes.BOOL
+        k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+        k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        k32.Thread32First.argtypes = [wintypes.HANDLE, ctypes.POINTER(ThreadEntry)]
+        k32.Thread32First.restype = wintypes.BOOL
+        k32.Thread32Next.argtypes = [wintypes.HANDLE, ctypes.POINTER(ThreadEntry)]
+        k32.Thread32Next.restype = wintypes.BOOL
+        k32.OpenThread.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        k32.OpenThread.restype = wintypes.HANDLE
+        k32.ResumeThread.argtypes = [wintypes.HANDLE]
+        k32.ResumeThread.restype = wintypes.DWORD
         self._k32 = k32
         self._extended_limits_type = ExtendedLimits
+        self._thread_entry_type = ThreadEntry
         self._handle = k32.CreateJobObjectW(None, None)
         if not self._handle:
             error = ctypes.get_last_error()
@@ -104,6 +128,11 @@ class WindowsJob:
             )
 
     def attach(self, process) -> None:
+        """Attach an already running process (legacy callers only).
+
+        New child launches must use :meth:`attach_suspended` to avoid the
+        start-before-attach race.
+        """
         if self._handle is None or process.poll() is not None:
             raise WindowsJobError(
                 'Cannot attach stopped process to Windows Job Object',
@@ -115,6 +144,50 @@ class WindowsJob:
             raise WindowsJobError(
                 f'AssignProcessToJobObject failed with WinError {error}; refusing unsafe agent',
                 code=f'ASSIGN_PROCESS_{error}',
+            )
+
+    def attach_suspended(self, process) -> None:
+        """Attach a CREATE_SUSPENDED child, then resume all of its threads."""
+        self.attach(process)
+        import ctypes
+        snapshot = self._k32.CreateToolhelp32Snapshot(0x00000004, 0)
+        if snapshot == ctypes.c_void_p(-1).value:
+            error = ctypes.get_last_error()
+            raise WindowsJobError(
+                f'Could not enumerate suspended process threads: WinError {error}',
+                code=f'SNAPSHOT_THREADS_{error}',
+            )
+        resumed = 0
+        try:
+            entry = self._thread_entry_type()
+            entry.dwSize = ctypes.sizeof(entry)
+            more = bool(self._k32.Thread32First(snapshot, ctypes.byref(entry)))
+            while more:
+                if entry.th32OwnerProcessID == process.pid:
+                    thread = self._k32.OpenThread(0x0002, False, entry.th32ThreadID)
+                    if not thread:
+                        error = ctypes.get_last_error()
+                        raise WindowsJobError(
+                            f'Could not open suspended process thread: WinError {error}',
+                            code=f'OPEN_THREAD_{error}',
+                        )
+                    try:
+                        if self._k32.ResumeThread(thread) == 0xFFFFFFFF:
+                            error = ctypes.get_last_error()
+                            raise WindowsJobError(
+                                f'Could not resume suspended process: WinError {error}',
+                                code=f'RESUME_THREAD_{error}',
+                            )
+                        resumed += 1
+                    finally:
+                        self._k32.CloseHandle(thread)
+                more = bool(self._k32.Thread32Next(snapshot, ctypes.byref(entry)))
+        finally:
+            self._k32.CloseHandle(snapshot)
+        if resumed == 0:
+            raise WindowsJobError(
+                'Suspended process had no resumable thread',
+                code='NO_SUSPENDED_THREAD',
             )
 
     def peak_job_memory_bytes(self) -> int:

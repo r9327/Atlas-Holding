@@ -18,6 +18,8 @@ import tempfile
 import time
 from typing import Callable
 
+from .windows_job import CREATE_SUSPENDED
+
 
 HEALTH_TIMEOUT_SECONDS = 15.0
 # Only the installed lightweight adapter and its descendants, NOT inference
@@ -154,7 +156,8 @@ class LocalProcessAgent:
         environment['GIT_TERMINAL_PROMPT'] = '0'
         environment['PYTHONNOUSERSITE'] = '1'
         environment['NO_PROXY'] = '127.0.0.1,localhost'
-        flags = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0) if os.name == 'nt' else 0
+        flags = ((getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0) | CREATE_SUSPENDED)
+                 if os.name == 'nt' else 0)
         # A large write to Popen(stdin=PIPE) can block forever if the child
         # never reads stdin: the timeout below has not started yet. Instead,
         # prepare bounded input in a regular temporary file BEFORE launching.
@@ -180,10 +183,8 @@ class LocalProcessAgent:
                                         stderr=subprocess.DEVNULL, cwd=cwd,
                                         env=environment, shell=False,
                                         start_new_session=(os.name != 'nt'), creationflags=flags)
-                # The child may start before Windows Job attachment. This
-                # mechanism manages descendants but is not an OS sandbox.
                 if job is not None:
-                    job.attach(proc)
+                    job.attach_suspended(proc)
                 while proc.poll() is None:
                     if self.should_stop():
                         raise AgentInterrupted('Agent interrupted by controller')
@@ -211,7 +212,9 @@ class LocalProcessAgent:
                     try:
                         job.terminate()
                     except Exception:
-                        if proc is not None:
+                        pass
+                    finally:
+                        if proc is not None and proc.poll() is None:
                             self._stop_tree(proc)
                 elif proc is not None:
                     self._stop_tree(proc)

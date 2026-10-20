@@ -19,6 +19,7 @@ import time
 
 from .process_agent import LocalProcessAgent
 from .schema import SCOPED_QA_SCHEMA, apply_schema
+from .windows_job import CREATE_SUSPENDED
 
 from .doctor_plan import DoctorPlanner, DoctorPlanError
 from .git_worktree import GitWorktrees, GitSafetyError
@@ -66,9 +67,9 @@ def _run_limited_doctor(command: list[str], *, cwd: Path,
                 stdout=output, stderr=subprocess.DEVNULL, env=environment,
                 shell=False, start_new_session=(os.name != "nt"),
                 creationflags=(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-                               if os.name == "nt" else 0))
+                               | CREATE_SUSPENDED if os.name == "nt" else 0))
             if job is not None:
-                job.attach(proc)
+                job.attach_suspended(proc)
             while proc.poll() is None:
                 if should_stop is not None and should_stop():
                     raise ScopedQaError("Scoped Doctor interrupted by controller")
@@ -89,7 +90,9 @@ def _run_limited_doctor(command: list[str], *, cwd: Path,
                 try:
                     job.terminate()
                 except Exception:
-                    if proc is not None:
+                    pass
+                finally:
+                    if proc is not None and proc.poll() is None:
                         LocalProcessAgent._stop_tree(proc)
             elif proc is not None:
                 LocalProcessAgent._stop_tree(proc)
