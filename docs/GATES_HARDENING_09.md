@@ -1,4 +1,4 @@
-# PR #9 — Exécutable Release : gates supplémentaires (non implémentés)
+# PR #9 — Exécutable Release : gates supplémentaires (partiels)
 
 Référence : `docs/OPERATIONAL_READINESS.md` de la PR #1.
 

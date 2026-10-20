@@ -17,6 +17,21 @@ class ReleaseEvidenceError(ValueError):
     pass
 
 
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ReleaseEvidenceError("Release manifest contains duplicate JSON keys")
+        result[key] = value
+    return result
+
+
+@dataclass(frozen=True)
+class ArtifactObservation:
+    sha256: str
+    size_bytes: int
+
+
 @dataclass(frozen=True)
 class ReleaseCandidate:
     source_sha: str
@@ -44,7 +59,9 @@ def validate_release_manifest(
     *,
     expected_source_sha: str,
     expected_upstream_shas: Mapping[str, str],
-    observed_artifacts: Mapping[str, str],
+    observed_artifacts: Mapping[str, ArtifactObservation],
+    observed_gate_evidence: Mapping[str, str],
+    observed_signature_evidence_sha256: str | None,
     required_gates: tuple[str, ...],
 ) -> ReleaseCandidate:
     """Return a publishable candidate only when every trusted input agrees."""
@@ -55,16 +72,30 @@ def validate_release_manifest(
         raise ReleaseEvidenceError("Invalid trusted release expectation")
     expected_upstream = dict(expected_upstream_shas)
     observed = dict(observed_artifacts)
+    gate_evidence = dict(observed_gate_evidence)
     if (not expected_upstream or any(
             not isinstance(name, str) or not name or not isinstance(sha, str)
             or not _SHA.fullmatch(sha) for name, sha in expected_upstream.items())
             or any(not isinstance(name, str) or not _ARTIFACT.fullmatch(name)
-                   or not isinstance(digest, str) or not _DIGEST.fullmatch(digest)
-                   for name, digest in observed.items())
-            or len(set(required_gates)) != len(required_gates)):
+                   or not isinstance(value, ArtifactObservation)
+                   or not _DIGEST.fullmatch(value.sha256)
+                   or type(value.size_bytes) is not int
+                   or not 0 < value.size_bytes <= 20 * 1024**3
+                   for name, value in observed.items())
+            or len(set(required_gates)) != len(required_gates)
+            or any(not isinstance(name, str) or not name or len(name) > 100
+                   for name in required_gates)
+            or set(gate_evidence) != set(required_gates)
+            or any(not isinstance(value, str) or not _DIGEST.fullmatch(value)
+                   for value in gate_evidence.values())
+            or (observed_signature_evidence_sha256 is not None
+                and (not isinstance(observed_signature_evidence_sha256, str)
+                     or not _DIGEST.fullmatch(observed_signature_evidence_sha256)))):
         raise ReleaseEvidenceError("Invalid trusted release evidence")
     try:
-        payload = json.loads(raw)
+        payload = json.loads(raw, object_pairs_hook=_unique_object)
+    except ReleaseEvidenceError:
+        raise
     except (UnicodeError, ValueError) as exc:
         raise ReleaseEvidenceError("Release manifest is not valid JSON") from exc
     data = _exact(payload, {
@@ -81,7 +112,7 @@ def validate_release_manifest(
     artifacts = data["artifacts"]
     if not isinstance(artifacts, list) or not artifacts:
         raise ReleaseEvidenceError("Release artifacts are missing")
-    declared: dict[str, str] = {}
+    declared: dict[str, ArtifactObservation] = {}
     for value in artifacts:
         item = _exact(value, {"name", "sha256", "size_bytes"}, "artifact")
         name = item["name"]
@@ -89,7 +120,9 @@ def validate_release_manifest(
                 or name in declared or type(item["size_bytes"]) is not int
                 or not 0 < item["size_bytes"] <= 20 * 1024**3):
             raise ReleaseEvidenceError("Invalid release artifact")
-        declared[name] = _digest(item["sha256"], "artifact")
+        declared[name] = ArtifactObservation(
+            _digest(item["sha256"], "artifact"), item["size_bytes"],
+        )
     if declared != observed or "AtlasHoldingSetup.exe" not in declared:
         raise ReleaseEvidenceError("Declared artifacts differ from observed files")
 
@@ -107,7 +140,9 @@ def validate_release_manifest(
                 or item["source_sha"] != expected_source_sha
                 or item["platform"] != "windows-real"):
             raise ReleaseEvidenceError("Release gate is not exact-SHA Windows PASS")
-        _digest(item["evidence_sha256"], "gate evidence")
+        evidence_digest = _digest(item["evidence_sha256"], "gate evidence")
+        if evidence_digest != gate_evidence.get(name):
+            raise ReleaseEvidenceError("Release gate evidence differs from observation")
         passed.append(name)
     if set(passed) != set(required_gates):
         raise ReleaseEvidenceError("Required release gates are incomplete")
@@ -118,12 +153,18 @@ def validate_release_manifest(
     if type(signing["signed"]) is not bool or type(signing["smartscreen_warning"]) is not bool:
         raise ReleaseEvidenceError("Invalid signing declaration")
     if signing["signed"]:
-        _digest(signing["signature_evidence_sha256"], "signature evidence")
-    elif signing["signature_evidence_sha256"] is not None or not signing["smartscreen_warning"]:
+        signature_digest = _digest(
+            signing["signature_evidence_sha256"], "signature evidence",
+        )
+        if signature_digest != observed_signature_evidence_sha256:
+            raise ReleaseEvidenceError("Signature evidence differs from observation")
+    elif (signing["signature_evidence_sha256"] is not None
+          or observed_signature_evidence_sha256 is not None
+          or not signing["smartscreen_warning"]):
         raise ReleaseEvidenceError("Unsigned installer lacks explicit SmartScreen warning")
 
     return ReleaseCandidate(
-        expected_source_sha, declared["AtlasHoldingSetup.exe"],
+        expected_source_sha, declared["AtlasHoldingSetup.exe"].sha256,
         tuple(sorted(expected_upstream.items())), tuple(sorted(passed)),
         signing["signed"],
     )

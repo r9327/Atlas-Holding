@@ -1,4 +1,15 @@
-# PR 09 — EXE Windows installable et sortie finale (SPECIFICATION, NON IMPLEMENTEE)
+# PR 09 — EXE Windows installable et sortie finale (IMPLEMENTATION PARTIELLE)
+
+## État technique
+
+`holding/release_evidence.py` valide un manifeste exact-SHA sans construire ni
+publier de release. Chaque hash **et taille** d'artefact, chaque preuve de gate
+Windows et l'éventuelle preuve de signature doivent correspondre à une
+observation externe du superviseur ; les déclarations auto-signées du manifeste
+et les clés JSON dupliquées sont refusées.
+
+L'installateur, sa construction reproductible, la machine Windows vierge et le
+scénario E2E restent à réaliser. Aucun EXE ni PASS natif n'est revendiqué ici.
 
 **Livrable :** utilisateur télécharge un fichier depuis GitHub Releases, double-clique pour installer Atlas Holding, choisit son disque, télécharge/configure les outils nécessaires en une fois, démarre le Control Center puis la roadmap.
 
