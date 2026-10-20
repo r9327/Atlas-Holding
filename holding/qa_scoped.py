@@ -137,7 +137,9 @@ class ScopedDoctorRunner:
         if not _SHA.fullmatch(base_sha):
             raise ScopedQaError("Unverified base SHA")
         if advice.status != "READY_TO_RUN_SCOPED":
-            return ScopedQaResult(candidate_sha, base_sha, "FULL_REQUIRED", (),
+            status = ("FULL_REQUIRED" if advice.status == "FULL_REQUIRED"
+                      else "SCOPED_PLAN_BLOCKED")
+            return ScopedQaResult(candidate_sha, base_sha, status, (),
                                   advice.report_sha256)
         cmd = [str(self.interpreter), "-B", "-m", "tools.doctor_certification",
                "--base-ref", base_sha, "--expected-sha", candidate_sha,
