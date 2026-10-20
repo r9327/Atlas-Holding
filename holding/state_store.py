@@ -19,6 +19,7 @@ from .autonomy import Decision, KNOWN_OPERATIONS, Mission, StandingGrant, choose
 from .schema import CORE_SCHEMA, apply_schema
 
 SHA_RE = re.compile(r"^[a-fA-F0-9]{40}$")
+REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 
 class StoreError(RuntimeError):
@@ -132,21 +133,52 @@ class StateStore:
                 )
                 self._event(m.id, "MISSION_IMPORTED", m.operation)
 
-    def grant_for_onboarding(self, grant: StandingGrant) -> None:
-        """ONLY trusted setup/UI can call; never expose this method as an LLM tool."""
-        if not grant.repository or not grant.operations or any(op not in KNOWN_OPERATIONS for op in grant.operations):
+    @staticmethod
+    def _validate_onboarding_grant(grant: StandingGrant) -> None:
+        if (not isinstance(grant, StandingGrant)
+                or not isinstance(grant.repository, str)
+                or not REPO_RE.fullmatch(grant.repository)
+                or any(part in {".", ".."} for part in grant.repository.split("/"))
+                or not isinstance(grant.operations, frozenset) or not grant.operations
+                or any(not isinstance(op, str) or op not in KNOWN_OPERATIONS
+                       for op in grant.operations)
+                or type(grant.expires_epoch) is not int or grant.expires_epoch < 0
+                or type(grant.enabled) is not bool):
             raise StoreError("Invalid grant scope")
+
+    def _write_grant_rows(self, grant: StandingGrant) -> None:
+        for operation in sorted(grant.operations):
+            self.db.execute(
+                """INSERT INTO grants(repo,operation,expires_epoch,enabled) VALUES(?,?,?,?)
+                   ON CONFLICT(repo,operation) DO UPDATE SET
+                   expires_epoch=excluded.expires_epoch, enabled=excluded.enabled""",
+                (grant.repository, operation, grant.expires_epoch, int(grant.enabled)),
+            )
+
+    def grant_for_onboarding(self, grant: StandingGrant) -> None:
+        """Add operations from trusted setup; never expose this as an LLM tool."""
+        self._validate_onboarding_grant(grant)
         with self._transaction():
-            for operation in sorted(grant.operations):
-                self.db.execute(
-                    """INSERT INTO grants(repo,operation,expires_epoch,enabled) VALUES(?,?,?,?)
-                       ON CONFLICT(repo,operation) DO UPDATE SET
-                       expires_epoch=excluded.expires_epoch, enabled=excluded.enabled""",
-                    (grant.repository, operation, grant.expires_epoch, int(grant.enabled)),
-                )
+            self._write_grant_rows(grant)
             self._event(None, "GRANT_CHANGED", f"{grant.repository}: {','.join(sorted(grant.operations))}")
 
+    def replace_grant_for_onboarding(self, grant: StandingGrant) -> None:
+        """Atomically replace one repository's operations after trusted consent.
+
+        This is the safe path for reducing a standing grant: omitted operations
+        are removed in the same transaction before the new scope becomes visible.
+        """
+        self._validate_onboarding_grant(grant)
+        with self._transaction():
+            self.db.execute("DELETE FROM grants WHERE repo=?", (grant.repository,))
+            self._write_grant_rows(grant)
+            self._event(None, "GRANT_REPLACED",
+                        f"{grant.repository}: {','.join(sorted(grant.operations))}")
+
     def revoke(self, repo: str) -> None:
+        if (not isinstance(repo, str) or not REPO_RE.fullmatch(repo)
+                or any(part in {".", ".."} for part in repo.split("/"))):
+            raise StoreError("Invalid exact repository")
         with self._transaction():
             self.db.execute("UPDATE grants SET enabled=0 WHERE repo=?", (repo,))
             self._event(None, "GRANT_REVOKED", repo)

@@ -56,6 +56,28 @@ class StoreTests(unittest.TestCase):
         self.store = StateStore(self.path)
         self.assertEqual(self.claim().action, 'REQUIRES_DECISION')
 
+    def test_grant_replacement_atomically_removes_omitted_operations(self):
+        self.store.grant_for_onboarding(
+            StandingGrant(REPO, frozenset({'commit'}), 1000000))
+        self.assertEqual(self.store._grants()[0].operations,
+                         frozenset({'code', 'commit'}))
+        self.store.replace_grant_for_onboarding(
+            StandingGrant(REPO, frozenset({'code'}), 1000000))
+        self.assertEqual(self.store._grants()[0].operations, frozenset({'code'}))
+        self.assertEqual(self.store.events()[0]['event'], 'GRANT_REPLACED')
+
+    def test_malformed_grants_and_revoke_repository_fail_closed(self):
+        invalid = (
+            StandingGrant('../other', frozenset({'code'}), 1000000),
+            StandingGrant(REPO, frozenset({'unknown'}), 1000000),
+            StandingGrant(REPO, frozenset({'code'}), True),
+        )
+        for grant in invalid:
+            with self.subTest(grant=grant), self.assertRaisesRegex(StoreError, 'Invalid grant'):
+                self.store.replace_grant_for_onboarding(grant)
+        with self.assertRaisesRegex(StoreError, 'Invalid exact repository'):
+            self.store.revoke('../other')
+
     def test_text_verdict_cannot_mark_done(self):
         self.store.add_missions([Mission('a', REPO)])
         self.claim()
