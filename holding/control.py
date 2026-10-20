@@ -97,6 +97,19 @@ class ControlPlane:
             "WHERE m.state='QA_PENDING' AND q.candidate_sha=m.candidate_sha "
             "ORDER BY q.checked_epoch DESC, m.id LIMIT ?", (limit,))]
 
+    def requirement_coverage(self):
+        """Live read-only requirement/evidence report for the Control Center."""
+        from .coverage import RequirementCoverage
+        return RequirementCoverage(self.store).summary()
+
+    def requirement_page(self, *, after_mission_id: str = "",
+                         after_criterion: int = -1, limit: int = 100):
+        """Paginate criteria with proof status; no false certified badges."""
+        from .coverage import RequirementCoverage
+        return RequirementCoverage(self.store).page(
+            after_mission_id=after_mission_id,
+            after_criterion=after_criterion, limit=limit)
+
     def import_roadmap(self, raw: str, *, source: str):
         """Accept a versioned DAG without granting any new permissions.
 
