@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 from holding.autonomy import Mission, StandingGrant
 from holding.state_store import StateStore, StoreError
+from holding.schema import DAEMON_LEASE_SCHEMA, SYNC_STATE_SCHEMA, apply_schema
 
 REPO = 'r9327/Dof-Atlas'
 SHA = 'a' * 40
@@ -183,6 +184,121 @@ class StoreTests(unittest.TestCase):
         names = [e['event'] for e in self.store.events()]
         self.assertIn('MISSION_CLAIMED', names)
         self.assertIn('RUNNING_TO_RECOVERY_REQUIRED', names)
+
+    def enable_sync_schema(self):
+        apply_schema(self.store.db, DAEMON_LEASE_SCHEMA + SYNC_STATE_SCHEMA)
+        self.store.db.execute(
+            "INSERT OR REPLACE INTO daemon_lease(singleton,owner,expires_epoch) VALUES(1,?,?)",
+            ('test-sync', 2_000_000_000),
+        )
+
+    def test_service_health_is_durable_and_rejects_stale_observation(self):
+        self.enable_sync_schema()
+        self.store.save_service_health(
+            service='github', status='ONLINE', observed_at=100,
+            consecutive_successes=2, consecutive_failures=0,
+            retry_attempts=0, retry_not_before=None, reason=None,
+            updated_epoch=100, lease_owner='test-sync',
+        )
+        with self.assertRaisesRegex(StoreError, 'STALE'):
+            self.store.save_service_health(
+                service='github', status='OFFLINE', observed_at=100,
+                consecutive_successes=0, consecutive_failures=2,
+                retry_attempts=2, retry_not_before=102,
+                reason='NETWORK_ERROR', updated_epoch=101,
+                lease_owner='test-sync',
+            )
+        self.store.close()
+        self.store = StateStore(self.path)
+        self.assertEqual(self.store.service_health('github')['status'], 'ONLINE')
+
+    def test_sync_attempt_is_persisted_before_settlement_and_not_replayed(self):
+        self.enable_sync_schema()
+        key = 'c' * 64
+        values = dict(
+            operation='github.ci_trigger', repo=REPO, branch='holding/lot-1',
+            candidate_sha=SHA, idempotency_key=key,
+            lease_owner='test-sync',
+        )
+        self.store.begin_sync_attempt(**values, attempt=1, updated_epoch=100)
+        with self.assertRaisesRegex(StoreError, 'pending or terminal'):
+            self.store.begin_sync_attempt(**values, attempt=2, updated_epoch=101)
+        self.store.finish_sync_attempt(
+            **values, attempt=1, status='SUCCEEDED', retryable=False,
+            updated_epoch=102,
+        )
+        with self.assertRaisesRegex(StoreError, 'pending or terminal'):
+            self.store.begin_sync_attempt(**values, attempt=2, updated_epoch=103)
+        self.assertEqual(self.store.sync_attempts(**{
+            key: value for key, value in values.items()
+            if key not in {'idempotency_key', 'lease_owner'}
+        })[0]['status'], 'SUCCEEDED')
+
+    def test_only_retryable_failure_can_open_next_bounded_attempt(self):
+        self.enable_sync_schema()
+        key = 'd' * 64
+        values = dict(
+            operation='github.push', repo=REPO, branch='holding/lot-1',
+            candidate_sha=SHA, idempotency_key=key,
+            lease_owner='test-sync',
+        )
+        self.store.begin_sync_attempt(**values, attempt=1, updated_epoch=100)
+        self.store.finish_sync_attempt(
+            **values, attempt=1, status='FAILED', retryable=True,
+            updated_epoch=101,
+        )
+        self.store.begin_sync_attempt(**values, attempt=2, updated_epoch=102)
+        self.assertEqual(len(self.store.sync_attempts(**{
+            key: value for key, value in values.items()
+            if key not in {'idempotency_key', 'lease_owner'}
+        })), 2)
+
+    def test_sync_identity_and_verdict_fail_closed(self):
+        self.enable_sync_schema()
+        values = dict(
+            operation='github.push', repo=REPO, branch='main',
+            candidate_sha=SHA, idempotency_key='e' * 64,
+            lease_owner='test-sync',
+        )
+        with self.assertRaisesRegex(StoreError, 'identity'):
+            self.store.begin_sync_attempt(**values, attempt=1, updated_epoch=100)
+        values['branch'] = 'holding/lot-1'
+        self.store.begin_sync_attempt(**values, attempt=1, updated_epoch=100)
+        with self.assertRaisesRegex(StoreError, 'verdict'):
+            self.store.finish_sync_attempt(
+                **values, attempt=1, status='SUCCEEDED', retryable=True,
+                updated_epoch=101,
+            )
+
+    def test_sync_writes_require_current_daemon_lease(self):
+        self.enable_sync_schema()
+        with self.assertRaisesRegex(StoreError, 'DAEMON_LEASE_LOST'):
+            self.store.begin_sync_attempt(
+                operation='github.push', repo=REPO, branch='holding/lot-1',
+                candidate_sha=SHA, idempotency_key='f' * 64,
+                attempt=1, updated_epoch=100, lease_owner='stale-daemon',
+            )
+
+    def test_sync_store_rejects_gaps_and_cross_identity_key_reuse(self):
+        self.enable_sync_schema()
+        key = '1' * 64
+        self.store.db.execute(
+            """INSERT INTO github_sync_attempts VALUES(
+               'github.push',?,?,?,2,'FAILED',1,?,100)""",
+            (REPO, 'holding/lot-1', SHA, key),
+        )
+        with self.assertRaisesRegex(StoreError, 'gaps'):
+            self.store.begin_sync_attempt(
+                operation='github.push', repo=REPO, branch='holding/lot-1',
+                candidate_sha=SHA, idempotency_key=key,
+                attempt=3, updated_epoch=101, lease_owner='test-sync',
+            )
+        with self.assertRaisesRegex(StoreError, 'across identities'):
+            self.store.begin_sync_attempt(
+                operation='github.push', repo=REPO, branch='holding/lot-2',
+                candidate_sha=SHA, idempotency_key=key,
+                attempt=1, updated_epoch=101, lease_owner='test-sync',
+            )
 
 if __name__ == '__main__':
     unittest.main()

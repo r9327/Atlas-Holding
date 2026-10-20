@@ -158,6 +158,32 @@ ROADMAP_SCHEMA = (
 )
 
 ROADMAP_AMENDMENT_SCHEMA = (ROADMAP_SCHEMA[2],)
+SYNC_STATE_SCHEMA = (
+    """CREATE TABLE IF NOT EXISTS external_service_health (
+        service TEXT PRIMARY KEY CHECK(service IN ('github','context7','firecrawl')),
+        status TEXT NOT NULL CHECK(status IN ('UNKNOWN','PROBING','ONLINE','DEGRADED','OFFLINE','BLOCKED')),
+        observed_at INTEGER,
+        consecutive_successes INTEGER NOT NULL CHECK(consecutive_successes>=0),
+        consecutive_failures INTEGER NOT NULL CHECK(consecutive_failures>=0),
+        retry_attempts INTEGER NOT NULL CHECK(retry_attempts BETWEEN 0 AND 5),
+        retry_not_before INTEGER,
+        reason TEXT,
+        updated_epoch INTEGER NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS github_sync_attempts (
+        operation TEXT NOT NULL,
+        repo TEXT NOT NULL,
+        branch TEXT NOT NULL,
+        candidate_sha TEXT NOT NULL,
+        attempt INTEGER NOT NULL CHECK(attempt BETWEEN 1 AND 3),
+        status TEXT NOT NULL CHECK(status IN ('PENDING','SUCCEEDED','FAILED','BLOCKED')),
+        retryable INTEGER NOT NULL CHECK(retryable IN (0,1)),
+        idempotency_key TEXT NOT NULL,
+        updated_epoch INTEGER NOT NULL,
+        PRIMARY KEY(operation,repo,branch,candidate_sha,attempt),
+        UNIQUE(idempotency_key,attempt)
+    )""",
+)
 RUNTIME_SCHEMA_V2 = (
     DAEMON_LEASE_SCHEMA
     + GIT_JOURNAL_SCHEMA
@@ -166,6 +192,7 @@ RUNTIME_SCHEMA_V2 = (
     + QA_REPAIR_SCHEMA
     + ROADMAP_SCHEMA
 )
+RUNTIME_SCHEMA_V3 = SYNC_STATE_SCHEMA
 
 
 def apply_schema(db: sqlite3.Connection, statements: Iterable[str]) -> None:

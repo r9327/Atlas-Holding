@@ -20,6 +20,15 @@ from .schema import CORE_SCHEMA, apply_schema
 
 SHA_RE = re.compile(r"^[a-fA-F0-9]{40}$")
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")
+DIGEST_RE = re.compile(r"^[a-f0-9]{64}$")
+SYNC_OPERATIONS = frozenset({
+    "github.push", "github.pr_draft", "github.pr_ready",
+    "github.ci_trigger", "github.merge",
+})
+SERVICE_STATUSES = frozenset({
+    "UNKNOWN", "PROBING", "ONLINE", "DEGRADED", "OFFLINE", "BLOCKED",
+})
 
 
 class StoreError(RuntimeError):
@@ -352,6 +361,175 @@ class StateStore:
         return [dict(row) for row in self.db.execute(
             "SELECT * FROM events ORDER BY seq DESC LIMIT ?", (limit,)
         )]
+
+    def save_service_health(
+        self, *, service: str, status: str, observed_at: int | None,
+        consecutive_successes: int, consecutive_failures: int,
+        retry_attempts: int, retry_not_before: int | None, reason: str | None,
+        updated_epoch: int, lease_owner: str,
+    ) -> None:
+        """Persist one newer service observation without accepting time reversal."""
+        integers = (consecutive_successes, consecutive_failures, retry_attempts, updated_epoch)
+        if (service not in {"github", "context7", "firecrawl"}
+                or status not in SERVICE_STATUSES
+                or any(type(value) is not int or value < 0 for value in integers)
+                or retry_attempts > 5
+                or (observed_at is not None
+                    and (type(observed_at) is not int or observed_at < 0))
+                or (retry_not_before is not None
+                    and (type(retry_not_before) is not int or retry_not_before < 0))
+                or (reason is not None and (not isinstance(reason, str) or len(reason) > 160))
+                or (observed_at is None) != (status == "UNKNOWN")
+                or observed_at is not None and updated_epoch < observed_at
+                or retry_not_before is not None
+                and (observed_at is None or retry_not_before <= observed_at)
+                or consecutive_successes and consecutive_failures
+                or status == "ONLINE" and consecutive_successes < 2
+                or status == "BLOCKED" and not reason):
+            raise StoreError("Invalid external service health")
+        with self._transaction():
+            self._assert_daemon_fence(lease_owner)
+            prior = self.db.execute(
+                "SELECT observed_at FROM external_service_health WHERE service=?",
+                (service,),
+            ).fetchone()
+            if (prior is not None and (observed_at is None
+                    or prior["observed_at"] is not None
+                    and observed_at <= prior["observed_at"])):
+                raise StoreError("STALE_SERVICE_OBSERVATION")
+            self.db.execute(
+                """INSERT INTO external_service_health(
+                   service,status,observed_at,consecutive_successes,consecutive_failures,
+                   retry_attempts,retry_not_before,reason,updated_epoch)
+                   VALUES(?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(service) DO UPDATE SET
+                   status=excluded.status, observed_at=excluded.observed_at,
+                   consecutive_successes=excluded.consecutive_successes,
+                   consecutive_failures=excluded.consecutive_failures,
+                   retry_attempts=excluded.retry_attempts,
+                   retry_not_before=excluded.retry_not_before,
+                   reason=excluded.reason, updated_epoch=excluded.updated_epoch""",
+                (service, status, observed_at, consecutive_successes,
+                 consecutive_failures, retry_attempts, retry_not_before,
+                 reason, updated_epoch),
+            )
+            self._event(None, "SERVICE_HEALTH", f"{service}:{status}")
+
+    def service_health(self, service: str) -> dict | None:
+        if service not in {"github", "context7", "firecrawl"}:
+            raise StoreError("Invalid external service")
+        row = self.db.execute(
+            "SELECT * FROM external_service_health WHERE service=?", (service,)
+        ).fetchone()
+        return None if row is None else dict(row)
+
+    @staticmethod
+    def _validate_sync_identity(
+        operation: str, repo: str, branch: str, candidate_sha: str,
+        idempotency_key: str,
+    ) -> None:
+        if (operation not in SYNC_OPERATIONS
+                or not isinstance(repo, str) or not REPO_RE.fullmatch(repo)
+                or any(part in {".", ".."} for part in repo.split("/"))
+                or not isinstance(branch, str) or not BRANCH_RE.fullmatch(branch)
+                or branch in {"main", "master"} or branch.startswith("refs/")
+                or ".." in branch or "//" in branch
+                or not isinstance(candidate_sha, str) or not SHA_RE.fullmatch(candidate_sha)
+                or candidate_sha != candidate_sha.lower()
+                or not isinstance(idempotency_key, str)
+                or not DIGEST_RE.fullmatch(idempotency_key)):
+            raise StoreError("Invalid GitHub synchronization identity")
+
+    def begin_sync_attempt(
+        self, *, operation: str, repo: str, branch: str, candidate_sha: str,
+        attempt: int, idempotency_key: str, updated_epoch: int,
+        lease_owner: str,
+    ) -> None:
+        """Atomically persist PENDING before any privileged network mutation."""
+        self._validate_sync_identity(
+            operation, repo, branch, candidate_sha, idempotency_key)
+        if (type(attempt) is not int or not 1 <= attempt <= 3
+                or type(updated_epoch) is not int or updated_epoch < 0):
+            raise StoreError("Invalid GitHub synchronization attempt")
+        candidate_sha = candidate_sha.lower()
+        with self._transaction():
+            self._assert_daemon_fence(lease_owner)
+            rows = self.db.execute(
+                """SELECT attempt,status,retryable,idempotency_key,updated_epoch
+                   FROM github_sync_attempts
+                   WHERE operation=? AND repo=? AND branch=? AND candidate_sha=?
+                   ORDER BY attempt""",
+                (operation, repo, branch, candidate_sha),
+            ).fetchall()
+            foreign_key = self.db.execute(
+                """SELECT 1 FROM github_sync_attempts WHERE idempotency_key=?
+                   AND (operation<>? OR repo<>? OR branch<>? OR candidate_sha<>?)
+                   LIMIT 1""",
+                (idempotency_key, operation, repo, branch, candidate_sha),
+            ).fetchone()
+            if foreign_key is not None:
+                raise StoreError("Synchronization idempotency key reused across identities")
+            if any(row["idempotency_key"] != idempotency_key for row in rows):
+                raise StoreError("Synchronization idempotency key changed")
+            if [row["attempt"] for row in rows] != list(range(1, len(rows) + 1)):
+                raise StoreError("Synchronization attempt sequence has gaps")
+            if any(row["status"] != "FAILED" or not row["retryable"] for row in rows):
+                raise StoreError("Synchronization operation is pending or terminal")
+            expected = 1 if not rows else rows[-1]["attempt"] + 1
+            if attempt != expected:
+                raise StoreError("Unexpected synchronization attempt number")
+            if rows and updated_epoch <= rows[-1]["updated_epoch"]:
+                raise StoreError("STALE_SYNCHRONIZATION_ATTEMPT")
+            self.db.execute(
+                """INSERT INTO github_sync_attempts(
+                   operation,repo,branch,candidate_sha,attempt,status,retryable,
+                   idempotency_key,updated_epoch) VALUES(?,?,?,?,?,'PENDING',0,?,?)""",
+                (operation, repo, branch, candidate_sha, attempt,
+                 idempotency_key, updated_epoch),
+            )
+            self._event(None, "SYNC_ATTEMPT_STARTED",
+                        f"{operation}:{repo}:{candidate_sha}:{attempt}")
+
+    def finish_sync_attempt(
+        self, *, operation: str, repo: str, branch: str, candidate_sha: str,
+        attempt: int, idempotency_key: str, status: str, retryable: bool,
+        updated_epoch: int, lease_owner: str,
+    ) -> None:
+        """Settle exactly one PENDING attempt; terminal rows are immutable."""
+        self._validate_sync_identity(
+            operation, repo, branch, candidate_sha, idempotency_key)
+        if (type(attempt) is not int or not 1 <= attempt <= 3
+                or status not in {"SUCCEEDED", "FAILED", "BLOCKED"}
+                or type(retryable) is not bool
+                or (status != "FAILED" and retryable)
+                or type(updated_epoch) is not int or updated_epoch < 0):
+            raise StoreError("Invalid synchronization verdict")
+        with self._transaction():
+            self._assert_daemon_fence(lease_owner)
+            updated = self.db.execute(
+                """UPDATE github_sync_attempts SET status=?,retryable=?,updated_epoch=?
+                   WHERE operation=? AND repo=? AND branch=? AND candidate_sha=?
+                   AND attempt=? AND idempotency_key=? AND status='PENDING'
+                   AND updated_epoch<=?""",
+                (status, int(retryable), updated_epoch, operation, repo, branch,
+                 candidate_sha.lower(), attempt, idempotency_key, updated_epoch),
+            )
+            if updated.rowcount != 1:
+                raise StoreError("Synchronization attempt is missing or already settled")
+            self._event(None, "SYNC_ATTEMPT_FINISHED",
+                        f"{operation}:{repo}:{candidate_sha.lower()}:{attempt}:{status}")
+
+    def sync_attempts(
+        self, *, operation: str, repo: str, branch: str, candidate_sha: str,
+    ) -> tuple[dict, ...]:
+        self._validate_sync_identity(
+            operation, repo, branch, candidate_sha, "0" * 64)
+        return tuple(dict(row) for row in self.db.execute(
+            """SELECT * FROM github_sync_attempts
+               WHERE operation=? AND repo=? AND branch=? AND candidate_sha=?
+               ORDER BY attempt""",
+            (operation, repo, branch, candidate_sha.lower()),
+        ))
 
     def integrity_check(self) -> bool:
         return self.db.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
