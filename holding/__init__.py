@@ -1,1 +1,1 @@
-"""Atlas Holding local MCP policy primitives."""
+"""Atlas Holding foundational policy and local MCP primitives."""
