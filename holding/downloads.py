@@ -74,6 +74,32 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def _publish_without_overwrite(partial: Path, target: Path, *,
+                               expected: str, size: int) -> Path:
+    """Atomically publish verified bytes without replacing a concurrent file."""
+    try:
+        if os.link in os.supports_follow_symlinks:
+            os.link(partial, target, follow_symlinks=False)
+        else:
+            os.link(partial, target)
+    except FileExistsError:
+        if (_is_link_like(target) or not target.is_file()
+                or target.stat().st_size != size or _sha256(target) != expected):
+            raise IntegrityError(
+                "Destination appeared during download and does not match manifest"
+            )
+    else:
+        # The target is now an atomic hard link to the already verified bytes.
+        # Removing the resumable name leaves one ordinary destination file.
+        partial.unlink()
+        return target
+
+    # A concurrent writer published the same trusted bytes first.
+    if partial.exists():
+        partial.unlink()
+    return target
+
+
 def download_pinned(
     url: str,
     destination: str | Path,
@@ -128,8 +154,8 @@ def download_pinned(
         if offset == size:
             if _sha256(partial) != expected:
                 raise IntegrityError("Complete partial has invalid checksum; repair required")
-            os.replace(partial, target)
-            return target
+            return _publish_without_overwrite(partial, target, expected=expected,
+                                              size=size)
 
         headers = {"User-Agent": "Atlas-Holding-Bootstrap/0.1", "Accept-Encoding": "identity"}
         if offset:
@@ -165,8 +191,8 @@ def download_pinned(
                 if count == size:
                     if _sha256(partial) != expected:
                         raise IntegrityError("SHA-256 mismatch; partial kept for inspection")
-                    os.replace(partial, target)
-                    return target
+                    return _publish_without_overwrite(partial, target, expected=expected,
+                                                      size=size)
                 last_error = DownloadError(f"Short transfer: {count}/{size} bytes; partial retained")
         except HTTPError as exc:
             if exc.code not in _TRANSIENT:

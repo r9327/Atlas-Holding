@@ -97,6 +97,19 @@ class DownloadTests(unittest.TestCase):
         self.assertFalse(self.target.exists())
         self.assertTrue(partial.exists())
 
+    def test_concurrent_destination_is_never_overwritten(self):
+        intruder = b"file-created-by-another-process"
+
+        def create_destination(_count, _size):
+            if not self.target.exists():
+                self.target.write_bytes(intruder)
+
+        with self.assertRaisesRegex(IntegrityError, "appeared during download"):
+            self.call(progress=create_destination)
+        self.assertEqual(self.target.read_bytes(), intruder)
+        partial = self.target.with_name(self.target.name + ".part")
+        self.assertEqual(partial.read_bytes(), DATA)
+
     def test_invalid_range_header_preserves_partial(self):
         partial = self.target.with_name(self.target.name + ".part")
         partial.write_bytes(DATA[:70000])
