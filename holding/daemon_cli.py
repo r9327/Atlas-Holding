@@ -51,6 +51,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.roadmap_file is not None or args.source is not None:
         parser.error("--roadmap-file and --source are valid only with import")
     with ControlPlane(args.db) as control:
+        if args.action == "coverage":
+            print(json.dumps(asdict(control.requirement_coverage()),
+                             sort_keys=True, separators=(",", ":")))
+            return 0
         if args.action == "pause":
             control.pause()
         elif args.action == "resume":
