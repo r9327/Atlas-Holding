@@ -80,7 +80,7 @@ class ControlCenterStateTests(unittest.TestCase):
         self.assertIsNone(state.tasks[0].candidate_sha)
 
     def test_verification_states_require_real_candidate_sha(self):
-        for state in ("QA_PENDING", "RECOVERY_REQUIRED", "DONE_UNVERIFIED"):
+        for state in ("QA_PENDING", "DONE_UNVERIFIED"):
             payload = snapshot()
             payload["tasks"][0].update({
                 "state": state,
@@ -91,6 +91,16 @@ class ControlCenterStateTests(unittest.TestCase):
             with self.subTest(state=state), self.assertRaisesRegex(
                     ControlCenterStateError, "requires a candidate SHA"):
                 consume(payload)
+
+    def test_recovery_before_first_commit_has_no_fake_sha(self):
+        payload = snapshot()
+        payload["tasks"][0].update({
+            "state": "RECOVERY_REQUIRED", "phase": "EXTERNAL_WAIT",
+            "progress": "BLOCKED", "candidate_sha": None,
+            "completion_evidence": None,
+        })
+        state = consume(payload)
+        self.assertIsNone(state.tasks[0].candidate_sha)
 
     def test_non_done_task_cannot_borrow_completion_evidence(self):
         payload = snapshot()

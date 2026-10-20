@@ -132,7 +132,7 @@ def _nullable_identifier(value: Any, label: str) -> str | None:
 
 def _evidence(value: Any, candidate_sha: str) -> EvidenceView:
     item = _object(value, {"kind", "outcome", "scope", "sha", "digest", "source"})
-    if item["kind"] not in {"CI", "DOCTOR", "TEST"}:
+    if item["kind"] not in {"CI", "DOCTOR", "TEST", "SYNC"}:
         raise ControlCenterStateError("Unsupported completion evidence kind")
     if item["outcome"] not in {"PASS", "SUCCESS"}:
         raise ControlCenterStateError("Completion evidence did not pass")
@@ -178,7 +178,7 @@ def _task(value: Any) -> TaskView:
     sha = item["candidate_sha"]
     if sha is not None and (not isinstance(sha, str) or not _SHA.fullmatch(sha)):
         raise ControlCenterStateError("Invalid task candidate SHA")
-    if state in {"QA_PENDING", "RECOVERY_REQUIRED", "DONE_UNVERIFIED", "DONE"} \
+    if state in {"QA_PENDING", "DONE_UNVERIFIED", "DONE"} \
             and sha is None:
         raise ControlCenterStateError("Task state requires a candidate SHA")
     evidence = None
@@ -296,7 +296,8 @@ def consume_dashboard_snapshot(
     if sequence != expected_sequence:
         raise ControlCenterStateError("Stale or unexpected snapshot sequence")
     if data["network"] not in {
-            "OFFLINE", "ONLINE_STABLE", "SYNCING", "CI_PENDING", "ERROR"}:
+            "UNKNOWN", "OFFLINE", "ONLINE_STABLE", "SYNCING",
+            "CI_PENDING", "DEGRADED", "ERROR"}:
         raise ControlCenterStateError("Invalid network state")
     generated_at = _integer(
         data["generated_at"], "generation time", maximum=4_102_444_800,

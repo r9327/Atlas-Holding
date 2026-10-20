@@ -40,6 +40,11 @@ Cette PR Draft vérifie ensemble les contrats développés séparément dans :
     Le broker reconstruit son propre `GitWorktrees` depuis sa configuration trusted,
     résout l'unique `source_id`, refuse force/protected/dirty/divergent et conserve
     le credential Git hors du daemon principal.
+13. Le Control Center dispose d'une projection transactionnelle réelle de SQLite
+    vers son schéma d'affichage borné. Une mission avant commit conserve un SHA
+    nul ; une mission `DONE` sans preuve durable correspondante devient
+    `DONE_UNVERIFIED` à l'écran. Les détails d'événements ne traversent pas cette
+    frontière afin de ne pas exposer un secret accidentellement journalisé.
 
 ## Limites explicites
 
@@ -68,6 +73,9 @@ Cette PR Draft vérifie ensemble les contrats développés séparément dans :
   et les ACL dédiées décrites ci-dessus. Le schéma v2 route désormais le credential
   API et le credential Git vers cette frontière, mais l'identité/ACL effective reste
   un prérequis de déploiement natif, pas une propriété prouvable par un test Python.
+- La projection SQLite est maintenant réelle, mais son transport vers le processus
+  PySide6 n'est pas encore le canal IPC authentifié final ; aucune lecture directe
+  de la base par l'UI n'est revendiquée comme architecture de livraison.
 
 ## Contrats GitHub vérifiés
 
