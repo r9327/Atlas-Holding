@@ -90,7 +90,7 @@ def _parse_missions(doc: dict[str, Any], *,
     checked = choose_next(jobs, (), now_epoch=int(time.time()), online=False)
     if checked.action == 'BLOCKED' and checked.reason in {
         'Dependency cycle', 'Unknown dependency', 'Duplicate or blank task IDs',
-    }:
+    } and not (allow_external_dependencies and checked.reason == 'Unknown dependency'):
         raise StoreError(checked.reason)
     return tuple(jobs), specifications
 
