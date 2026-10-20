@@ -118,7 +118,7 @@ class LocalProcessAgent:
         if action not in ('health', 'plan_patch'):
             raise AgentProcessError('Unsupported agent action')
         if self.should_stop():
-            raise AgentInterrupted('Controller suspended before adapter dispatch')
+            raise AgentInterrupted('Agent interrupted before adapter dispatch')
         if not cwd.is_absolute() or not cwd.is_dir():
             raise AgentProcessError('Agent worktree must be an existing absolute directory')
         # Verify immediately before each process launch, not just at onboarding.
