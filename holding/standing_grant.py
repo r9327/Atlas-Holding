@@ -104,6 +104,8 @@ def authorize_operation(
         raise StandingGrantError("Standing grant integrity mismatch")
     try:
         payload = json.loads(raw_grant, object_pairs_hook=_unique_object)
+    except StandingGrantError:
+        raise
     except (UnicodeError, ValueError) as exc:
         raise StandingGrantError("Standing grant is not valid JSON") from exc
     required = {
