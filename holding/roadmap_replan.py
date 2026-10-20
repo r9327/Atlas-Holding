@@ -62,9 +62,6 @@ class SafeRoadmapReplanner:
         existing_digest = self.store.db.execute(
             "SELECT version FROM roadmap_versions WHERE digest=?",
             (digest,)).fetchone()
-        if existing_digest:
-            return ReplanResult(existing_digest["version"], digest, (), (),
-                                tuple(j.id for j in jobs), (), False)
         old = {m.id: m for m in self.store.missions()}
         tracked = {
             row["id"]: row["spec_json"]
@@ -73,8 +70,19 @@ class SafeRoadmapReplanner:
                 "JOIN missions m ON m.id=s.id WHERE m.repo=?", (doc["repo"],))
         }
         desired = {j.id: j for j in jobs}
+        if existing_digest:
+            if (set(tracked) == set(desired)
+                    and all(tracked.get(j.id) == specs[j.id] for j in jobs)):
+                return ReplanResult(existing_digest["version"], digest, (), (),
+                                    tuple(j.id for j in jobs), (), False)
+            return ReplanResult(0, digest, (), (), (), ("STALE_VERSION_REPLAY",), False)
         missing = sorted(set(tracked) - set(desired))
         blocked = [f"OMITTED:{mid}" for mid in missing]
+        # Legacy tasks without acceptance contracts cannot disappear from a
+        # revision just because they weren't present in the last import.
+        for mid, prior in old.items():
+            if prior.repo == doc["repo"] and mid not in tracked:
+                blocked.append(f"LEGACY_UNTRACKED:{mid}")
         added, revised, preserved = [], [], []
         for job in jobs:
             prior = old.get(job.id)
