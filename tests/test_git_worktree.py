@@ -81,9 +81,9 @@ class GitWorktreeTests(unittest.TestCase):
         fake.mkdir()
         marker = Path(self.tmp.name) / 'started'
         binary = fake / 'git'
-        binary.write_text('#!/bin/sh\\n'
-                          'echo running > "' + marker.as_posix() + '"\\n'
-                          'sleep 10\\n', encoding='utf-8')
+        binary.write_text('#!/bin/sh\n'
+                          'echo running > "' + marker.as_posix() + '"\n'
+                          'sleep 10\n', encoding='utf-8')
         binary.chmod(0o755)
         import time
         start = time.monotonic()
@@ -92,6 +92,24 @@ class GitWorktreeTests(unittest.TestCase):
                 self.manager._git('status', timeout=1)
         self.assertTrue(marker.exists())
         self.assertLess(time.monotonic() - start, 4)
+
+    def test_git_output_limit_terminates_noisy_helpers(self):
+        if os.name == 'nt':
+            self.skipTest('POSIX test uses a fake Git wrapper')
+        fake = Path(self.tmp.name) / 'noisy-bin'
+        fake.mkdir()
+        binary = fake / 'git'
+        binary.write_text(
+            '#!/bin/sh\n'
+            'python3 -c "import sys;sys.stdout.write(chr(88)*5000000);sys.stdout.flush()"\n'
+            'sleep 10\n', encoding='utf-8')
+        binary.chmod(0o755)
+        import time
+        begin = time.monotonic()
+        with patch.dict(os.environ, {'PATH': str(fake) + os.pathsep + os.environ['PATH']}):
+            with self.assertRaisesRegex(GitSafetyError, 'output exceeded'):
+                self.manager._git('status', timeout=7)
+        self.assertLess(time.monotonic() - begin, 5)
 
     def test_dirty_canonical_denied(self):
         (self.root/'NOTTRACKED').write_text('dirty')
