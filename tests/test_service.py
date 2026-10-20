@@ -80,6 +80,31 @@ class ServiceTests(unittest.TestCase):
             self.assertTrue(self.invoke("stop")["stop_requested"])
             self.assertEqual(service.run(max_ticks=1).action, "STOPPED")
 
+    def test_paused_service_does_not_probe_local_model(self):
+        with StateStore(self.db) as state:
+            state.add_missions([Mission("a", REPO)])
+        worker = FakeWorker()
+        with self.make(worker) as service:
+            service.start()
+            with StateStore(self.db) as state:
+                state.set_paused(True)
+            with patch.object(worker, "ready",
+                              side_effect=AssertionError("Do not probe while paused")) as probe:
+                self.assertEqual(service.run(max_ticks=1).action, "WAIT")
+                probe.assert_not_called()
+            self.assertEqual(worker.calls, [])
+
+    def test_sqlite_claim_respects_durable_stop(self):
+        with StateStore(self.db) as state:
+            state.add_missions([Mission("a", REPO)])
+            state.db.execute(
+                "INSERT INTO settings(key,value) VALUES('stop_requested','1')")
+            self.assertEqual(state.claim_next(online=False).action, "WAIT")
+            self.assertEqual(state.missions()[0].state, "READY")
+            state.db.execute(
+                "UPDATE settings SET value='0' WHERE key='stop_requested'")
+            self.assertEqual(state.claim_next(online=False).mission_id, "a")
+
     def test_health_loss_prevents_new_dispatch(self):
         with StateStore(self.db) as state:
             state.add_missions([Mission("a", REPO)])
