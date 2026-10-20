@@ -1,1 +1,1 @@
-"""Atlas Holding foundational policy contracts and core primitives."""
+"""Atlas Holding policy, offline core, and separately privileged online adapters."""
