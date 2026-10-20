@@ -1,1 +1,1 @@
-"""Atlas Holding adapters for repository-owned validation tools."""
+"""Atlas Holding policy and repository-owned validation adapters."""
