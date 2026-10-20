@@ -1,1 +1,1 @@
-"""Atlas Holding reusable bootstrap components."""
+"""Atlas Holding policy contracts and reusable bootstrap components."""
