@@ -27,10 +27,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not args.db.is_absolute():
         parser.error("--db must be an absolute path")
-    if args.action == "import":
+    if args.action in ("import", "replan"):
         path = args.roadmap_file
         if path is None:
-            parser.error("import requires --roadmap-file")
+            parser.error("import/replan requires --roadmap-file")
         if path.is_symlink() or not path.is_file():
             parser.error("roadmap must be an existing regular, non-symlinked file")
         try:
