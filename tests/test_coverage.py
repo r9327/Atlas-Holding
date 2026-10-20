@@ -99,6 +99,25 @@ class CoverageTests(unittest.TestCase):
                           after_criterion=middle.criterion_number, limit=10)[0]
         self.assertEqual((last.mission_id, last.criterion_number), ("step-b", 0))
 
+    def test_cursor_with_minus_one_includes_selected_mission(self):
+        audit = RequirementCoverage(self.store)
+        rows = audit.page(after_mission_id="step-b", after_criterion=-1, limit=10)
+        self.assertEqual([(r.mission_id, r.criterion_number) for r in rows],
+                         [("step-b", 0)])
+
+    def test_mid_mission_cursor_seeks_directly_instead_of_full_rescan(self):
+        audit = RequirementCoverage(self.store)
+        sql = []
+        self.store.db.set_trace_callback(sql.append)
+        try:
+            rows = audit.page(after_mission_id="step-a", after_criterion=0, limit=1)
+        finally:
+            self.store.db.set_trace_callback(None)
+        self.assertEqual((rows[0].mission_id, rows[0].criterion_number),
+                         ("step-a", 1))
+        self.assertTrue(any("WHERE m.id>=" in query for query in sql),
+                        "Coverage should seek from cursor, not rescan roadmap")
+
     def test_control_snapshot_remains_quick_and_coverage_is_on_demand(self):
         with ControlPlane(self.db) as control:
             before = control.snapshot()

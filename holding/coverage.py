@@ -47,7 +47,8 @@ class RequirementCoverage:
             "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?",
             (name,)).fetchone()[0])
 
-    def _rows(self, *, after_id: str = "", batch: int = 128) -> Iterator:
+    def _rows(self, *, after_id: str = "", include_after: bool = False,
+              batch: int = 128) -> Iterator:
         if not self._has_table("mission_specs"):
             return
         signed = self._has_table("signed_proofs")
@@ -56,17 +57,21 @@ class RequirementCoverage:
         join = ("LEFT JOIN signed_proofs p ON p.mission_id=m.id"
                 if signed else "")
         while True:
+            # Keyset pagination: do not rescan all prior missions when
+            # resuming in the middle of a long roadmap.
+            operator = ">=" if include_after else ">"
             rows = self.store.db.execute(
                 f"SELECT m.id,m.state,m.candidate_sha,m.evidence_sha,"
                 f"s.spec_json,{fields} FROM mission_specs s "
                 f"JOIN missions m ON m.id=s.id {join} "
-                f"WHERE m.id>? ORDER BY m.id LIMIT ?",
+                f"WHERE m.id{operator}? ORDER BY m.id LIMIT ?",
                 (after_id, batch)).fetchall()
             if not rows:
                 return
             for row in rows:
                 yield row
             after_id = rows[-1]["id"]
+            include_after = False
 
     @staticmethod
     def _criteria(row) -> list[str]:
@@ -127,7 +132,8 @@ class RequirementCoverage:
                 or type(limit) is not int or not 1 <= limit <= 500):
             raise ValueError("Invalid bounded coverage cursor or limit")
         result: list[Requirement] = []
-        for row in self._rows(after_id="" if after_criterion >= 0 else after_mission_id):
+        for row in self._rows(after_id=after_mission_id,
+                              include_after=bool(after_mission_id)):
             mid = row["id"]
             if mid < after_mission_id:
                 continue
