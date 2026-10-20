@@ -118,6 +118,12 @@ class RoadmapImporter:
                 spec_json TEXT NOT NULL,
                 version INTEGER NOT NULL REFERENCES roadmap_versions(version)
             );
+            CREATE TABLE IF NOT EXISTS roadmap_amendments (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                version INTEGER NOT NULL REFERENCES roadmap_versions(version),
+                changed_ids_json TEXT NOT NULL,
+                recorded_epoch INTEGER NOT NULL
+            );
         ''')
 
     def import_text(self, raw: str, *, source: str) -> ImportResult:
