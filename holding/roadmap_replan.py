@@ -137,6 +137,39 @@ class SafeRoadmapReplanner:
         doc, jobs, specs, digest = self._parse(raw)
         return self._classify(doc, jobs, specs, digest)
 
+    def append_direction(self, raw: str, *, source: str) -> ReplanResult:
+        """Merge an explicit incremental direction with existing requirements.
+
+        The user need not re-send every already completed mission. An omitted
+        mission from a *delta* is always preserved. A conflict or simultaneous
+        edit aborts rather than losing the latest SQLite state.
+        """
+        doc, jobs, specifications, delta_digest = self._parse(raw)
+        merged: dict[str, dict] = {}
+        for row in self.store.db.execute(
+                "SELECT s.id,s.spec_json FROM mission_specs s "
+                "JOIN missions m ON m.id=s.id WHERE m.repo=? ORDER BY m.id",
+                (doc["repo"],)):
+            try:
+                item = json.loads(row["spec_json"])
+            except (ValueError, TypeError) as exc:
+                raise StoreError("Corrupt existing roadmap during delta import") from exc
+            if not isinstance(item, dict) or item.get("id") != row["id"]:
+                raise StoreError("Existing roadmap identity mismatch")
+            merged[row["id"]] = item
+        # Incoming missions are explicit replacements. Revision of a mission
+        # that has already started remains blocked by apply(), never inferred.
+        for mid, encoded in specifications.items():
+            merged[mid] = json.loads(encoded)
+        expanded = json.dumps({"repo": doc["repo"], "missions": list(merged.values())},
+                              ensure_ascii=False, separators=(",", ":"))
+        if len(expanded.encode("utf-8")) > MAX_ROADMAP_BYTES:
+            raise StoreError("Expanded roadmap exceeds 2 MiB")
+        provenance = f"{source} delta_sha256:{delta_digest}"
+        if len(provenance) > 500:
+            raise StoreError("Direction source provenance exceeds 500 characters")
+        return self.apply(expanded, source=provenance)
+
     def apply(self, raw: str, *, source: str) -> ReplanResult:
         if not isinstance(source, str) or not source.strip() or len(source) > 500:
             raise StoreError("Auditable roadmap revision provenance is required")
