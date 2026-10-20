@@ -50,6 +50,34 @@ class ControlTests(unittest.TestCase):
             self.assertFalse(snap.lease_valid)
             self.assertGreater(snap.last_event_seq, 0)
 
+    def test_scoped_qa_shows_only_matching_pending_sha_and_not_certified(self):
+        sha = "d" * 40
+        with StateStore(self.path) as state:
+            state.db.execute("UPDATE missions SET state='QA_PENDING', candidate_sha=?, "
+                             "evidence_sha='' WHERE id='a'", (sha,))
+            state.db.execute("""CREATE TABLE scoped_qa_advisories (
+                mission_id TEXT PRIMARY KEY, candidate_sha TEXT NOT NULL,
+                status TEXT NOT NULL, base_sha TEXT NOT NULL,
+                report_sha256 TEXT NOT NULL, checked_epoch INTEGER NOT NULL
+            )""")
+            state.db.execute("""INSERT INTO scoped_qa_advisories
+                (mission_id,candidate_sha,status,base_sha,report_sha256,checked_epoch)
+                VALUES('a',?,'SCOPED_TESTS_PASS',?,?,123)""",
+                (sha, "b" * 40, "c" * 64))
+        with ControlPlane(self.path) as control:
+            snap = control.snapshot()
+            self.assertEqual(snap.scoped_qa_counts, {"SCOPED_TESTS_PASS": 1})
+            self.assertEqual(snap.mission_counts, {"QA_PENDING": 1})
+            self.assertEqual(control.scoped_qa_missions(limit=1)[0]["mission_id"], "a")
+            with self.assertRaises(ValueError):
+                control.scoped_qa_missions(limit=10000)
+        with StateStore(self.path) as state:
+            state.db.execute("UPDATE missions SET candidate_sha=? WHERE id='a'",
+                             ("e" * 40,))
+        with ControlPlane(self.path) as control:
+            self.assertEqual(control.snapshot().scoped_qa_counts, {})
+            self.assertEqual(control.scoped_qa_missions(), [])
+
     def test_live_lease_is_reported_as_lease_only(self):
         with HoldingEngine(self.path, lambda m: SHA, online=lambda: False) as engine:
             engine.start()
