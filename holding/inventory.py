@@ -18,6 +18,13 @@ from typing import Callable
 from urllib import request
 
 
+class _NoRedirect(request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Even a locally installed or compromised daemon must not be able to
+        # redirect an inventory probe to an outside network endpoint.
+        return None
+
+
 @dataclass(frozen=True)
 class Component:
     status: str
@@ -78,7 +85,7 @@ def _program(name: str, arguments: tuple[str, ...] = ("--version",)) -> Componen
 def _api_json(route: str) -> dict:
     """Fixed loopback API only: never follow a user-supplied Ollama URL."""
     url = "http://127.0.0.1:11434" + route
-    opener = request.build_opener(request.ProxyHandler({}))
+    opener = request.build_opener(request.ProxyHandler({}), _NoRedirect())
     with opener.open(request.Request(url, headers={"Accept": "application/json"}),
                      timeout=1.5) as response:
         if response.status != 200:
