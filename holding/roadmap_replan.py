@@ -52,7 +52,8 @@ class SafeRoadmapReplanner:
         except UnicodeError as exc:
             raise StoreError("Invalid roadmap text encoding") from exc
         doc = _document(raw)
-        jobs, specs = _parse_missions(doc)
+        jobs, specs = _parse_missions(
+            doc, allow_external_dependencies=incremental)
         digest = hashlib.sha256(json.dumps(
             doc, sort_keys=True, ensure_ascii=False,
             separators=(",", ":")).encode()).hexdigest()
