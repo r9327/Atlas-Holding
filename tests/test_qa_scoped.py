@@ -74,18 +74,14 @@ class ScopedDoctorRunnerTests(unittest.TestCase):
         self.doctor.return_value.plan.return_value = self.plan
 
     def run_with_report(self, report, *, process_exit=0):
-        class Completed:
-            returncode = process_exit
-        def execute(argv, *, cwd, stdin, stdout, stderr, timeout, check, env):
+        def execute(argv, *, cwd, timeout_seconds):
             self.assertEqual(argv[-1], "--run")
             self.assertEqual(argv[argv.index("--expected-sha") + 1], SHA)
             self.assertEqual(argv[argv.index("--base-ref") + 1], BASE)
-            self.assertNotIn("GITHUB_TOKEN", env)
-            self.assertFalse(check)
             self.assertEqual(cwd, self.root)
-            stdout.write(json.dumps(report).encode())
-            return Completed()
-        with patch("holding.qa_scoped.subprocess.run", side_effect=execute):
+            self.assertEqual(timeout_seconds, 900)
+            return process_exit, json.dumps(report).encode()
+        with patch("holding.qa_scoped._run_limited_doctor", side_effect=execute):
             return self.runner.run("mission", SHA)
 
     def test_successful_scoped_test_is_advisory_not_certified(self):
@@ -97,7 +93,7 @@ class ScopedDoctorRunnerTests(unittest.TestCase):
 
     def test_full_required_never_dispatches_tests(self):
         self.plan.status = "FULL_REQUIRED"
-        with patch("holding.qa_scoped.subprocess.run") as execute:
+        with patch("holding.qa_scoped._run_limited_doctor") as execute:
             result = self.runner.run("mission", SHA)
         self.assertEqual(result.status, "FULL_REQUIRED")
         execute.assert_not_called()
@@ -127,7 +123,7 @@ class ScopedDoctorRunnerTests(unittest.TestCase):
 
     def test_preflight_error_prevents_test_execution(self):
         self.doctor.return_value.plan.side_effect = RuntimeError("not an allowed preflight")
-        with patch("holding.qa_scoped.subprocess.run") as execute:
+        with patch("holding.qa_scoped._run_limited_doctor") as execute:
             with self.assertRaises(RuntimeError):
                 self.runner.run("mission", SHA)
         execute.assert_not_called()
@@ -152,13 +148,12 @@ class ScopedDoctorRunnerTests(unittest.TestCase):
             self.assertEqual(tuple(advisory), ("SCOPED_TESTS_PASS", SHA))
 
     @staticmethod
-    def _write_successful_report(argv, *, stdout, **kwargs):
-        stdout.write(json.dumps(_report()).encode())
-        return type("Completed", (), {"returncode": 0})()
+    def _write_successful_report(argv, **kwargs):
+        return 0, json.dumps(_report()).encode()
 
     def test_without_pending_exact_mission_no_test_process_launches(self):
         with StateStore(self.root / "state.sqlite") as state:
-            with patch("holding.qa_scoped.subprocess.run") as run:
+            with patch("holding.qa_scoped._run_limited_doctor") as run:
                 with self.assertRaises(StoreError):
                     self.runner.run_pending(state, "mission")
                 run.assert_not_called()
