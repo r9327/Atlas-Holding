@@ -69,14 +69,18 @@ class OperatorRoadmapCliTests(unittest.TestCase):
     def test_new_direction_needs_only_new_goals_not_entire_roadmap(self):
         self.path.write_text(FIRST, encoding="utf-8")
         self.run_cli("import")
-        delta = ("Repository: r9327/Dof-Atlas\\n"
-                 "## b\\nOperation: code\\nDepends_on: a\\n"
-                 "Acceptance:\\n- Pass second contract\\n")
+        delta = """Repository: r9327/Dof-Atlas
+## b
+Operation: code
+Depends_on: a
+Acceptance:
+- Pass second contract
+"""
         self.path.write_text(delta, encoding="utf-8")
         result = self.run_cli("direction")
         self.assertEqual(result["added"], ["b"])
         self.assertEqual(result["preserved"], ["a"])
-        self.assertEqual(len(self.run_cli("coverage")["requirements_total"].__str__()), 1)
+        self.assertEqual(self.run_cli("coverage")["requirements_total"], 2)
         with StateStore(self.db) as state:
             self.assertEqual(len(state.missions()), 2)
 
