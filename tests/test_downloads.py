@@ -4,13 +4,20 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
 import socket
+import shutil
 import tempfile
 import threading
 import unittest
 from unittest.mock import patch
 
 from holding import downloads
-from holding.downloads import download_pinned, DownloadError, IntegrityError
+from holding.downloads import (
+    download_pinned,
+    DownloadBusyError,
+    DownloadError,
+    InsufficientSpaceError,
+    IntegrityError,
+)
 
 DATA = (b"Holding reliable bootstrap\n" * 65536) + b"END"
 HASH = hashlib.sha256(DATA).hexdigest()
@@ -141,11 +148,45 @@ class DownloadTests(unittest.TestCase):
             self.call()
         self.assertEqual(original.read_bytes(), DATA[:100])
 
+    def test_second_writer_is_rejected_without_network_or_mutation(self):
+        with downloads._target_lock(self.target):
+            with self.assertRaises(DownloadBusyError):
+                self.call()
+        self.assertFalse(self.target.exists())
+        self.assertFalse(self.target.with_name(self.target.name + ".part").exists())
+
+    def test_insufficient_space_is_reported_before_network(self):
+        usage = shutil._ntuple_diskusage(total=1000, used=900, free=100)
+        with patch.object(downloads.shutil, "disk_usage", return_value=usage):
+            with self.assertRaisesRegex(InsufficientSpaceError, "100 free bytes"):
+                self.call(free_space_reserve=0)
+        self.assertFalse(self.target.exists())
+        self.assertFalse(self.target.with_name(self.target.name + ".part").exists())
+
+    def test_space_check_accounts_for_resumable_bytes(self):
+        partial = self.target.with_name(self.target.name + ".part")
+        partial.write_bytes(DATA[:-64])
+        usage = shutil._ntuple_diskusage(total=1024, used=960, free=64)
+        with patch.object(downloads.shutil, "disk_usage", return_value=usage):
+            self.assertEqual(self.call(free_space_reserve=0).read_bytes(), DATA)
+
+    def test_server_ignoring_range_rechecks_space_for_full_restart(self):
+        partial = self.target.with_name(self.target.name + ".part")
+        partial.write_bytes(DATA[:-64])
+        Server.behavior = "ignore_range"
+        usage = shutil._ntuple_diskusage(total=len(DATA), used=64, free=len(DATA) - 64)
+        with patch.object(downloads.shutil, "disk_usage", return_value=usage):
+            with self.assertRaises(InsufficientSpaceError):
+                self.call(free_space_reserve=0)
+        self.assertEqual(partial.read_bytes(), DATA[:-64])
+
     def test_invalid_url_and_digest(self):
         with self.assertRaises(ValueError):
             download_pinned("http://example.org/a", self.target, sha256=HASH, size=len(DATA))
         with self.assertRaises(ValueError):
             download_pinned(self.url, self.target, sha256="bad", size=len(DATA))
+        with self.assertRaises(ValueError):
+            self.call(free_space_reserve=-1)
 
 
 if __name__ == "__main__":

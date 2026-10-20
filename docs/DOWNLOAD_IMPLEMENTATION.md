@@ -4,8 +4,10 @@ Le module `holding/downloads.py` est un **composant implémenté**, distinct des
 - téléchargement HTTP(S) à adresse HTTPS (HTTP seulement en boucle locale pour tests) ;
 - reprise par `Range` HTTP après coupure / reprise du programme si le serveur accepte les plages ;
 - fichiers partiels `.part` conservés sur échec ; réutilisation d'un téléchargement déjà vérifié ;
-- vérification de la taille **et du SHA-256 de manifeste fiable** avant publication par `os.replace` ;
+- vérification de la taille **et du SHA-256 de manifeste fiable** avant publication atomique sans écraser un fichier concurrent ;
 - refus de `Content-Range` incorrect, redirection HTTPS→HTTP, fichiers finaux corrompus et liens symboliques ;
+- verrou inter-processus non bloquant par destination et refus explicite d'un second writer ;
+- contrôle de l'espace restant avant chaque tentative, avec réserve configurable (128 Mio par défaut) ;
 - backoff sur erreurs réseau temporaires, avec limite par invocation ; la reprise lors d'une autre session est possible.
 
 ## Tests
@@ -16,6 +18,6 @@ Le module `holding/downloads.py` est un **composant implémenté**, distinct des
 2. Un serveur HTTP sans support des plages reprend depuis zéro ; jamais prétendre le contraire.
 3. Un hash attendu doit provenir d'un manifeste de confiance, pas du contenu téléchargé lui-même.
 4. Les poids Ollama se téléchargent avec l'API/CLI Ollama, **pas** ce module. La reprise native des blobs doit être testée **en coupant et redémarrant réellement le serveur Ollama sur Windows**. La conservation des fragments peut dépendre de la version/chemin et de OLLAMA_NOPRUNE.
-5. Restent à faire : téléchargement d'un vrai binaire épinglé, mode Windows, UI/progress bar, annulation, boucle de reprise intersession, tests avec coupures répétées, contrôle disque, verrouillage multi-processus, antivirus et intégration au setup #2.
+5. Restent à faire : téléchargement d'un vrai binaire épinglé, UI/progress bar, annulation, journal persistant, boucle de reprise intersession, tests avec coupures répétées, antivirus et intégration au setup #2.
 
 Le lot #2 reste Draft jusqu'à installation réelle, tests Windows et vérification des cas de panne.
