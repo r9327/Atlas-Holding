@@ -145,7 +145,7 @@ class SafeRoadmapReplanner:
         mission from a *delta* is always preserved. A conflict or simultaneous
         edit aborts rather than losing the latest SQLite state.
         """
-        doc, jobs, specifications, delta_digest = self._parse(raw)
+        doc, jobs, specifications, delta_digest = self._parse(raw, incremental=True)
         merged: dict[str, dict] = {}
         for row in self.store.db.execute(
                 "SELECT s.id,s.spec_json FROM mission_specs s "
