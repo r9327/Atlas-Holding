@@ -1,1 +1,1 @@
-"""Atlas Holding agents and measured quality primitives."""
+"""Atlas Holding foundational policy and measured agent primitives."""
