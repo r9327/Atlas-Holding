@@ -20,7 +20,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="atlas-holding")
     parser.add_argument("--db", type=Path, default=default_database())
     parser.add_argument("action", choices=("status", "pause", "resume", "stop",
-                                           "clear-stop", "import", "replan",
+                                           "clear-stop", "import", "replan", "direction",
                                            "coverage", "closure"))
     parser.add_argument("--roadmap-file", type=Path)
     parser.add_argument("--source")
