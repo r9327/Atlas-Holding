@@ -178,7 +178,7 @@ def _task(value: Any) -> TaskView:
     sha = item["candidate_sha"]
     if sha is not None and (not isinstance(sha, str) or not _SHA.fullmatch(sha)):
         raise ControlCenterStateError("Invalid task candidate SHA")
-    if state in {"QA_PENDING", "RECOVERY_REQUIRED", "DONE_UNVERIFIED", "DONE"} \
+    if state in {"QA_PENDING", "DONE_UNVERIFIED", "DONE"} \
             and sha is None:
         raise ControlCenterStateError("Task state requires a candidate SHA")
     evidence = None
