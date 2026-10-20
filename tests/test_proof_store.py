@@ -31,12 +31,14 @@ class ProofStoreTests(unittest.TestCase):
         self.assertEqual(self.store.claim_next(online=False).mission_id, "first")
         self.store.checkpoint("first", SHA)
 
-    def signed_receipt(self, *, signature_key=KEY, candidate=SHA, verdict="PASS"):
+    def signed_receipt(self, *, signature_key=KEY, candidate=SHA,
+                       verdict="PASS", runner=None):
         artifact = self.proof_dir / "result.txt"
         artifact.write_text("Independent test result", encoding="utf-8")
         data = {
             "schema": 1, "mission_id": "first", "sha": candidate,
-            "runner": "github_certification" if verdict == "PASS" else "doctor_atlas",
+            "runner": runner or (
+                "github_certification" if verdict == "PASS" else "doctor_atlas"),
             "verdict": verdict, "artifact": artifact.name,
             "artifact_sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()
         }
@@ -60,6 +62,15 @@ class ProofStoreTests(unittest.TestCase):
             self.verifier.apply(self.store, self.signed_receipt(signature_key=b"Z" * 32), mission_id="first")
         self.assertEqual(self.store.missions()[0].state, "QA_PENDING")
         self.assertEqual(self.store.claim_next(online=False).action, "WAIT")
+
+    def test_signed_doctor_pass_is_advisory_not_final(self):
+        receipt = self.signed_receipt(verdict="PASS", runner="doctor_atlas")
+        with self.assertRaisesRegex(ProofError, "advisory"):
+            self.verifier.apply(self.store, receipt, mission_id="first")
+        self.assertEqual(self.store.missions()[0].state, "QA_PENDING")
+        self.assertEqual(self.store.missions()[0].evidence_sha, "")
+        self.assertIsNone(self.store.db.execute(
+            "SELECT name FROM sqlite_master WHERE name='signed_proofs'").fetchone())
 
     def test_fail_blocks_without_fake_done(self):
         self.verifier.apply(self.store, self.signed_receipt(verdict="FAIL"), mission_id="first")
