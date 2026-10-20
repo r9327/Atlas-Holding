@@ -27,7 +27,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not args.db.is_absolute():
         parser.error("--db must be an absolute path")
-    if args.action in ("import", "replan"):
+    if args.action in ("import", "replan", "direction"):
         path = args.roadmap_file
         if path is None:
             parser.error("import/replan requires --roadmap-file")
