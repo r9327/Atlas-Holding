@@ -91,7 +91,10 @@ def parse_markdown_roadmap(raw: str) -> dict:
                 raise StoreError("Acceptance criteria must use explicit bullets")
             in_acceptance = True
         elif name == "depends_on":
-            current["depends_on"] = [x.strip() for x in value.split(",") if x.strip()] if value else []
+            parts = [x.strip() for x in value.split(",")] if value else []
+            if any(not item for item in parts):
+                raise StoreError("Dependencies must be explicit, without empty entries")
+            current["depends_on"] = parts
             in_acceptance = False
         elif name == "priority":
             try:
