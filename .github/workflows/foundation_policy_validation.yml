@@ -1,0 +1,40 @@
+name: Foundation policy validation
+
+on:
+  pull_request:
+    branches: [main]
+    types: [ready_for_review, labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  foundation-policy:
+    if: >-
+      github.head_ref == 'feat/windows-local-holding-v0' &&
+      (github.event.action == 'ready_for_review' ||
+       github.event.label.name == 'ci:validate')
+    name: Foundation policy on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact candidate SHA
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Python 3.13
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Check Python and registry syntax
+        run: python -c "import ast,json,pathlib; [ast.parse(p.read_text(encoding='utf-8'),filename=str(p)) for d in ('holding','tests') for p in pathlib.Path(d).rglob('*.py')]; json.loads(pathlib.Path('config/tool_registry.json').read_text(encoding='utf-8'))"
+      - name: Run complete foundation policy tests
+        run: python -B -X utf8 -m unittest discover -s tests -p "test_*.py" -v
+      - name: Require clean checkout after tests
+        shell: bash
+        run: 'test -z "$(git status --porcelain --untracked-files=normal)"'
