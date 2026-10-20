@@ -98,6 +98,13 @@ class ScopedDoctorRunnerTests(unittest.TestCase):
         self.assertEqual(result.status, "FULL_REQUIRED")
         execute.assert_not_called()
 
+    def test_blocked_doctor_plan_is_not_misreported_as_full_required(self):
+        self.plan.status = "BLOCKED"
+        with patch("holding.qa_scoped._run_limited_doctor") as execute:
+            result = self.runner.run("mission", SHA)
+        self.assertEqual(result.status, "SCOPED_PLAN_BLOCKED")
+        execute.assert_not_called()
+
     def test_wrong_sha_rejected(self):
         with self.assertRaises(ScopedQaError):
             self.run_with_report(_report(sha="f" * 40))
