@@ -57,6 +57,24 @@ class RoadmapReplanTests(unittest.TestCase):
         self.assertEqual(self.store.db.execute(
             "SELECT COUNT(*) FROM roadmap_amendments").fetchone()[0], 1)
 
+    def test_preview_never_installs_or_changes_database_schema(self):
+        from holding.autonomy import Mission
+        from holding.state_store import StateStore
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            db = StateStore(Path(folder) / "other.sqlite")
+            try:
+                before = {row[0] for row in db.db.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'")}
+                planner = SafeRoadmapReplanner(db)
+                with self.assertRaisesRegex(StoreError, "initial roadmap"):
+                    planner.preview(document(A))
+                after = {row[0] for row in db.db.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'")}
+                self.assertEqual(before, after)
+            finally:
+                db.close()
+
     def test_incremental_preview_never_mutates_queue(self):
         before = self.store.events()
         preview = self.replan.preview_direction(document(C))
