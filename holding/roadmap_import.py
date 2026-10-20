@@ -17,6 +17,7 @@ from .state_store import StateStore, StoreError
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+MAX_ROADMAP_BYTES = 2 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -62,7 +63,7 @@ def _parse_missions(doc: dict[str, Any]) -> tuple[tuple[Mission, ...], dict[str,
         priority = item.get('priority', 0)
         if not isinstance(mid, str) or not _ID.fullmatch(mid) or mid in specifications:
             raise StoreError('Duplicate or unsafe mission id')
-        if op not in KNOWN_OPERATIONS:
+        if not isinstance(op, str) or op not in KNOWN_OPERATIONS:
             raise StoreError('Unknown or forbidden operation')
         if (not isinstance(acceptance, list) or not acceptance or
             any(not isinstance(a, str) or not a.strip() for a in acceptance)):
@@ -114,8 +115,15 @@ class RoadmapImporter:
         ''')
 
     def import_text(self, raw: str, *, source: str) -> ImportResult:
-        if not source or len(source) > 500:
+        if not isinstance(source, str) or not source.strip() or len(source) > 500:
             raise StoreError('Roadmap provenance is required')
+        if not isinstance(raw, str) or len(raw) > MAX_ROADMAP_BYTES:
+            raise StoreError('Roadmap must be text and <= 2 MiB')
+        try:
+            if len(raw.encode('utf-8')) > MAX_ROADMAP_BYTES:
+                raise StoreError('Roadmap UTF-8 input exceeds 2 MiB')
+        except UnicodeError as exc:
+            raise StoreError('Roadmap contains invalid Unicode') from exc
         doc = _document(raw)
         jobs, specs = _parse_missions(doc)
         canonical = json.dumps(doc, sort_keys=True, ensure_ascii=False, separators=(',', ':'))
