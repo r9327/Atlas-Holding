@@ -35,10 +35,15 @@ def _document(raw: str) -> dict[str, Any]:
         if match is None:
             raise StoreError('Expected a single fenced JSON roadmap')
         source = match.group(1)
-    try:
-        doc = json.loads(source)
-    except (ValueError, TypeError) as exc:
-        raise StoreError('Roadmap must contain valid JSON (or a fenced JSON block)') from exc
+    if source.startswith("# ") or source.casefold().startswith("repository:"):
+        from .markdown_roadmap import parse_markdown_roadmap
+        doc = parse_markdown_roadmap(source)
+    else:
+        try:
+            doc = json.loads(source)
+        except (ValueError, TypeError) as exc:
+            raise StoreError('Roadmap must contain valid JSON, a fenced JSON block, '
+                             'or explicit Markdown tasks') from exc
     if not isinstance(doc, dict) or set(doc) != {'repo', 'missions'}:
         raise StoreError('Roadmap requires exactly repo and missions')
     if (not isinstance(doc['repo'], str) or not _REPO.fullmatch(doc['repo']) or
