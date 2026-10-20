@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
 from typing import Protocol
 
 from .github_full_evidence import FullEvidence, GitHubEvidenceError
@@ -16,6 +18,7 @@ from .sync_attempts import (
 
 
 MAX_HEALTH_AGE_SECONDS = 60
+MIN_RECOVERY_AGE_SECONDS = 30
 
 
 @dataclass(frozen=True)
@@ -86,6 +89,61 @@ def _pr_state(observed: LiveGitHubState) -> dict:
     }
 
 
+def _state_bytes(observed: LiveGitHubState) -> bytes:
+    payload = {
+        "repository": observed.repository,
+        "pr_number": observed.pr_number,
+        "head_branch": observed.head_branch,
+        "head_sha": observed.head_sha,
+        "state": observed.state,
+        "draft": observed.draft,
+        "complete": observed.complete,
+        "merged": observed.merged,
+        "ci_run_id": observed.ci_run_id,
+        "ci_head_sha": observed.ci_head_sha,
+    }
+    return json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+    ).encode("ascii")
+
+
+def _unique_object(pairs: list[tuple[str, object]]) -> dict:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise StoreError("Duplicate synchronization recovery context key")
+        result[key] = value
+    return result
+
+
+def _state_from_bytes(raw: bytes) -> LiveGitHubState:
+    try:
+        value = json.loads(raw, object_pairs_hook=_unique_object)
+    except StoreError:
+        raise
+    except (UnicodeError, ValueError) as exc:
+        raise StoreError("Invalid synchronization recovery context") from exc
+    keys = {
+        "repository", "pr_number", "head_branch", "head_sha", "state",
+        "draft", "complete", "merged", "ci_run_id", "ci_head_sha",
+    }
+    if (not isinstance(value, dict) or set(value) != keys
+            or not isinstance(value["repository"], str)
+            or type(value["pr_number"]) is not int or value["pr_number"] < 1
+            or not isinstance(value["head_branch"], str)
+            or not isinstance(value["head_sha"], str)
+            or value["state"] not in {"open", "closed"}
+            or type(value["draft"]) is not bool
+            or type(value["complete"]) is not bool
+            or type(value["merged"]) is not bool
+            or (value["ci_run_id"] is not None
+                and (type(value["ci_run_id"]) is not int or value["ci_run_id"] < 1))
+            or (value["ci_head_sha"] is not None
+                and not isinstance(value["ci_head_sha"], str))):
+        raise StoreError("Invalid synchronization recovery context")
+    return LiveGitHubState(**value)
+
+
 def _same_identity(
     state: LiveGitHubState, *, repository: str, pr_number: int,
     branch: str, candidate_sha: str,
@@ -126,6 +184,17 @@ def _postcondition(
     return False
 
 
+def _github_healthy(store: StateStore, now_epoch: int) -> bool:
+    health = store.service_health("github")
+    return (
+        health is not None
+        and health["status"] == "ONLINE"
+        and type(health["observed_at"]) is int
+        and health["observed_at"] <= now_epoch + 5
+        and now_epoch - health["observed_at"] <= MAX_HEALTH_AGE_SECONDS
+    )
+
+
 def coordinate_github_mutation(
     store: StateStore,
     control: PrivilegedGitHubControl,
@@ -163,11 +232,7 @@ def coordinate_github_mutation(
         return CoordinationResult(
             "REQUIRES_GIT_DIVERGENCE_PROOF", decision.idempotency_key, None)
 
-    health = store.service_health("github")
-    if (health is None or health["status"] != "ONLINE"
-            or type(health["observed_at"]) is not int
-            or health["observed_at"] > now_epoch + 5
-            or now_epoch - health["observed_at"] > MAX_HEALTH_AGE_SECONDS):
+    if not _github_healthy(store, now_epoch):
         return CoordinationResult("GITHUB_HEALTH_BLOCKED", decision.idempotency_key, None)
 
     try:
@@ -205,6 +270,8 @@ def coordinate_github_mutation(
         candidate_sha=candidate_sha, attempt=attempt,
         idempotency_key=decision.idempotency_key,
         updated_epoch=now_epoch, lease_owner=lease_owner,
+        recovery_context=(context := _state_bytes(before)),
+        recovery_context_sha256=hashlib.sha256(context).hexdigest(),
     )
     try:
         control.mutate(intent, decision.idempotency_key)
@@ -253,3 +320,92 @@ def coordinate_github_mutation(
         "SUCCEEDED", decision.idempotency_key, attempt,
         mutation_performed=True,
     )
+
+
+def recover_pending_github_mutation(
+    store: StateStore,
+    control: PrivilegedGitHubControl,
+    *,
+    repository: str,
+    operation: str,
+    branch: str,
+    candidate_sha: str,
+    pr_number: int,
+    now_epoch: int,
+    lease_owner: str,
+) -> CoordinationResult:
+    """Reobserve one ambiguous PENDING operation without replaying it."""
+    if (type(pr_number) is not int or pr_number < 1
+            or type(now_epoch) is not int or now_epoch < 0
+            or not isinstance(lease_owner, str) or not lease_owner):
+        raise GitHubEvidenceError("Invalid trusted recovery request")
+    rows = store.sync_attempts(
+        operation=operation, repo=repository, branch=branch,
+        candidate_sha=candidate_sha,
+    )
+    decision = decide_attempt(
+        _records(rows), operation=operation, repository=repository,
+        branch=branch, candidate_sha=candidate_sha,
+    )
+    if decision.action is not AttemptAction.WAIT or not rows:
+        return CoordinationResult(
+            "NO_PENDING_INSPECTION", decision.idempotency_key, None)
+    latest = rows[-1]
+    attempt = latest["attempt"]
+    context = store.sync_recovery_context(
+        operation=operation, repo=repository, branch=branch,
+        candidate_sha=candidate_sha, attempt=attempt,
+    )
+    if context is None:
+        return CoordinationResult(
+            "LEGACY_CONTEXT_BLOCKED", decision.idempotency_key, attempt)
+    if type(context["recorded_epoch"]) is not int:
+        raise StoreError("Invalid synchronization recovery timestamp")
+    if context["recorded_epoch"] > now_epoch + 5:
+        raise StoreError("Synchronization recovery timestamp is in the future")
+    if now_epoch - context["recorded_epoch"] < MIN_RECOVERY_AGE_SECONDS:
+        return CoordinationResult("WAIT", decision.idempotency_key, attempt)
+    if not _github_healthy(store, now_epoch):
+        return CoordinationResult(
+            "GITHUB_HEALTH_BLOCKED", decision.idempotency_key, attempt)
+    before = _state_from_bytes(context["pre_state"])
+    if not _same_identity(
+            before, repository=repository, pr_number=pr_number,
+            branch=branch, candidate_sha=candidate_sha):
+        raise StoreError("Synchronization recovery context identity mismatch")
+    try:
+        current = control.observe_pr(repository, pr_number)
+    except Exception:
+        return CoordinationResult(
+            "INSPECT_REQUIRED", decision.idempotency_key, attempt)
+    if not isinstance(current, LiveGitHubState):
+        return CoordinationResult(
+            "INSPECT_REQUIRED", decision.idempotency_key, attempt)
+    if _postcondition(
+            operation, before, current, repository=repository,
+            pr_number=pr_number, branch=branch, candidate_sha=candidate_sha):
+        store.finish_sync_attempt(
+            operation=operation, repo=repository, branch=branch,
+            candidate_sha=candidate_sha, attempt=attempt,
+            idempotency_key=decision.idempotency_key,
+            status="SUCCEEDED", retryable=False, updated_epoch=now_epoch,
+            lease_owner=lease_owner,
+        )
+        return CoordinationResult(
+            "SUCCEEDED", decision.idempotency_key, attempt)
+    if operation in {"github.pr_draft", "github.pr_ready"} and current == before:
+        retryable = attempt < 3
+        store.finish_sync_attempt(
+            operation=operation, repo=repository, branch=branch,
+            candidate_sha=candidate_sha, attempt=attempt,
+            idempotency_key=decision.idempotency_key,
+            status="FAILED" if retryable else "BLOCKED",
+            retryable=retryable, updated_epoch=now_epoch,
+            lease_owner=lease_owner,
+        )
+        return CoordinationResult(
+            "RETRY" if retryable else "BLOCKED",
+            decision.idempotency_key, attempt,
+        )
+    return CoordinationResult(
+        "INSPECT_REQUIRED", decision.idempotency_key, attempt)

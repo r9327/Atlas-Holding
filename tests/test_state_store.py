@@ -1,9 +1,12 @@
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
 from holding.autonomy import Mission, StandingGrant
 from holding.state_store import StateStore, StoreError
-from holding.schema import DAEMON_LEASE_SCHEMA, SYNC_STATE_SCHEMA, apply_schema
+from holding.schema import (
+    DAEMON_LEASE_SCHEMA, SYNC_RECOVERY_SCHEMA, SYNC_STATE_SCHEMA, apply_schema,
+)
 
 REPO = 'r9327/Dof-Atlas'
 SHA = 'a' * 40
@@ -186,7 +189,10 @@ class StoreTests(unittest.TestCase):
         self.assertIn('RUNNING_TO_RECOVERY_REQUIRED', names)
 
     def enable_sync_schema(self):
-        apply_schema(self.store.db, DAEMON_LEASE_SCHEMA + SYNC_STATE_SCHEMA)
+        apply_schema(
+            self.store.db,
+            DAEMON_LEASE_SCHEMA + SYNC_STATE_SCHEMA + SYNC_RECOVERY_SCHEMA,
+        )
         self.store.db.execute(
             "INSERT OR REPLACE INTO daemon_lease(singleton,owner,expires_epoch) VALUES(1,?,?)",
             ('test-sync', 2_000_000_000),
@@ -233,6 +239,37 @@ class StoreTests(unittest.TestCase):
             key: value for key, value in values.items()
             if key not in {'idempotency_key', 'lease_owner'}
         })[0]['status'], 'SUCCEEDED')
+
+    def test_sync_recovery_context_is_atomic_and_digest_checked(self):
+        self.enable_sync_schema()
+        raw = b'{"state":"before"}'
+        digest = hashlib.sha256(raw).hexdigest()
+        values = dict(
+            operation='github.pr_ready', repo=REPO,
+            branch='holding/lot-1', candidate_sha=SHA,
+            idempotency_key='9' * 64, lease_owner='test-sync',
+        )
+        self.store.begin_sync_attempt(
+            **values, attempt=1, updated_epoch=100,
+            recovery_context=raw, recovery_context_sha256=digest,
+        )
+        context = self.store.sync_recovery_context(
+            operation=values['operation'], repo=REPO,
+            branch=values['branch'], candidate_sha=SHA, attempt=1,
+        )
+        self.assertEqual(context['pre_state'], raw)
+        self.assertEqual(context['pre_state_sha256'], digest)
+        with self.assertRaisesRegex(StoreError, 'Invalid synchronization recovery'):
+            self.store.begin_sync_attempt(
+                **{**values, 'candidate_sha': 'b' * 40,
+                   'idempotency_key': '8' * 64},
+                attempt=1, updated_epoch=101,
+                recovery_context=raw, recovery_context_sha256='0' * 64,
+            )
+        self.assertEqual(self.store.sync_attempts(
+            operation='github.pr_ready', repo=REPO,
+            branch='holding/lot-1', candidate_sha='b' * 40,
+        ), ())
 
     def test_only_retryable_failure_can_open_next_bounded_attempt(self):
         self.enable_sync_schema()

@@ -15,6 +15,10 @@ Cette PR Draft vérifie ensemble les contrats développés séparément dans :
 5. Le journal SQLite écrit `PENDING` avant l'appel privilégié.
 6. L'opération est réobservée après mutation avant de devenir `SUCCEEDED`.
 7. Une issue réseau ambiguë reste `PENDING` et impose une inspection ; elle n'est jamais rejouée.
+8. L'état observé avant mutation est persisté atomiquement avec son empreinte SHA-256.
+9. Après un délai minimal, la récupération réobserve GitHub sans muter : elle clôture
+   un effet exact déjà visible. Seuls Draft/Ready strictement inchangés libèrent un
+   retry borné ; CI et merge restent en inspection tant que leur effet est ambigu.
 
 ## Limites explicites
 
@@ -22,4 +26,5 @@ Cette PR Draft vérifie ensemble les contrats développés séparément dans :
 - Le transport GitHub privilégié concret reste à implémenter hors du processus écrivain.
 - Le push reste bloqué tant qu'une preuve de non-divergence Git dédiée n'est pas fournie.
 - Un statut `SUCCEEDED` atteste l'effet de synchronisation observé, jamais la qualité produit.
+- Un contexte absent (ancienne base), corrompu ou incohérent bloque la récupération.
 - Cette PR ne rend pas les PR #1, #3 ou #7 prêtes à fusionner et ne remplace pas leur certification finale.

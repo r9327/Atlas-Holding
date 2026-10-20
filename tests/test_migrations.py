@@ -8,7 +8,10 @@ from unittest.mock import patch
 from holding.autonomy import Mission
 from holding.daemon_lease import DaemonLease
 from holding.migrations import CURRENT_SCHEMA, SchemaMigrator
-from holding.schema import CORE_SCHEMA, MODEL_SCHEMA_V1, RUNTIME_SCHEMA_V2, apply_schema
+from holding.schema import (
+    CORE_SCHEMA, MODEL_SCHEMA_V1, RUNTIME_SCHEMA_V2, RUNTIME_SCHEMA_V3,
+    apply_schema,
+)
 from holding.sqlite_backup import restore_snapshot
 from holding.state_store import StateStore, StoreError
 
@@ -53,6 +56,7 @@ class MigrationTests(unittest.TestCase):
             'scoped_qa_advisories','scoped_qa_retries','qa_repair_attempts',
             'roadmap_versions','mission_specs','roadmap_amendments',
             'external_service_health','github_sync_attempts',
+            'github_sync_context',
         }.issubset(tables))
 
     def test_reopened_v1_database_preserves_legacy_rows(self):
@@ -98,6 +102,22 @@ class MigrationTests(unittest.TestCase):
         tables = {row[0] for row in self.store.db.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
         self.assertTrue({'external_service_health', 'github_sync_attempts'}.issubset(tables))
+
+    def test_v3_database_upgrades_recovery_context_with_backup(self):
+        apply_schema(
+            self.store.db,
+            MODEL_SCHEMA_V1 + RUNTIME_SCHEMA_V2 + RUNTIME_SCHEMA_V3,
+        )
+        self.store.db.execute('PRAGMA user_version=3')
+
+        result = self.migrator.ensure(lease_owner=self.lease.owner)
+
+        self.assertEqual((result.from_version, result.to_version), (3, CURRENT_SCHEMA))
+        self.assertIsNotNone(result.backup)
+        self.assertIsNotNone(self.store.db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='github_sync_context'"
+        ).fetchone())
 
     def test_invalid_source_integrity_refuses_backup_and_mutation(self):
         with patch.object(self.store, 'integrity_check', return_value=False):

@@ -8,11 +8,12 @@ from holding.daemon_lease import DaemonLease
 from holding.github_full_evidence import FullEvidence, GitHubEvidenceError
 from holding.migrations import SchemaMigrator
 from holding.standing_grant import authorize_operation, serialize_github_authorization
-from holding.state_store import StateStore
+from holding.state_store import StateStore, StoreError
 from holding.sync_coordinator import (
     LiveGitHubState,
     MutationFailure,
     coordinate_github_mutation,
+    recover_pending_github_mutation,
 )
 
 
@@ -112,6 +113,13 @@ class SyncCoordinatorTests(unittest.TestCase):
             lease_owner=self.lease.owner,
         )
 
+    def recover(self, operation, control, *, now_epoch=NOW + 31):
+        return recover_pending_github_mutation(
+            self.store, control, repository=REPO, operation=operation,
+            branch=BRANCH, candidate_sha=SHA, pr_number=42,
+            now_epoch=now_epoch, lease_owner=self.lease.owner,
+        )
+
     def test_ready_flows_from_grant_through_journal_and_revalidation(self):
         control = FakeControl("github.pr_ready")
         result = self.coordinate("github.pr_ready", control)
@@ -167,6 +175,95 @@ class SyncCoordinatorTests(unittest.TestCase):
         self.assertEqual(
             self.coordinate("github.pr_ready", control).status, "INSPECT_REQUIRED")
         self.assertEqual(self.coordinate("github.pr_ready", control).status, "WAIT")
+        self.assertEqual(control.calls, 1)
+
+    def test_recovery_marks_visible_ready_effect_succeeded_without_replay(self):
+        control = FakeControl(
+            "github.pr_ready",
+            failure=MutationFailure(
+                "TRANSIENT_UNAVAILABLE", retryable=True, outcome_known=False),
+        )
+        self.assertEqual(
+            self.coordinate("github.pr_ready", control).status,
+            "INSPECT_REQUIRED",
+        )
+        control.live = LiveGitHubState(
+            REPO, 42, BRANCH, SHA, "open", False, True,
+            ci_run_id=10, ci_head_sha=SHA,
+        )
+        recovered = self.recover("github.pr_ready", control)
+        self.assertEqual(recovered.status, "SUCCEEDED")
+        self.assertFalse(recovered.mutation_performed)
+        self.assertEqual(control.calls, 1)
+        self.assertEqual(
+            self.coordinate("github.pr_ready", control, now_epoch=NOW + 32).status,
+            "ALREADY_DONE",
+        )
+
+    def test_recovery_releases_unchanged_ready_for_bounded_retry(self):
+        control = FakeControl(
+            "github.pr_ready",
+            failure=MutationFailure(
+                "TRANSIENT_UNAVAILABLE", retryable=True, outcome_known=False),
+        )
+        self.coordinate("github.pr_ready", control)
+        self.assertEqual(self.recover("github.pr_ready", control).status, "RETRY")
+        self.assertEqual(control.calls, 1)
+        control.failure = None
+        result = self.coordinate(
+            "github.pr_ready", control, now_epoch=NOW + 32)
+        self.assertEqual(result.status, "SUCCEEDED")
+        self.assertEqual(control.calls, 2)
+        rows = self.store.sync_attempts(
+            operation="github.pr_ready", repo=REPO, branch=BRANCH,
+            candidate_sha=SHA,
+        )
+        self.assertEqual([row["status"] for row in rows], ["FAILED", "SUCCEEDED"])
+
+    def test_recovery_waits_before_minimum_age(self):
+        control = FakeControl(
+            "github.pr_ready",
+            failure=MutationFailure(
+                "TRANSIENT_UNAVAILABLE", retryable=True, outcome_known=False),
+        )
+        self.coordinate("github.pr_ready", control)
+        self.assertEqual(
+            self.recover("github.pr_ready", control, now_epoch=NOW + 29).status,
+            "WAIT",
+        )
+        self.assertEqual(control.calls, 1)
+
+    def test_recovery_never_replays_ambiguous_ci_trigger(self):
+        control = FakeControl(
+            "github.ci_trigger",
+            failure=MutationFailure(
+                "TRANSIENT_UNAVAILABLE", retryable=True, outcome_known=False),
+        )
+        self.coordinate("github.ci_trigger", control)
+        self.assertEqual(
+            self.recover("github.ci_trigger", control).status,
+            "INSPECT_REQUIRED",
+        )
+        self.assertEqual(control.calls, 1)
+        rows = self.store.sync_attempts(
+            operation="github.ci_trigger", repo=REPO, branch=BRANCH,
+            candidate_sha=SHA,
+        )
+        self.assertEqual(rows[-1]["status"], "PENDING")
+
+    def test_recovery_rejects_tampered_pre_mutation_context(self):
+        control = FakeControl(
+            "github.pr_ready",
+            failure=MutationFailure(
+                "TRANSIENT_UNAVAILABLE", retryable=True, outcome_known=False),
+        )
+        self.coordinate("github.pr_ready", control)
+        self.store.db.execute(
+            "UPDATE github_sync_context SET pre_state = ?",
+            (b'{}',),
+        )
+        with self.assertRaisesRegex(StoreError, "integrity"):
+            self.recover("github.pr_ready", control)
         self.assertEqual(control.calls, 1)
 
     def test_unsanitized_client_exception_is_redacted_and_left_pending(self):

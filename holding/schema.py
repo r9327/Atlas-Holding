@@ -193,6 +193,22 @@ RUNTIME_SCHEMA_V2 = (
     + ROADMAP_SCHEMA
 )
 RUNTIME_SCHEMA_V3 = SYNC_STATE_SCHEMA
+SYNC_RECOVERY_SCHEMA = (
+    """CREATE TABLE IF NOT EXISTS github_sync_context (
+        operation TEXT NOT NULL,
+        repo TEXT NOT NULL,
+        branch TEXT NOT NULL,
+        candidate_sha TEXT NOT NULL,
+        attempt INTEGER NOT NULL,
+        pre_state BLOB NOT NULL,
+        pre_state_sha256 TEXT NOT NULL,
+        recorded_epoch INTEGER NOT NULL,
+        PRIMARY KEY(operation,repo,branch,candidate_sha,attempt),
+        FOREIGN KEY(operation,repo,branch,candidate_sha,attempt)
+            REFERENCES github_sync_attempts(operation,repo,branch,candidate_sha,attempt)
+    )""",
+)
+RUNTIME_SCHEMA_V4 = SYNC_RECOVERY_SCHEMA
 
 
 def apply_schema(db: sqlite3.Connection, statements: Iterable[str]) -> None:
