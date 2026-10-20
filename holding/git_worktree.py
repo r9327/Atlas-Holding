@@ -36,33 +36,78 @@ class GitWorktrees:
             raise GitSafetyError('Workspace must be isolated from the canonical checkout')
 
     def _git(self, *args: str, cwd: Path | None = None, timeout: int = 30) -> str:
-        # Git config can be injected through GIT_* environment variables,
-        # including executable diff drivers, remote helpers and hook paths.
-        # Only the trusted checkout/config decides Git behavior.
+        """Fixed Git argv, bounded output and a terminated process tree on failure.
+
+        A subprocess.run(timeout=...) kills only the direct Git process, while
+        helpers can survive. This routine owns and closes every descendant.
+        """
+        import time
+
+        if not args or not 1 <= timeout <= 300:
+            raise GitSafetyError('Git operation must have bounded arguments and timeout')
         environment = {key: value for key, value in os.environ.items()
                        if not key.upper().startswith('GIT_')}
-        environment['GIT_TERMINAL_PROMPT'] = '0'
-        environment['GIT_NO_REPLACE_OBJECTS'] = '1'
-        environment['GIT_PAGER'] = 'cat'
-        # Never capture arbitrarily large Git stdout/stderr in Python RAM.
-        # Large repositories and malicious hooks can produce unbounded logs.
+        environment.update(GIT_TERMINAL_PROMPT='0', GIT_NO_REPLACE_OBJECTS='1',
+                           GIT_PAGER='cat', GIT_OPTIONAL_LOCKS='0')
+        environment.pop('GIT_CONFIG_COUNT', None)
+        output_cap, error_cap = 4 * 1024 * 1024, 256 * 1024
+        process = job = None
         with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
             try:
-                result = subprocess.run(
+                if os.name == 'nt':
+                    from .windows_job import WindowsJob
+                    job = WindowsJob()
+                started = time.monotonic()
+                process = subprocess.Popen(
                     ['git', '-C', str(cwd or self.root), *args],
-                    stdout=output, stderr=errors, timeout=timeout, check=False,
-                    stdin=subprocess.DEVNULL, env=environment)
-            except (OSError, subprocess.TimeoutExpired) as exc:
-                raise GitSafetyError('Git unavailable or timed out') from exc
-            if os.fstat(output.fileno()).st_size > 4 * 1024 * 1024:
-                raise GitSafetyError('Git output exceeded 4 MiB safety limit')
-            output.seek(0)
-            stdout = output.read(4 * 1024 * 1024 + 1)
-            errors.seek(0)
-            error = errors.read(64 * 1024).decode('utf-8', errors='replace')[-300:]
-        if result.returncode:
-            raise GitSafetyError(f'Git {args[0]} failed: {error}')
-        return stdout.decode('utf-8', errors='surrogateescape').strip()
+                    stdout=output, stderr=errors, stdin=subprocess.DEVNULL,
+                    env=environment, shell=False,
+                    start_new_session=(os.name != 'nt'),
+                    creationflags=(getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
+                                   if os.name == 'nt' else 0))
+                if job is not None:
+                    job.attach(process)
+                while process.poll() is None:
+                    if time.monotonic() - started >= timeout:
+                        raise GitSafetyError('Git timed out')
+                    if (os.fstat(output.fileno()).st_size > output_cap or
+                            os.fstat(errors.fileno()).st_size > error_cap):
+                        raise GitSafetyError('Git output exceeded configured limit')
+                    time.sleep(0.05)
+                if (os.fstat(output.fileno()).st_size > output_cap or
+                        os.fstat(errors.fileno()).st_size > error_cap):
+                    raise GitSafetyError('Git output exceeded configured limit')
+                output.seek(0)
+                stdout = output.read(output_cap + 1)
+                errors.seek(0)
+                error = errors.read(error_cap).decode(
+                    'utf-8', errors='replace')[-300:]
+                if process.returncode:
+                    raise GitSafetyError(f'Git {args[0]} failed: {error}')
+                return stdout.decode('utf-8', errors='surrogateescape').strip()
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise GitSafetyError('Git unavailable or failed to start') from exc
+            finally:
+                if job is not None:
+                    # Kill descendants even if the parent exited successfully.
+                    try:
+                        job.terminate()
+                    except Exception:
+                        if process is not None:
+                            from .process_agent import LocalProcessAgent
+                            LocalProcessAgent._stop_tree(process)
+                    finally:
+                        job.close()
+                elif process is not None:
+                    if os.name != 'nt':
+                        import signal
+                        try:
+                            os.killpg(process.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                    if process.poll() is None:
+                        from .process_agent import LocalProcessAgent
+                        LocalProcessAgent._stop_tree(process)
 
     def inspect_canonical(self) -> None:
         root = Path(self._git('rev-parse', '--show-toplevel')).resolve(strict=True)

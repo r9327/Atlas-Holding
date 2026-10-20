@@ -74,6 +74,25 @@ class GitWorktreeTests(unittest.TestCase):
             self.assertEqual(self.manager._git('config', '--get', 'user.name'),
                              'Test Runner')
 
+    def test_git_process_timeout_kills_descendants(self):
+        if os.name == 'nt':
+            self.skipTest('POSIX test uses a fake Git wrapper')
+        fake = Path(self.tmp.name) / 'fake-bin'
+        fake.mkdir()
+        marker = Path(self.tmp.name) / 'started'
+        binary = fake / 'git'
+        binary.write_text('#!/bin/sh\\n'
+                          'echo running > "' + marker.as_posix() + '"\\n'
+                          'sleep 10\\n', encoding='utf-8')
+        binary.chmod(0o755)
+        import time
+        start = time.monotonic()
+        with patch.dict(os.environ, {'PATH': str(fake) + os.pathsep + os.environ['PATH']}):
+            with self.assertRaisesRegex(GitSafetyError, 'timed out'):
+                self.manager._git('status', timeout=1)
+        self.assertTrue(marker.exists())
+        self.assertLess(time.monotonic() - start, 4)
+
     def test_dirty_canonical_denied(self):
         (self.root/'NOTTRACKED').write_text('dirty')
         with self.assertRaises(GitSafetyError):self.manager.create('feat1')
