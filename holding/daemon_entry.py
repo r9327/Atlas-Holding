@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import hashlib
+import hmac
 import json
 from pathlib import Path
 import re
@@ -95,14 +96,15 @@ class Installation:
                 canonical = path.resolve(strict=True)
             except OSError:
                 raise BootstrapError('Pinned broker file is unavailable') from None
+            if not path.is_absolute() or path != canonical:
+                raise BootstrapError('Pinned broker path is not canonical')
+            if not path.is_file() or path.is_symlink():
+                raise BootstrapError('Pinned broker path is not a regular file')
             try:
-                valid_pin = (
-                    path.is_absolute() and path == canonical
-                    and path.is_file() and not path.is_symlink()
-                    and _hash_file(path) == digest)
+                observed = _hash_file(path)
             except OSError:
-                valid_pin = False
-            if not valid_pin:
+                raise BootstrapError('Pinned broker file is unavailable') from None
+            if not hmac.compare_digest(observed, digest):
                 raise BootstrapError('Pinned broker file changed since onboarding')
             pins.append(BrokerFilePin(path, digest))
         raw_spool = info['broker_spool_root']
