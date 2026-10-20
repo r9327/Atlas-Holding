@@ -3,11 +3,12 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from holding.autonomy import Mission
 from holding.daemon_lease import DaemonLease
 from holding.migrations import CURRENT_SCHEMA, SchemaMigrator
-from holding.schema import MODEL_SCHEMA_V1
+from holding.schema import CORE_SCHEMA, MODEL_SCHEMA_V1, apply_schema
 from holding.sqlite_backup import restore_snapshot
 from holding.state_store import StateStore, StoreError
 
@@ -52,6 +53,71 @@ class MigrationTests(unittest.TestCase):
             'scoped_qa_advisories','scoped_qa_retries','qa_repair_attempts',
             'roadmap_versions','mission_specs','roadmap_amendments',
         }.issubset(tables))
+
+    def test_reopened_v1_database_preserves_legacy_rows(self):
+        path = self.root / 'legacy-v1.sqlite'
+        with closing(sqlite3.connect(path)) as legacy:
+            apply_schema(legacy, CORE_SCHEMA + MODEL_SCHEMA_V1)
+            legacy.execute("""INSERT INTO missions(
+                id,repo,operation,dependencies,priority,state,candidate_sha,evidence_sha,
+                external_required,product_decision_required,failures_without_progress,updated_at)
+                VALUES('legacy','r9327/Dof-Atlas','CODE','[]',50,'READY','','',0,0,0,1)""")
+            legacy.execute("""INSERT INTO model_profiles VALUES(
+                ?,?,?,?,?,?,?,?,?)""", ('a' * 64, 'legacy-model', 'Ollama', 'Q4',
+                                         4096, 100, 20, 'b' * 64, 1))
+            legacy.execute('PRAGMA user_version=1')
+            legacy.commit()
+
+        old = StateStore(path)
+        lease = DaemonLease(path, heartbeat=False)
+        lease.acquire()
+        try:
+            result = SchemaMigrator(old, backup_dir=self.root / 'legacy-backups').ensure(
+                lease_owner=lease.owner)
+            self.assertEqual((result.from_version, result.to_version), (1, CURRENT_SCHEMA))
+            self.assertEqual(old.db.execute(
+                "SELECT repo FROM missions WHERE id='legacy'").fetchone()[0],
+                'r9327/Dof-Atlas')
+            self.assertEqual(old.db.execute(
+                "SELECT model_name FROM model_profiles WHERE digest_sha256=?",
+                ('a' * 64,)).fetchone()[0], 'legacy-model')
+            self.assertTrue(old.integrity_check())
+        finally:
+            lease.release()
+            old.close()
+
+    def test_invalid_source_integrity_refuses_backup_and_mutation(self):
+        with patch.object(self.store, 'integrity_check', return_value=False):
+            with self.assertRaisesRegex(StoreError, 'integrity check failed'):
+                self.migrator.ensure(lease_owner=self.lease.owner)
+        self.assertEqual(self.store.db.execute('PRAGMA user_version').fetchone()[0], 0)
+        self.assertFalse((self.root / 'backups').exists())
+
+    def test_failed_post_migration_integrity_rolls_back_schema_version(self):
+        with patch.object(self.store, 'integrity_check', side_effect=(True, False)):
+            with self.assertRaisesRegex(StoreError, 'integrity check failed'):
+                self.migrator.ensure(lease_owner=self.lease.owner)
+        self.assertEqual(self.store.db.execute('PRAGMA user_version').fetchone()[0], 0)
+        self.assertFalse(self.store.db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='model_profiles'"
+        ).fetchone())
+
+    def test_malformed_database_is_refused_before_startup_schema_writes(self):
+        path = self.root / 'malformed.sqlite'
+        seed = StateStore(path)
+        seed.close()
+        with closing(sqlite3.connect(path)) as raw:
+            raw.execute('PRAGMA writable_schema=ON')
+            raw.execute(
+                "UPDATE sqlite_master SET sql='CREATE TABLE missions(' "
+                "WHERE type='table' AND name='missions'"
+            )
+            raw.execute('PRAGMA writable_schema=OFF')
+            raw.execute('PRAGMA schema_version=999')
+            raw.commit()
+
+        with self.assertRaisesRegex(StoreError, 'invalid or corrupt'):
+            StateStore(path)
 
     def test_newer_schema_refused_without_downgrade(self):
         self.store.db.execute('PRAGMA user_version=99')

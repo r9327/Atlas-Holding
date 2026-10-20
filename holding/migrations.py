@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 import secrets
+import sqlite3
 import time
 
 from .sqlite_backup import create_snapshot, Snapshot
@@ -31,9 +32,21 @@ class SchemaMigrator:
         self.store = store
         self.backup_dir = backup_dir
 
+    def _require_integrity(self) -> None:
+        try:
+            valid = self.store.integrity_check()
+        except sqlite3.DatabaseError as exc:
+            raise StoreError('SQLite integrity check failed') from exc
+        if not valid:
+            raise StoreError('SQLite integrity check failed')
+
     def ensure(self, *, lease_owner: str) -> Upgrade:
         self.store._assert_daemon_fence(lease_owner)
-        version = int(self.store.db.execute('PRAGMA user_version').fetchone()[0])
+        self._require_integrity()
+        try:
+            version = int(self.store.db.execute('PRAGMA user_version').fetchone()[0])
+        except (sqlite3.DatabaseError, TypeError, ValueError) as exc:
+            raise StoreError('Invalid SQLite schema version') from exc
         if version > CURRENT_SCHEMA:
             raise StoreError('Refusing database created by newer Holding version')
         if version == CURRENT_SCHEMA:
@@ -52,6 +65,7 @@ class SchemaMigrator:
             if version < 2:
                 apply_schema(self.store.db, RUNTIME_SCHEMA_V2)
             self.store.db.execute(f'PRAGMA user_version={CURRENT_SCHEMA}')
+            self._require_integrity()
             self.store._event(
                 None, 'SCHEMA_MIGRATION',
                 f'{version}->{CURRENT_SCHEMA} backup_sha256:{snapshot.digest}',

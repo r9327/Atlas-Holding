@@ -36,13 +36,22 @@ class StateStore:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(str(self.path), isolation_level=None, timeout=8)
-        self.db.row_factory = sqlite3.Row
-        self.db.execute("PRAGMA busy_timeout=8000")
-        self.db.execute("PRAGMA journal_mode=WAL")
-        self.db.execute("PRAGMA foreign_keys=ON")
-        self.db.execute("PRAGMA synchronous=FULL")
-        apply_schema(self.db, CORE_SCHEMA)
-        self.db.execute("INSERT OR IGNORE INTO settings(key, value) VALUES ('paused', '0')")
+        try:
+            self.db.row_factory = sqlite3.Row
+            self.db.execute("PRAGMA busy_timeout=8000")
+            if self.db.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                raise StoreError("SQLite database is invalid or corrupt")
+            self.db.execute("PRAGMA journal_mode=WAL")
+            self.db.execute("PRAGMA foreign_keys=ON")
+            self.db.execute("PRAGMA synchronous=FULL")
+            apply_schema(self.db, CORE_SCHEMA)
+            self.db.execute("INSERT OR IGNORE INTO settings(key, value) VALUES ('paused', '0')")
+        except StoreError:
+            self.db.close()
+            raise
+        except sqlite3.DatabaseError as exc:
+            self.db.close()
+            raise StoreError("SQLite database is invalid or corrupt") from exc
 
     def close(self) -> None:
         self.db.close()
