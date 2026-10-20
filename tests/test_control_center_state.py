@@ -1,0 +1,134 @@
+import json
+import unittest
+
+from holding.control_center_state import (
+    ControlCenterStateError, MAX_LOG_PAGE, consume_dashboard_snapshot,
+)
+
+
+SHA = "a" * 40
+DIGEST = "b" * 64
+
+
+def snapshot():
+    return {
+        "schema_version": 1,
+        "engine_id": "engine-1",
+        "sequence": 42,
+        "generated_at": 1_800_000_000,
+        "network": "CI_PENDING",
+        "pending_external": 1,
+        "tasks": [{
+            "id": "task-1", "title": "Verify candidate", "state": "DONE",
+            "phase": "CERTIFICATION", "progress": "COMPLETED",
+            "candidate_sha": SHA, "elapsed_seconds": 12, "attempts": 1,
+            "completion_evidence": {
+                "kind": "CI", "outcome": "SUCCESS", "scope": "FULL",
+                "sha": SHA, "digest": DIGEST,
+                "source": "https://github.com/r9327/Atlas-Holding/actions/runs/1",
+            },
+        }],
+        "agents": [{
+            "id": "auditor-1", "role": "AUDITOR", "status": "IDLE",
+            "objective": "Await exact evidence", "task_id": "task-1",
+            "model_profile": "Meilleur compromis qualite / temps",
+            "last_event_id": "event-42",
+        }],
+        "plugins": [{
+            "name": "github", "version": "1.0", "state": "ACTIVE",
+            "mode": "ONLINE", "permission": "READ", "quota_remaining": 9,
+            "cache_generated_at": None,
+        }],
+        "log_page": {"items": [{
+            "sequence": 41, "category": "CI", "message": "CI exact SHA ok",
+            "task_id": "task-1", "plugin_name": "github",
+            "evidence_digest": DIGEST,
+        }], "next_cursor": "before:41"},
+    }
+
+
+def consume(payload):
+    return consume_dashboard_snapshot(
+        json.dumps(payload).encode("utf-8"), trusted_engine_id="engine-1",
+        expected_sequence=42,
+    )
+
+
+class ControlCenterStateTests(unittest.TestCase):
+    def test_valid_snapshot_becomes_immutable_display_state(self):
+        state = consume(snapshot())
+        self.assertEqual(state.tasks[0].completion_evidence.sha, SHA)
+        self.assertEqual(state.network, "CI_PENDING")
+        with self.assertRaises(AttributeError):
+            state.sequence = 43
+
+    def test_done_without_evidence_is_impossible(self):
+        payload = snapshot()
+        payload["tasks"][0]["completion_evidence"] = None
+        with self.assertRaisesRegex(ControlCenterStateError, "DONE"):
+            consume(payload)
+
+    def test_evidence_must_match_candidate_sha(self):
+        payload = snapshot()
+        payload["tasks"][0]["completion_evidence"]["sha"] = "c" * 40
+        with self.assertRaisesRegex(ControlCenterStateError, "another SHA"):
+            consume(payload)
+
+    def test_unproved_scores_and_percentages_are_rejected(self):
+        payload = snapshot()
+        payload["tasks"][0]["progress_percent"] = 100
+        with self.assertRaisesRegex(ControlCenterStateError, "object shape"):
+            consume(payload)
+
+    def test_stale_sequence_or_wrong_engine_is_rejected(self):
+        payload = snapshot()
+        payload["sequence"] = 41
+        with self.assertRaisesRegex(ControlCenterStateError, "sequence"):
+            consume(payload)
+        payload = snapshot()
+        payload["engine_id"] = "other-engine"
+        with self.assertRaisesRegex(ControlCenterStateError, "identity"):
+            consume(payload)
+
+    def test_task_state_and_progress_must_agree(self):
+        payload = snapshot()
+        payload["tasks"][0]["state"] = "RUNNING"
+        with self.assertRaisesRegex(ControlCenterStateError, "contradicts"):
+            consume(payload)
+
+    def test_running_agent_requires_known_task(self):
+        payload = snapshot()
+        payload["agents"][0]["status"] = "RUNNING"
+        payload["agents"][0]["task_id"] = "unknown"
+        with self.assertRaisesRegex(ControlCenterStateError, "unknown task"):
+            consume(payload)
+
+    def test_plugin_permissions_are_read_or_cache_only(self):
+        payload = snapshot()
+        payload["plugins"][0]["permission"] = "SHELL"
+        with self.assertRaisesRegex(ControlCenterStateError, "permission"):
+            consume(payload)
+
+    def test_logs_are_bounded_ordered_and_not_from_future(self):
+        payload = snapshot()
+        payload["log_page"]["items"] *= MAX_LOG_PAGE + 1
+        with self.assertRaisesRegex(ControlCenterStateError, "bounded log"):
+            consume(payload)
+        payload = snapshot()
+        payload["log_page"]["items"][0]["sequence"] = 43
+        with self.assertRaisesRegex(ControlCenterStateError, "future"):
+            consume(payload)
+
+    def test_boolean_is_not_accepted_as_numeric_evidence(self):
+        payload = snapshot()
+        payload["tasks"][0]["attempts"] = True
+        with self.assertRaisesRegex(ControlCenterStateError, "attempt"):
+            consume(payload)
+        payload = snapshot()
+        payload["schema_version"] = True
+        with self.assertRaisesRegex(ControlCenterStateError, "identity"):
+            consume(payload)
+
+
+if __name__ == "__main__":
+    unittest.main()
