@@ -45,7 +45,8 @@ class QaInboxTests(unittest.TestCase):
         artifact.write_text("trusted independent test report", encoding="utf-8")
         payload = {
             "schema": 1, "mission_id": mission_id, "sha": candidate,
-            "verdict": verdict, "runner": "doctor_atlas",
+            "verdict": verdict,
+            "runner": "github_certification" if verdict == "PASS" else "doctor_atlas",
             "artifact": artifact.name,
             "artifact_sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
         }
