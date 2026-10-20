@@ -57,6 +57,15 @@ class RoadmapReplanTests(unittest.TestCase):
         self.assertEqual(self.store.db.execute(
             "SELECT COUNT(*) FROM roadmap_amendments").fetchone()[0], 1)
 
+    def test_incremental_preview_never_mutates_queue(self):
+        before = self.store.events()
+        preview = self.replan.preview_direction(document(C))
+        self.assertEqual(preview.added, ("c",))
+        self.assertEqual(preview.preserved, ("a", "b"))
+        self.assertFalse(preview.blocked)
+        self.assertEqual({m.id for m in self.store.missions()}, {"a", "b"})
+        self.assertEqual(self.store.events(), before)
+
     def test_incremental_direction_preserves_unmentioned_tasks(self):
         change = self.replan.append_direction(
             document(C), source="ui:one-new-goal")
