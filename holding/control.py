@@ -51,6 +51,16 @@ class ControlPlane:
                                lease is not None and lease["expires_epoch"] > int(time.time()),
                                counts, last)
 
+    def import_roadmap(self, raw: str, *, source: str):
+        """Accept a versioned DAG without granting any new permissions.
+
+        Called by a trusted local operator/UI host. The importer verifies
+        dependencies and commits the version plus tasks atomically. A roadmap
+        never authorizes its own execution.
+        """
+        from .roadmap_import import RoadmapImporter
+        return RoadmapImporter(self.store).import_text(raw, source=source)
+
     def pause(self) -> None:
         self.store.set_paused(True)
 
