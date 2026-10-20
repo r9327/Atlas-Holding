@@ -21,7 +21,7 @@ def report(*, action="validate", status="PASS", dirty=True,
         "exit_code": exit_code,
         "exact_sha": SHA,
         "base_ref": "HEAD",
-        "worktree": {"dirty": dirty, "dirty_digest": "b" * 64},
+        "worktree": {"dirty": dirty, "dirty_digest": "b" * 64 if dirty else ""},
         "edit_contract": {
             "requested_paths": list(PATHS),
             "planned_paths": list(PATHS),
@@ -62,7 +62,7 @@ def consume(payload, *, exit_code=None, structural=False):
         expected_base_ref="HEAD",
         expected_paths=PATHS,
         expected_dirty=payload["worktree"]["dirty"],
-        expected_dirty_digest="b" * 64,
+        expected_dirty_digest="b" * 64 if payload["worktree"]["dirty"] else "",
         structural=structural,
     )
 
@@ -78,6 +78,7 @@ class DoctorEvidenceTests(unittest.TestCase):
     def test_plan_requires_clean_worktree_and_stays_planning_only(self):
         passport = consume(report(action="plan", status="READY", dirty=False))
         self.assertEqual(passport.status, "PLANNED_LOCAL")
+        self.assertEqual(passport.dirty_digest, "")
         with self.assertRaisesRegex(DoctorEvidenceError, "clean"):
             consume(report(action="plan", status="READY", dirty=True))
 
@@ -154,6 +155,21 @@ class DoctorEvidenceTests(unittest.TestCase):
                 expected_dirty=True, expected_dirty_digest="b" * 64,
                 structural=False,
             )
+
+    def test_duplicate_keys_and_boolean_schema_or_exit_codes_are_rejected(self):
+        raw = b'{"schema_version":1,"schema_version":1}'
+        with self.assertRaisesRegex(DoctorEvidenceError, "duplicate"):
+            consume_doctor_report(
+                raw, observed_exit_code=2, expected_sha=SHA,
+                expected_action="validate", expected_base_ref="HEAD",
+                expected_paths=PATHS, expected_dirty=True,
+                expected_dirty_digest="b" * 64, structural=False,
+            )
+        for field in ("schema_version", "exit_code"):
+            payload = report()
+            payload[field] = True
+            with self.subTest(field=field), self.assertRaises(DoctorEvidenceError):
+                consume(payload)
         with self.assertRaisesRegex(DoctorEvidenceError, "valid JSON"):
             consume_doctor_report(
                 b"not-json", observed_exit_code=2,

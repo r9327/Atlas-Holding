@@ -25,6 +25,15 @@ class DoctorEvidenceError(ValueError):
     pass
 
 
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise DoctorEvidenceError("Doctor report contains duplicate JSON keys")
+        result[key] = value
+    return result
+
+
 @dataclass(frozen=True)
 class LocalPassport:
     candidate_sha: str
@@ -83,19 +92,26 @@ def consume_doctor_report(
             or len(expected_base_ref) > 200
             or type(expected_dirty) is not bool
             or not isinstance(expected_dirty_digest, str)
-            or not _DIGEST.fullmatch(expected_dirty_digest)
+            or (expected_dirty and not _DIGEST.fullmatch(expected_dirty_digest))
+            or (not expected_dirty and expected_dirty_digest != "")
             or type(structural) is not bool):
         raise DoctorEvidenceError("Invalid trusted Doctor invocation identity")
     try:
-        payload = json.loads(raw)
+        payload = json.loads(raw, object_pairs_hook=_unique_object)
+    except DoctorEvidenceError:
+        raise
     except (UnicodeError, ValueError) as exc:
         raise DoctorEvidenceError("Doctor report is not valid JSON") from exc
-    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+    if (not isinstance(payload, dict)
+            or type(payload.get("schema_version")) is not int
+            or payload.get("schema_version") != 1):
         raise DoctorEvidenceError("Unsupported Doctor report schema")
     if payload.get("protocol") != PROTOCOL or payload.get("action") != expected_action:
         raise DoctorEvidenceError("Wrong Doctor protocol or action")
     status = payload.get("status")
-    if status not in _STATUSES or payload.get("exit_code") != _EXIT[status]:
+    if (status not in _STATUSES
+            or type(payload.get("exit_code")) is not int
+            or payload.get("exit_code") != _EXIT[status]):
         raise DoctorEvidenceError("Inconsistent Doctor status and declared exit code")
     if observed_exit_code != _EXIT[status]:
         raise DoctorEvidenceError("Doctor process exit code disagrees with report")
@@ -109,7 +125,9 @@ def consume_doctor_report(
         raise DoctorEvidenceError("Missing Doctor worktree identity")
     dirty = worktree["dirty"]
     dirty_digest = worktree.get("dirty_digest")
-    if not isinstance(dirty_digest, str) or not _DIGEST.fullmatch(dirty_digest):
+    if (not isinstance(dirty_digest, str)
+            or (dirty and not _DIGEST.fullmatch(dirty_digest))
+            or (not dirty and dirty_digest != "")):
         raise DoctorEvidenceError("Missing exact dirty worktree digest")
     if dirty != expected_dirty or dirty_digest != expected_dirty_digest:
         raise DoctorEvidenceError("Doctor report belongs to a different worktree state")
