@@ -62,3 +62,17 @@ La seule action récurrente de l'utilisateur est **d'envoyer une direction de ro
 - [ ] En cas de dépassement en régime ordinaire : capturer la cause par processus, éviter les boucles/fuites, libérer les caches et suspendre le lancement de nouveaux travaux si nécessaire, **sans tuer brutalement une écriture Git, une transaction SQLite ou la session du modèle**. Ne jamais masquer la mesure.
 
 **Preuves attendues** : benchmark Windows en cours de vraies missions IA, UI ouverte et fermée, longue durée (plusieurs heures), contrôle du RSS/private bytes de l'arbre complet et de la croissance après retour au repos. Graphiques séparés : « Holding pendant codage » et « audits lourds ». Un chiffre sans mesure ne vaut pas PASS.
+
+## Pilotage adaptatif qualité / temps (décision utilisateur du 20/10/2026 — À IMPLÉMENTER)
+
+**Politique par défaut : `BALANCED_VERIFIED`** — meilleur compromis qualité/temps, jamais la vitesse au prix d'une régression, d'une sécurité affaiblie ou d'un faux PASS. Le CEO ajuste l'effort selon complexité, risque et progression mesurée, sans micro-validation utilisateur.
+
+- [ ] Évaluer la complexité, le périmètre, le risque et les dépendances avant chaque lot ; ne déclencher que les rôles et outils utiles. Petits correctifs : tests ciblés ; opérations critiques/multi-modules : revue indépendante et validation renforcée.
+- [ ] Fixer un **budget d'observation initial** par tâche (repères, **pas des délais d'arrêt aveugles**) : correctif simple 2–5 min ; modification classique 10–20 min ; fonctionnalité complexe 30–60 min ; grosse PR sur plusieurs lots aussi longtemps que des progrès vérifiables justifient l'effort. Calibrer sur benchmarks réels du PC et des modèles, pas sur intuition.
+- [ ] Suivre séparément durée de codage, tests ciblés, attente externe et certification finale ; ne jamais écourter Doctor/CI obligatoire pour afficher artificiellement une tâche « rapide ».
+- [ ] Watchdog de **stagnation**, basé sur signaux réels : pas d'évolution pertinente du diff/tests, erreurs identiques répétées, recherches circulaires, relecture sans résultat et absence de nouveau diagnostic. Une durée longue avec progrès démontrable reste acceptable.
+- [ ] En cas de stagnation : arrêter la répétition identique, réutiliser le contexte utile, diagnostiquer la cause, changer de stratégie / modèle / rôle / outil (Graphify/Doctor ciblés si justifiés), sous budgets bornés ; mettre BLOCKED avec raison et poursuivre les autres lots si aucune stratégie sûre ne progresse.
+- [ ] Historiser en SQLite les décisions de routage et escalade, contexte épinglé par SHA, temps réel, coût de calcul, résultats de tests et raisons d'arrêt ; ne pas charger tout l'historique en RAM.
+- [ ] Tests déterministes : une tâche simple ne déclenche pas tous les agents ; progrès réel au-delà du budget indicatif n'est pas interrompu brutalement ; stagnation répétée déclenche escalade bornée ; arrêt différé à checkpoint sûr ; aucun bypass de grant, SHA, QA ou CI.
+
+**Important :** les composants actuels ne démontrent pas encore ces capacités. Pas de statut PASS sans tests réels.
