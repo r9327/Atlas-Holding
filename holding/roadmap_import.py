@@ -137,6 +137,19 @@ class RoadmapImporter:
         with self.store._transaction():
             existing = self.store.db.execute('SELECT version FROM roadmap_versions WHERE digest=?', (digest,)).fetchone()
             if existing is not None:
+                # A previously imported digest does not authorize rolling an
+                # amended roadmap back to old acceptance or dependencies.
+                current_specs = {
+                    row["id"]: row["spec_json"]
+                    for row in self.store.db.execute(
+                        "SELECT s.id,s.spec_json FROM mission_specs s "
+                        "JOIN missions m ON m.id=s.id WHERE m.repo=?",
+                        (doc["repo"],))
+                }
+                if (set(current_specs) != set(specs)
+                        or any(current_specs.get(mid) != spec
+                               for mid, spec in specs.items())):
+                    raise StoreError("Stale roadmap version replay: preview/replan required")
                 return ImportResult(digest, existing['version'], (), tuple(j.id for j in jobs))
             known = {m.id: m for m in self.store.missions()}
             # Never silently drop existing missions (including their checkpoints).
