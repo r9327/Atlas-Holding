@@ -35,6 +35,10 @@ class InsufficientSpaceError(DownloadError):
     """The destination volume cannot safely hold the remaining bytes."""
 
 
+class DownloadCancelled(DownloadError):
+    """The caller cancelled cleanly; resumable bytes remain on disk."""
+
+
 _RANGE = re.compile(r"^bytes (\d+)-(\d+)/(\d+|\*)$")
 _TRANSIENT = {408, 425, 429, 500, 502, 503, 504}
 _DEFAULT_FREE_RESERVE = 128 * 1024 * 1024
@@ -170,6 +174,7 @@ def download_pinned(
     timeout: float = 45.0,
     retry_delay: float = 3.0,
     free_space_reserve: int = _DEFAULT_FREE_RESERVE,
+    cancelled=None,
     progress=None,
 ) -> Path:
     """Download fixed-content asset with resume, checksum and atomic publish.
@@ -211,6 +216,8 @@ def download_pinned(
         opener = build_opener(_SafeRedirect())
         last_error: Exception | None = None
         for attempt in range(max_attempts):
+            if cancelled is not None and cancelled():
+                raise DownloadCancelled("Download cancelled before the next request")
             offset = partial.stat().st_size if partial.exists() else 0
             if offset > size:
                 raise IntegrityError("Partial file exceeds pinned size; manual repair required")
@@ -247,6 +254,10 @@ def download_pinned(
                     count = offset if file_mode == "ab" else 0
                     with partial.open(file_mode) as fd:
                         while count < size:
+                            if cancelled is not None and cancelled():
+                                raise DownloadCancelled(
+                                    f"Download cancelled at {count}/{size} bytes"
+                                )
                             chunk = response.read(min(1024 * 1024, size - count))
                             if not chunk:
                                 break

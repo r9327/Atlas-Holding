@@ -14,6 +14,7 @@ from holding import downloads
 from holding.downloads import (
     download_pinned,
     DownloadBusyError,
+    DownloadCancelled,
     DownloadError,
     InsufficientSpaceError,
     IntegrityError,
@@ -179,6 +180,26 @@ class DownloadTests(unittest.TestCase):
             with self.assertRaises(InsufficientSpaceError):
                 self.call(free_space_reserve=0)
         self.assertEqual(partial.read_bytes(), DATA[:-64])
+
+    def test_cancellation_preserves_partial_for_later_resume(self):
+        observed = 0
+
+        def progress(count, _size):
+            nonlocal observed
+            observed = count
+
+        with self.assertRaises(DownloadCancelled):
+            self.call(progress=progress, cancelled=lambda: observed > 0)
+        partial = self.target.with_name(self.target.name + ".part")
+        self.assertEqual(partial.stat().st_size, observed)
+        self.assertGreater(observed, 0)
+        self.assertFalse(self.target.exists())
+        self.assertEqual(self.call().read_bytes(), DATA)
+
+    def test_cancellation_before_request_creates_no_partial(self):
+        with self.assertRaisesRegex(DownloadCancelled, "before the next request"):
+            self.call(cancelled=lambda: True)
+        self.assertFalse(self.target.with_name(self.target.name + ".part").exists())
 
     def test_invalid_url_and_digest(self):
         with self.assertRaises(ValueError):
