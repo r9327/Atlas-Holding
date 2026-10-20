@@ -75,9 +75,11 @@ class ResourcePreemptionTests(unittest.TestCase):
                 with patch.object(ResourceGuard, 'check', autospec=True,
                                   side_effect=simulated_pressure):
                     result = service.run(max_ticks=1)
-                self.assertEqual(result.action, 'RETRY_OR_BLOCKED')
+                self.assertEqual(result.action, 'RECOVERY_REQUIRED')
                 self.assertLess(time.monotonic() - start, 5)
-                self.assertNotEqual(service.engine.store.missions()[0].state, 'DONE')
+                self.assertEqual(service.engine.store.missions()[0].state, 'RECOVERY_REQUIRED')
+                self.assertEqual(
+                    service.engine.store.missions()[0].failures_without_progress, 0)
                 self.assertFalse((root / 'worktrees' / 'task' / 'bad.py').exists())
             self.assertEqual(git(canonical, 'rev-parse', 'HEAD'), original_sha)
 

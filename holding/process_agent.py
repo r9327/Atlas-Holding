@@ -24,6 +24,11 @@ class AgentProcessError(RuntimeError):
     pass
 
 
+class AgentInterrupted(AgentProcessError):
+    """Stop or resource preemption, not a coding failure."""
+    pass
+
+
 @dataclass(frozen=True)
 class AgentProgram:
     executable: Path
@@ -119,7 +124,7 @@ class LocalProcessAgent:
                     job.attach(proc)
                 while proc.poll() is None:
                     if self.should_stop():
-                        raise AgentProcessError('Agent interrupted by controller')
+                        raise AgentInterrupted('Agent interrupted by controller')
                     if time.monotonic() - started > deadline:
                         raise AgentProcessError('Agent execution timed out')
                     if os.fstat(stdout.fileno()).st_size > self.config.output_limit:

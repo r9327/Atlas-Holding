@@ -267,6 +267,15 @@ class StateStore:
                 "UPDATE missions SET failures_without_progress=? WHERE id=?", (attempts, mission_id)
             )
 
+    def interrupt_running(self, mission_id: str, *, lease_owner: str, reason: str) -> None:
+        """Quarantine an interrupted worker without consuming its retry budget.
+
+        No automatic replay is safe until Git journal/worktree inspection.
+        """
+        with self._transaction():
+            self._assert_daemon_fence(lease_owner)
+            self._transition(mission_id, "RUNNING", "RECOVERY_REQUIRED", reason[:160])
+
     def quarantine_interrupted(self, *, lease_owner: str | None = None) -> tuple[str, ...]:
         """On daemon restart: NEVER automatically rerun an interrupted writer."""
         with self._transaction():

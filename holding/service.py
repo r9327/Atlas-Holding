@@ -157,6 +157,15 @@ class HoldingService:
                 if not resources.safe:
                     result = Tick("RESOURCE_PRESSURE", None, resources.reason)
                 elif self.worker.ready():
+                    if self._recovery_git is not None and any(
+                        m.state == 'RECOVERY_REQUIRED' for m in self.engine.store.missions()
+                    ):
+                        try:
+                            self.last_recovery = RecoveryCoordinator(
+                                self.engine.store, self._recovery_git, self.engine.lease
+                            ).recover_all()
+                        except LeaseError:
+                            return Tick('LEASE_LOST', None, 'Lease lost during recovery')
                     result = self.engine.tick()
                 else:
                     result = Tick("AGENT_UNAVAILABLE", None, "Coding agent unavailable")

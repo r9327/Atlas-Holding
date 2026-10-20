@@ -12,6 +12,7 @@ from typing import Callable, Protocol
 
 from .autonomy import Mission
 from .daemon_lease import DaemonLease, LeaseError
+from .process_agent import AgentInterrupted
 from .state_store import StateStore, StoreError
 
 
@@ -101,6 +102,18 @@ class HoldingEngine:
             sha = self.worker(mission)
             self.lease.assert_owned()
             self.store.checkpoint(mission.id, sha, lease_owner=self.lease.owner)
+        except AgentInterrupted:
+            try:
+                self.store.interrupt_running(
+                    mission.id, lease_owner=self.lease.owner,
+                    reason="Agent interrupted by supervisor; inspect Git journal")
+            except StoreError as fence:
+                if str(fence) == 'DAEMON_LEASE_LOST':
+                    self._stop.set()
+                    return Tick('LEASE_LOST', mission.id, 'Daemon lost its lease')
+                raise
+            return Tick('RECOVERY_REQUIRED', mission.id,
+                        'Worker was preempted; no retry budget consumed')
         except (LeaseError, StoreError) as failure:
             if isinstance(failure, StoreError) and str(failure) != 'DAEMON_LEASE_LOST':
                 raise
