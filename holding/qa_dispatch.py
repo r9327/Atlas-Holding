@@ -11,6 +11,7 @@ import re
 import time
 
 from .qa_scoped import ScopedDoctorRunner, ScopedQaError
+from .git_worktree import GitSafetyError
 from .state_store import StateStore, StoreError
 
 _SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -62,6 +63,7 @@ class ScopedQaDispatcher:
                                                 AND r.candidate_sha=m.candidate_sha
                  WHERE m.repo=? AND m.state='QA_PENDING'
                    AND length(m.candidate_sha)=40
+                   AND m.candidate_sha NOT GLOB '*[^0-9a-f]*'
                    AND a.mission_id IS NULL
                    AND (r.mission_id IS NULL OR r.next_epoch<=?)
                  ORDER BY m.updated_at ASC,m.id ASC LIMIT 1
@@ -86,7 +88,7 @@ class ScopedQaDispatcher:
                               f"{candidate_sha}:{lease_until}")
         try:
             outcome = self.runner.run_pending(self.store, mid)
-        except (ScopedQaError, StoreError, OSError, ValueError) as exc:
+        except (ScopedQaError, GitSafetyError, StoreError, OSError, ValueError) as exc:
             # A crash or transient Doctor failure must not relaunch forever.
             # Record only the exception TYPE to prevent leaking secrets/logs.
             with self.store._transaction():
