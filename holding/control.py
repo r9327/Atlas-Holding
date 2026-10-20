@@ -115,6 +115,16 @@ class ControlPlane:
             after_mission_id=after_mission_id,
             after_criterion=after_criterion, limit=limit)
 
+    def preview_roadmap_change(self, raw: str):
+        """Inspect a new direction without modifying existing user work."""
+        from .roadmap_replan import SafeRoadmapReplanner
+        return SafeRoadmapReplanner(self.store).preview(raw)
+
+    def amend_roadmap(self, raw: str, *, source: str):
+        """Apply only safe READY-state amendments, retaining SHA/proof history."""
+        from .roadmap_replan import SafeRoadmapReplanner
+        return SafeRoadmapReplanner(self.store).apply(raw, source=source)
+
     def import_roadmap(self, raw: str, *, source: str):
         """Accept a versioned DAG without granting any new permissions.
 
