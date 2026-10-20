@@ -149,6 +149,22 @@ class LocalCodeWorker:
                    'branch': worktree.branch, 'base_sha': worktree.base_sha,
                    'dependencies': list(mission.dependencies),
                    'acceptance': list(criteria)}
+        # A failing independent QA SHA gives the coding agent explicit
+        # correction context without passing it credentials, signatures,
+        # arbitrary test commands, or a self-certification privilege.
+        table = self.git.store.db.execute(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' "
+            "AND name='qa_repair_attempts'").fetchone()[0]
+        if table:
+            prior = self.git.store.db.execute(
+                "SELECT failed_sha FROM qa_repair_attempts WHERE mission_id=? "
+                "ORDER BY requeued_epoch DESC,failed_sha DESC LIMIT 1",
+                (mission.id,)).fetchone()
+            if prior is not None:
+                request['previous_failed_candidate_sha'] = prior['failed_sha']
+                request['repair_objective'] = (
+                    'Previous candidate failed independent QA; identify root '
+                    'cause and deliver a new tested correction SHA')
         response = self.agent.request('plan_patch', request, cwd=worktree.path)
         # The child is not trusted to edit files directly. Any direct changes
         # are quarantined by the normal worker failure/recovery path.
