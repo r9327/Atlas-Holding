@@ -14,6 +14,9 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import time
+
+from .process_agent import LocalProcessAgent
 
 from .doctor_plan import DoctorPlanner, DoctorPlanError
 from .git_worktree import GitWorktrees, GitSafetyError
@@ -35,6 +38,65 @@ class ScopedQaResult:
     modules: tuple[str, ...]
     report_sha256: str
     advisory_only: bool = True
+
+
+def _run_limited_doctor(command: list[str], *, cwd: Path,
+                        timeout_seconds: int) -> tuple[int, bytes]:
+    """Time/output-bound process tree: never buffer arbitrary test output in RAM."""
+    environment = {key: value for key, value in os.environ.items()
+                   if key.upper() in {"PATH", "SYSTEMROOT", "WINDIR", "TEMP",
+                                      "TMP", "TMPDIR", "LANG", "PYTHONIOENCODING"}}
+    environment.update(PYTHONNOUSERSITE="1", PYTHONUTF8="1",
+                       GIT_TERMINAL_PROMPT="0", NO_PROXY="127.0.0.1,localhost")
+    with tempfile.TemporaryFile() as output:
+        proc = None
+        job = None
+        try:
+            if os.name == "nt":
+                from .windows_job import WindowsJob
+                job = WindowsJob()
+            start = time.monotonic()
+            proc = subprocess.Popen(
+                command, cwd=cwd, stdin=subprocess.DEVNULL,
+                stdout=output, stderr=subprocess.DEVNULL, env=environment,
+                shell=False, start_new_session=(os.name != "nt"),
+                creationflags=(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                               if os.name == "nt" else 0))
+            if job is not None:
+                job.attach(proc)
+            while proc.poll() is None:
+                if time.monotonic() - start > timeout_seconds:
+                    raise ScopedQaError("Scoped Doctor timed out")
+                if os.fstat(output.fileno()).st_size > _MAX_REPORT:
+                    raise ScopedQaError("Scoped Doctor output exceeded 2 MiB")
+                time.sleep(0.05)
+            if os.fstat(output.fileno()).st_size > _MAX_REPORT:
+                raise ScopedQaError("Scoped Doctor output exceeded 2 MiB")
+            output.seek(0)
+            raw = output.read(_MAX_REPORT + 1)
+            if len(raw) > _MAX_REPORT:
+                raise ScopedQaError("Scoped Doctor output exceeded 2 MiB")
+            return proc.returncode, raw
+        except BaseException:
+            if job is not None:
+                try:
+                    job.terminate()
+                except Exception:
+                    if proc is not None:
+                        LocalProcessAgent._stop_tree(proc)
+            elif proc is not None:
+                LocalProcessAgent._stop_tree(proc)
+            raise
+        finally:
+            if job is not None:
+                job.close()
+            elif os.name != "nt" and proc is not None:
+                # The root process may have exited after spawning helpers.
+                import signal
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
 
 
 class ScopedDoctorRunner:
@@ -80,25 +142,13 @@ class ScopedDoctorRunner:
         cmd = [str(self.interpreter), "-B", "-m", "tools.doctor_certification",
                "--base-ref", base_sha, "--expected-sha", candidate_sha,
                "--run"]
-        # A child cannot inherit stdin, stdout memory, API keys, or tokens.
-        # Parent process must ALSO be run as an isolated unprivileged OS user.
-        with tempfile.TemporaryFile() as output:
-            try:
-                completed = subprocess.run(
-                    cmd, cwd=tree.path, stdin=subprocess.DEVNULL,
-                    stdout=output, stderr=subprocess.DEVNULL,
-                    timeout=self.timeout_seconds, check=False,
-                    env={**{key: value for key, value in os.environ.items()
-                             if key.upper() in {
-                                 "PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP",
-                                 "TMPDIR", "LANG", "PYTHONIOENCODING"}},
-                         "PYTHONNOUSERSITE": "1", "PYTHONUTF8": "1",
-                         "GIT_TERMINAL_PROMPT": "0",
-                         "NO_PROXY": "127.0.0.1,localhost"})
-            except (OSError, subprocess.TimeoutExpired) as exc:
-                raise ScopedQaError("Scoped Doctor execution failed or timed out") from exc
-            output.seek(0)
-            raw = output.read(_MAX_REPORT + 1)
+        # The caller must be a separately sandboxed/unprivileged supervisor.
+        # Keep stdout and descendants bounded, even for malicious test code.
+        try:
+            return_code, raw = _run_limited_doctor(
+                cmd, cwd=tree.path, timeout_seconds=self.timeout_seconds)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ScopedQaError("Scoped Doctor execution failed") from exc
         if not raw or len(raw) > _MAX_REPORT:
             raise ScopedQaError("Scoped Doctor report missing or oversized")
         try:
@@ -128,7 +178,7 @@ class ScopedDoctorRunner:
         safe_clean = not bool(self.git._git("status", "--porcelain",
                                              cwd=tree.path))
         same_head = self.git.inspect(mission_id).base_sha == candidate_sha
-        passed = (completed.returncode == 0
+        passed = (return_code == 0
                   and report.get("status") == "READY_TO_RUN_SCOPED"
                   and execution.get("status") == "SCOPED_TESTS_PASS"
                   and execution.get("exit_code") == 0
