@@ -113,8 +113,8 @@ class LocalProcessAgent:
                                         stderr=subprocess.DEVNULL, cwd=cwd,
                                         env=environment, shell=False,
                                         start_new_session=(os.name != 'nt'), creationflags=flags)
-                # The input is available only after a successful Windows
-                # Job attachment. This is not a full filesystem sandbox.
+                # The child may start before Windows Job attachment. This
+                # mechanism manages descendants but is not an OS sandbox.
                 if job is not None:
                     job.attach(proc)
                 while proc.poll() is None:
@@ -154,3 +154,10 @@ class LocalProcessAgent:
                 # original agent process exited after spawning a helper.
                 if job is not None:
                     job.close()
+                elif os.name != 'nt' and proc is not None:
+                    # A parent can exit successfully after spawning helpers.
+                    # Kill its original POSIX process group on every exit.
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
