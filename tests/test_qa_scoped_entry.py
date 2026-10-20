@@ -64,6 +64,41 @@ class ScopedEntryTests(unittest.TestCase):
         self.assertEqual(decoded["status"], "SCOPED_TESTS_PASS")
         self.assertTrue(decoded["advisory_only"])
 
+    def test_watch_once_uses_persistent_dispatch_not_direct_worker(self):
+        args = self.arguments.copy()
+        index = args.index("--mission")
+        args[index:index + 2] = ["--watch", "--once"]
+        outcome = type("Result", (), {
+            "action": "SCOPED_TESTS_PASS", "mission_id": "mission",
+            "reason": "Scoped advisory recorded"})()
+        result = StringIO()
+        with patch("holding.qa_scoped_entry.GitWorktrees"), \
+             patch("holding.qa_scoped_entry.StateStore"), \
+             patch("holding.qa_scoped_entry.ScopedDoctorRunner") as runner, \
+             patch("holding.qa_scoped_entry.ScopedQaDispatcher") as dispatch:
+            dispatch.return_value.tick.return_value = outcome
+            with redirect_stdout(result):
+                self.assertEqual(main(args), 0)
+            dispatch.return_value.tick.assert_called_once()
+            runner.return_value.run_pending.assert_not_called()
+        payload = json.loads(result.getvalue())
+        self.assertEqual(payload["action"], "SCOPED_TESTS_PASS")
+
+    def test_watch_once_full_required_exits_nonzero(self):
+        args = self.arguments.copy()
+        index = args.index("--mission")
+        args[index:index + 2] = ["--watch", "--once"]
+        outcome = type("Result", (), {
+            "action": "FULL_REQUIRED", "mission_id": "mission",
+            "reason": "Needs independent certification"})()
+        with patch("holding.qa_scoped_entry.GitWorktrees"), \
+             patch("holding.qa_scoped_entry.StateStore"), \
+             patch("holding.qa_scoped_entry.ScopedDoctorRunner"), \
+             patch("holding.qa_scoped_entry.ScopedQaDispatcher") as dispatch:
+            dispatch.return_value.tick.return_value = outcome
+            with redirect_stdout(StringIO()):
+                self.assertEqual(main(args), 1)
+
     def test_full_required_returns_nonzero_not_fake_success(self):
         report = ScopedQaResult(SHA, BASE, "FULL_REQUIRED", (), "d" * 64)
         with patch("holding.qa_scoped_entry.GitWorktrees"), \
