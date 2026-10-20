@@ -32,7 +32,9 @@ Cette PR Draft vérifie ensemble les contrats développés séparément dans :
   pont IPC borné, épinglé et sans héritage de secrets est implémenté, mais lancer
   les deux processus sous le même compte ne constituerait pas une isolation de
   secrets.
-- Le push reste bloqué tant qu'une preuve de non-divergence Git dédiée n'est pas fournie.
+- Le push possède un coordinateur dédié : worktree propre au SHA exact, observation
+  distante fraîche, preuve d'ascendance avant mutation, refspec borné sans force,
+  journal `PENDING` préalable et récupération par réobservation sans replay aveugle.
 - Un statut `SUCCEEDED` atteste l'effet de synchronisation observé, jamais la qualité produit.
 - Un contexte absent (ancienne base), corrompu ou incohérent bloque la récupération.
 - Cette PR ne rend pas les PR #1, #3 ou #7 prêtes à fusionner et ne remplace pas leur certification finale.
