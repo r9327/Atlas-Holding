@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 import subprocess
+import tempfile
 
 _REPO = re.compile(r'^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')
 _ID = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$')
@@ -140,7 +141,13 @@ class GitWorktrees:
         self._git('diff', '--cached', '--check', cwd=tree.path)
         # --only restricts the commit to the exact chosen paths even if the
         # index were modified after the safety check by another process.
-        self._git('commit', '--only', '-m', message, '--', *paths, cwd=tree.path, timeout=120)
+        # Never run a repository/user-provided pre-commit hook or a global GPG
+        # signing command from a generated-code checkout. An ephemeral empty
+        # hooks directory is selected through trusted Git CLI config.
+        with tempfile.TemporaryDirectory(prefix='atlas-holding-empty-hooks-') as hooks:
+            self._git('-c', f'core.hooksPath={hooks}', '-c', 'commit.gpgsign=false',
+                      'commit', '--only', '-m', message, '--', *paths,
+                      cwd=tree.path, timeout=120)
         sha = self._git('rev-parse', 'HEAD', cwd=tree.path).lower()
         if not _SHA.fullmatch(sha):
             raise GitSafetyError('Invalid commit')

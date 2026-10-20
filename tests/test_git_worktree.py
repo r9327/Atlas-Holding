@@ -43,6 +43,23 @@ class GitWorktreeTests(unittest.TestCase):
         self.assertEqual(git(self.root, 'rev-parse', 'HEAD'), original)
         self.assertFalse((self.root / 'one.py').exists())
 
+    def test_git_commit_does_not_execute_user_or_repo_hooks(self):
+        # Git hooks are executable code, never authorization from the LLM.
+        hook_dir = Path(self.tmp.name) / 'untrusted-hooks'
+        hook_dir.mkdir()
+        marker = Path(self.tmp.name) / 'hook-ran'
+        hook = hook_dir / 'pre-commit'
+        hook.write_text('#!/bin/sh\necho unsafe > "' + marker.as_posix() +
+                        '"\nexit 97\n', encoding='utf-8')
+        hook.chmod(0o755)
+        git(self.root, 'config', 'core.hooksPath', str(hook_dir))
+        git(self.root, 'config', 'commit.gpgsign', 'true')
+        tree = self.manager.create('safehook')
+        (tree.path / 'feature.py').write_text('safe = True\n')
+        sha = self.manager.commit('safehook', ('feature.py',), 'feat: protected commit')
+        self.assertEqual(git(tree.path, 'rev-parse', 'HEAD'), sha)
+        self.assertFalse(marker.exists(), 'Untrusted pre-commit hook executed')
+
     def test_dirty_canonical_denied(self):
         (self.root/'NOTTRACKED').write_text('dirty')
         with self.assertRaises(GitSafetyError):self.manager.create('feat1')
