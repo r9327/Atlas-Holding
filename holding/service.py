@@ -72,6 +72,7 @@ class HoldingService:
         self.resource_guard = ResourceGuard(settings.database.parent)
         self.last_recovery: tuple[RecoveryOutcome, ...] = ()
         self._recovery_seen: dict[str, int] = {}
+        self._qa_repair = None
 
     @classmethod
     def from_local_agent(cls, settings: ServiceSettings, *, program,
@@ -123,6 +124,9 @@ class HoldingService:
         # The currently implemented local adapter edits code only. Other
         # roadmap operations await separately authenticated role adapters.
         service.engine.supported_operations = frozenset({'code'})
+        from .qa_repair import QaRepairCoordinator
+        service._qa_repair = QaRepairCoordinator(
+            service.engine.store, git, service.engine.lease)
         return service
 
     def _recovery_generations(self) -> dict[str, int]:
@@ -199,6 +203,13 @@ class HoldingService:
                             self._recover_new_interruptions()
                         except LeaseError:
                             return Tick('LEASE_LOST', None, 'Lease lost during recovery')
+                    # Signed QA FAIL may safely requeue the SAME mission on
+                    # a clean exact-SHA branch. Independent missions continue.
+                    if self._qa_repair is not None:
+                        try:
+                            self._qa_repair.requeue_one()
+                        except LeaseError:
+                            return Tick('LEASE_LOST', None, 'Lease lost during QA repair')
                     result = self.engine.tick()
                 else:
                     result = Tick("AGENT_UNAVAILABLE", None, "Coding agent unavailable")
