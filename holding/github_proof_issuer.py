@@ -89,7 +89,10 @@ class GitHubProofIssuer:
                 or not _SHA.fullmatch(expected_sha)):
             raise GitHubEvidenceError("Unsafe mission identity or candidate SHA")
         if not self._isolation_check():
-            raise GitHubEvidenceError("Trusted OS separation and ACLs have not been verified")
+            raise GitHubEvidenceError(
+                "Trusted OS separation and ACLs have not been verified",
+                code="OS_ISOLATION_UNVERIFIED",
+            )
         full = observe_full_pr(self.client, pr_number)
         if (full.repository != self.client.repo or full.pr_number != pr_number
                 or full.status != "FULL_VERIFIED_BY_GITHUB"

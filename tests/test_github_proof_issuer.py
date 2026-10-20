@@ -70,10 +70,11 @@ class ProofIssueTests(unittest.TestCase):
     def test_cannot_sign_without_os_separation(self):
         signer = self.issuer(trusted=False)
         with patch("holding.github_proof_issuer.observe_full_pr") as observer:
-            with self.assertRaisesRegex(GitHubEvidenceError, "isolation"):
+            with self.assertRaises(GitHubEvidenceError) as raised:
                 signer.issue(mission_id="atlas-step", pr_number=230,
                              expected_sha=SHA)
             observer.assert_not_called()
+        self.assertEqual(raised.exception.code, "OS_ISOLATION_UNVERIFIED")
         self.assertEqual(list(self.root.iterdir()), [])
 
     def test_moved_pr_sha_never_writes_receipt(self):

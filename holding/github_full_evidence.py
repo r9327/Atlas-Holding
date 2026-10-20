@@ -34,7 +34,11 @@ _MAX_RESPONSE = 2 * 1024 * 1024
 
 
 class GitHubEvidenceError(ValueError):
-    pass
+    """Stable machine-readable failure plus a human-facing explanation."""
+
+    def __init__(self, message: str, *, code: str = "GITHUB_EVIDENCE_INVALID"):
+        super().__init__(message)
+        self.code = code
 
 
 class _NoRedirect(request.HTTPRedirectHandler):
