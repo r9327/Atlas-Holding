@@ -35,9 +35,11 @@ mission `DONE`.
    `ControlPlane.snapshot().scoped_qa_counts` and
    `ControlPlane.scoped_qa_missions()` expose these **advisory** results.
    FULL-required / plan-blocked / failed tests are not successful.
-6. Only an independent **signed** exact-SHA receipt consumed by
-   `holding.qa_entry` / `QaInbox` can transition `QA_PENDING` to `DONE`.
-   Locally generated reports and the coding agent have **no signing API**.
+6. Only a signed **github_certification PASS** for the exact SHA can
+   transition QA_PENDING to DONE through QaInbox. A signed Doctor FAIL may
+   block and trigger bounded repair. Even a correctly signed local Doctor
+   PASS is advisory and cannot mark a mission DONE. The code-writing agent
+   cannot sign or authorize certification receipts.
 
 ## Verified by source tests (not yet run on Windows)
 
