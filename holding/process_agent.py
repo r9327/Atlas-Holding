@@ -20,6 +20,9 @@ from typing import Callable
 
 
 HEALTH_TIMEOUT_SECONDS = 15.0
+# Only the installed lightweight adapter and its descendants, NOT inference
+# hosted by Ollama, share this bounded Windows Job Object during normal coding.
+LOCAL_ADAPTER_JOB_LIMIT_BYTES = 256 * 1024 ** 2
 
 
 class AgentProcessError(RuntimeError):
@@ -143,7 +146,8 @@ class LocalProcessAgent:
             try:
                 if os.name == 'nt':
                     from .windows_job import WindowsJob
-                    job = WindowsJob()
+                    job = WindowsJob(
+                        max_job_memory_bytes=LOCAL_ADAPTER_JOB_LIMIT_BYTES)
                 started = time.monotonic()
                 # Inventory/health checks must never use a coding-generation
                 # timeout (potentially hours). Health is an inexpensive probe.

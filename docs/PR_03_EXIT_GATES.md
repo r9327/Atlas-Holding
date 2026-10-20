@@ -16,7 +16,7 @@ Windows E2E, and neither can replace authenticated GitHub certification.
 | Recover after signed failure | `qa_repair.py`, `service.py` | `test_qa_repair_eligibility.py`, `test_local_agent_repair.py` | Run corrected new-SHA path end-to-end with signed failing proof |
 | Acceptance and closure | `coverage.py`, `closure.py` | `test_coverage.py`, `test_closure.py` | All imported requirements and every task mapped to an authoritative signed proof |
 | UI controller API | `control.py`, `daemon_cli.py` | `test_control.py`, `test_replan_cli.py` | Authenticated API + real Windows GUI from #8 |
-| Resource budget, no 750MB coding spike | `resource_guard.py`, `windows_job.py` | `test_resource_guard.py`, `test_windows_job.py` | **NOT MEASURED:** process-tree RSS/private bytes over hours including GUI and helpers. ≤400MB normal, audits separately labeled |
+| Resource budget, no 750MB coding spike | `resource_guard.py`, `windows_job.py` | `test_resource_guard.py`, `test_windows_job.py` | **NOT MEASURED:** process-tree RSS/private bytes over hours including GUI and helpers. ≤400MB normal, audits separately labeled. Windows coding-adapter Job has a 256MiB committed-memory limit; not a complete process-tree budget |
 | Full unattended release | pieces above, with #2/#4/#7/#8/#9 | Integration suite and Windows E2E still required | Installer, trusted LLM benchmark, independent certification and reboot smoke |
 
 ## One targeted development test session (NOT final FULL)

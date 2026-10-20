@@ -14,9 +14,14 @@ class WindowsJobError(RuntimeError):
 
 
 class WindowsJob:
-    def __init__(self) -> None:
+    def __init__(self, *, max_job_memory_bytes: int | None = None) -> None:
         if os.name != 'nt':
             raise WindowsJobError('Windows Job Objects are only available on Windows')
+        if max_job_memory_bytes is not None and (
+                type(max_job_memory_bytes) is not int
+                or not 32 * 1024 ** 2 <= max_job_memory_bytes <= 1024 ** 3):
+            raise WindowsJobError('Invalid bounded Windows Job memory quota')
+        self.max_job_memory_bytes = max_job_memory_bytes
         import ctypes
         from ctypes import wintypes
 
@@ -65,8 +70,13 @@ class WindowsJob:
         if not self._handle:
             raise WindowsJobError('CreateJobObjectW failed')
         limits = ExtendedLimits()
-        # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, no breakaway permission.
+        # Always kill descendants on close; optionally limit committed memory
+        # for the whole child Job (JOB_OBJECT_LIMIT_JOB_MEMORY = 0x00000200).
+        # This does not include separately hosted Ollama inference processes.
         limits.BasicLimitInformation.LimitFlags = 0x00002000
+        if max_job_memory_bytes is not None:
+            limits.BasicLimitInformation.LimitFlags |= 0x00000200
+            limits.JobMemoryLimit = max_job_memory_bytes
         if not k32.SetInformationJobObject(self._handle, 9, ctypes.byref(limits),
                                            ctypes.sizeof(limits)):
             self.close()
