@@ -121,9 +121,27 @@ class ProofVerifier:
                 artifact TEXT NOT NULL,
                 receipt_digest TEXT NOT NULL
             )""")
+            # Keep every SHA's independent verdict. A later repaired commit
+            # may replace the latest pointer, never the append-only history.
+            store.db.execute("""CREATE TABLE IF NOT EXISTS signed_proof_history (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                mission_id TEXT NOT NULL REFERENCES missions(id),
+                candidate_sha TEXT NOT NULL,
+                verdict TEXT NOT NULL,
+                artifact TEXT NOT NULL,
+                receipt_digest TEXT NOT NULL,
+                recorded_epoch INTEGER NOT NULL,
+                UNIQUE(mission_id,candidate_sha)
+            )""")
+            store.db.execute("""INSERT INTO signed_proof_history
+                (mission_id,candidate_sha,verdict,artifact,receipt_digest,recorded_epoch)
+                VALUES(?,?,?,?,?,strftime('%s','now'))""",
+                (mission_id, proof.sha, proof.verdict, proof.artifact, proof.proof_digest))
             store.db.execute(
                 "INSERT INTO signed_proofs(mission_id,candidate_sha,verdict,artifact,receipt_digest) "
-                "VALUES(?,?,?,?,?)",
+                "VALUES(?,?,?,?,?) ON CONFLICT(mission_id) DO UPDATE SET "
+                "candidate_sha=excluded.candidate_sha,verdict=excluded.verdict,"
+                "artifact=excluded.artifact,receipt_digest=excluded.receipt_digest",
                 (mission_id, proof.sha, proof.verdict, proof.artifact, proof.proof_digest),
             )
             store._transition(mission_id, "QA_PENDING", "DONE" if proof.verdict == "PASS" else "BLOCKED",
