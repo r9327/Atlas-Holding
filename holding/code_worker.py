@@ -158,7 +158,7 @@ class LocalCodeWorker:
         if table:
             prior = self.git.store.db.execute(
                 "SELECT failed_sha FROM qa_repair_attempts WHERE mission_id=? "
-                "ORDER BY requeued_epoch DESC,failed_sha DESC LIMIT 1",
+                "ORDER BY rowid DESC LIMIT 1",
                 (mission.id,)).fetchone()
             if prior is not None:
                 request['previous_failed_candidate_sha'] = prior['failed_sha']
