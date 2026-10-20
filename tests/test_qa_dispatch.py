@@ -94,6 +94,29 @@ class ScopedQaDispatchTests(unittest.TestCase):
         ).fetchone()[0]
         self.assertEqual(advisory, NEXT_SHA)
 
+    def test_invalid_sha_does_not_starve_other_valid_pending_work(self):
+        self.db.add_missions([Mission("second", REPO)])
+        self.db.db.execute("UPDATE missions SET state='QA_PENDING',"
+                           "candidate_sha=? WHERE id='second'", ("z" * 40,))
+        with patch.object(self.runner, "run", return_value=self.advice()) as run:
+            self.assertEqual(self.dispatch.tick(now_epoch=self.now).action,
+                             "SCOPED_TESTS_PASS")
+            self.assertEqual(self.dispatch.tick(now_epoch=self.now).action,
+                             "IDLE")
+        run.assert_called_once_with("first", SHA)
+
+    def test_git_inspection_error_is_bounded_retry(self):
+        from holding.git_worktree import GitSafetyError
+        with patch.object(self.runner, "run",
+                          side_effect=GitSafetyError("Git unavailable")):
+            self.assertEqual(self.dispatch.tick(now_epoch=self.now).action,
+                             "RETRY_LATER")
+        row = self.db.db.execute(
+            "SELECT attempts,next_epoch FROM scoped_qa_retries "
+            "WHERE mission_id='first'").fetchone()
+        self.assertEqual(row["attempts"], 1)
+        self.assertEqual(row["next_epoch"], self.now + 30)
+
     def test_no_scoped_grant_never_launches_test_process(self):
         self.db.revoke(REPO)
         with patch.object(self.runner, "run") as run:
