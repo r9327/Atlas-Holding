@@ -1,1 +1,1 @@
-"""Atlas Holding release contracts."""
+"""Atlas Holding foundational policy and release contracts."""
