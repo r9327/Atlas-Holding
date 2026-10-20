@@ -71,6 +71,26 @@ class ProofStoreTests(unittest.TestCase):
                 verdict="PASS", runner="doctor_adapter", artifact_id="fake")
         self.assertEqual(self.store.missions()[0].state, "QA_PENDING")
 
+    def test_repaired_new_sha_preserves_both_signed_verdicts(self):
+        self.verifier.apply(
+            self.store, self.signed_receipt(verdict="FAIL"), mission_id="first")
+        with self.store._transaction():
+            self.store._transition("first", "BLOCKED", "READY", "test-only new code")
+            self.store._transition("first", "READY", "RUNNING", "test-only claimed")
+            self.store._transition("first", "RUNNING", "QA_PENDING")
+            self.store.db.execute(
+                "UPDATE missions SET candidate_sha=? WHERE id='first'", ("b" * 40,))
+        self.verifier.apply(
+            self.store, self.signed_receipt(candidate="b" * 40, verdict="PASS"),
+            mission_id="first")
+        history = self.store.db.execute(
+            "SELECT candidate_sha,verdict FROM signed_proof_history "
+            "WHERE mission_id='first' ORDER BY seq").fetchall()
+        self.assertEqual([tuple(row) for row in history],
+                         [(SHA, "FAIL"), ("b" * 40, "PASS")])
+        self.assertEqual(self.store.missions()[0].state, "DONE")
+        self.assertEqual(self.store.missions()[0].evidence_sha, "b" * 40)
+
     def test_receipt_is_not_replayable(self):
         name = self.signed_receipt()
         self.verifier.apply(self.store, name, mission_id="first")
