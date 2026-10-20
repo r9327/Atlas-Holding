@@ -57,6 +57,31 @@ class RoadmapReplanTests(unittest.TestCase):
         self.assertEqual(self.store.db.execute(
             "SELECT COUNT(*) FROM roadmap_amendments").fetchone()[0], 1)
 
+    def test_incremental_direction_preserves_unmentioned_tasks(self):
+        change = self.replan.append_direction(
+            document(C), source="ui:one-new-goal")
+        self.assertEqual(change.added, ("c",))
+        self.assertEqual(change.preserved, ("a", "b"))
+        self.assertEqual({m.id for m in self.store.missions()},
+                         {"a", "b", "c"})
+        repeat = self.replan.append_direction(
+            document(C), source="ui:repeat-goal")
+        self.assertFalse(repeat.applied)
+        self.assertEqual(len(self.store.missions()), 3)
+        source = self.store.db.execute(
+            "SELECT source FROM roadmap_versions WHERE version=?",
+            (change.version,)).fetchone()[0]
+        self.assertIn("delta_sha256:", source)
+
+    def test_incremental_direction_cannot_modify_started_mission(self):
+        self.assertEqual(self.store.claim_next(online=False).mission_id, "a")
+        self.store.checkpoint("a", SHA)
+        changed = dict(A, acceptance=["New and incompatible acceptance"])
+        with self.assertRaisesRegex(StoreError, "ALREADY_STARTED"):
+            self.replan.append_direction(
+                document(changed), source="ui:unsafe-rewrite")
+        self.assertEqual(self.store.missions()[0].candidate_sha, SHA)
+
     def test_omitted_mission_is_not_silently_cancelled(self):
         with self.assertRaisesRegex(StoreError, "OMITTED"):
             self.replan.apply(document(A), source="remove")
