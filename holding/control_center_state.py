@@ -49,7 +49,7 @@ class TaskView:
     state: str
     phase: str
     progress: str
-    candidate_sha: str
+    candidate_sha: str | None
     elapsed_seconds: int
     attempts: int
     completion_evidence: EvidenceView | None
@@ -157,26 +157,39 @@ def _task(value: Any) -> TaskView:
     task_id = _identifier(item["id"], "task id")
     state = item["state"]
     progress = item["progress"]
-    if state not in {"QUEUED", "RUNNING", "BLOCKED", "DONE"}:
+    if state not in {
+            "QUEUED", "READY", "RUNNING", "QA_PENDING",
+            "RECOVERY_REQUIRED", "BLOCKED", "DONE_UNVERIFIED", "DONE"}:
         raise ControlCenterStateError("Invalid task state")
     if item["phase"] not in {"CODING", "TESTS", "CERTIFICATION", "EXTERNAL_WAIT"}:
         raise ControlCenterStateError("Invalid task phase")
     allowed_progress = {
         "QUEUED": {"WAITING"},
+        "READY": {"WAITING"},
         "RUNNING": {"PROGRESSING", "REASSESSING"},
+        "QA_PENDING": {"WAITING"},
+        "RECOVERY_REQUIRED": {"BLOCKED"},
         "BLOCKED": {"BLOCKED", "EXTERNAL_WAIT"},
+        "DONE_UNVERIFIED": {"BLOCKED"},
         "DONE": {"COMPLETED"},
     }
     if progress not in allowed_progress[state]:
         raise ControlCenterStateError("Task progress contradicts task state")
     sha = item["candidate_sha"]
-    if not isinstance(sha, str) or not _SHA.fullmatch(sha):
+    if sha is not None and (not isinstance(sha, str) or not _SHA.fullmatch(sha)):
         raise ControlCenterStateError("Invalid task candidate SHA")
+    if state in {"QA_PENDING", "RECOVERY_REQUIRED", "DONE_UNVERIFIED", "DONE"} \
+            and sha is None:
+        raise ControlCenterStateError("Task state requires a candidate SHA")
     evidence = None
     if item["completion_evidence"] is not None:
+        if sha is None:
+            raise ControlCenterStateError("Completion evidence lacks a candidate SHA")
         evidence = _evidence(item["completion_evidence"], sha)
     if state == "DONE" and evidence is None:
         raise ControlCenterStateError("DONE task lacks exact-SHA evidence")
+    if state != "DONE" and evidence is not None:
+        raise ControlCenterStateError("Non-DONE task cannot claim completion evidence")
     return TaskView(
         task_id, _text(item["title"], "task title"), state, item["phase"],
         progress, sha,
