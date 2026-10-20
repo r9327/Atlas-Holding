@@ -3,7 +3,7 @@ name: Holding Core Python 3.13 validation
 on:
   pull_request:
     branches: [main]
-    types: [synchronize]
+    types: [ready_for_review]
 
 permissions:
   contents: read

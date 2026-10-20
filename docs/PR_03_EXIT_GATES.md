@@ -53,6 +53,14 @@ interrupted tasks under durable Pause/STOP without starting a health/model
 subprocess. Automatic recovery is deferred until the operator resumes.
 Requires a real suspended Windows reboot smoke before PASS.
 
+**Development test results, exact SHA a095286c28d792a07d0c72e6034ff513080776e3:**
+[GitHub run #39428808979](https://github.com/r9327/Atlas-Holding/actions/runs/39428808979)
+reported Python 3.13 on Linux 344 tests PASS (3 skipped), and Windows
+344 tests PASS (5 skipped). These are real unit/integration test runs,
+not the independent signed final FULL / Windows ACL / RAM certification.
+The follow-up workflow-trigger-only commit requires a separate final-SHA
+review run before READY/FULL, despite the earlier green application code.
+
 **Certification state on 20 October 2026:** implementation changes exist on
 GitHub, but the repository test suite and Windows process-tree/RAM experiments
 have not been executed in this session. All checks are pending, not PASS.
