@@ -1,12 +1,18 @@
 import unittest
 from dataclasses import replace
+import hashlib
 from holding.learning import Evaluation, evaluate_candidate
 
 SHA = "a" * 64
+REPOSITORY_SHA = "b" * 40
+ENVIRONMENT_SHA = "c" * 64
 
 
 def trial(id, passed=9):
-    return Evaluation(id, "atlas-hidden-v1", SHA, passed, 10, 0, 0, 0, "trusted_test_runner")
+    evidence = hashlib.sha256(id.encode("utf-8")).hexdigest()
+    return Evaluation(id, "atlas-hidden-v1", SHA, REPOSITORY_SHA,
+                      ENVIRONMENT_SHA, evidence, passed, 10, 0, 0, 0,
+                      "trusted_test_runner")
 
 
 class LearningTests(unittest.TestCase):
@@ -36,6 +42,23 @@ class LearningTests(unittest.TestCase):
         x = replace(trial("new", 10), suite_sha256="b" * 64)
         self.assertEqual(evaluate_candidate(trial("old", 8), x).action, "REJECT")
 
+    def test_different_repository_or_environment_is_not_comparable(self):
+        for field, value in (("repository_sha", "d" * 40),
+                             ("environment_sha256", "e" * 64)):
+            with self.subTest(field=field):
+                candidate = replace(trial("new", 10), **{field: value})
+                decision = evaluate_candidate(trial("old", 8), candidate)
+                self.assertEqual(decision.action, "REJECT")
+                self.assertIn("benchmark context", decision.reason)
+
+    def test_same_report_cannot_be_relabelled_as_a_new_strategy(self):
+        current = trial("old", 8)
+        candidate = replace(trial("new", 10),
+                            evidence_sha256=current.evidence_sha256)
+        decision = evaluate_candidate(current, candidate)
+        self.assertEqual(decision.action, "REJECT")
+        self.assertIn("reused", decision.reason)
+
     def test_too_few_trials_rejected(self):
         self.assertEqual(evaluate_candidate(trial("old", 8), trial("new", 10), min_trials=20).action, "REJECT")
 
@@ -54,6 +77,9 @@ class LearningTests(unittest.TestCase):
             replace(trial("new"), passed=True),
             replace(trial("new"), total=10.5),
             replace(trial("new"), suite_sha256=None),
+            replace(trial("new"), repository_sha="not-a-sha"),
+            replace(trial("new"), environment_sha256=None),
+            replace(trial("new"), evidence_sha256="short"),
             replace(trial("new"), regressions=0.5),
         )
         for candidate in malformed:

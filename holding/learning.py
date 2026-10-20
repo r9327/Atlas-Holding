@@ -16,6 +16,9 @@ class Evaluation:
     strategy_id: str
     suite_id: str
     suite_sha256: str
+    repository_sha: str
+    environment_sha256: str
+    evidence_sha256: str
     passed: int
     total: int
     critical_failures: int
@@ -49,6 +52,12 @@ def evaluate_candidate(current: Evaluation, candidate: Evaluation, *, min_trials
             and type(e.suite_id) is str and bool(e.suite_id)
             and type(e.suite_sha256) is str
             and _SHA256.fullmatch(e.suite_sha256) is not None
+            and type(e.repository_sha) is str
+            and re.fullmatch(r"[0-9a-f]{40}", e.repository_sha) is not None
+            and type(e.environment_sha256) is str
+            and _SHA256.fullmatch(e.environment_sha256) is not None
+            and type(e.evidence_sha256) is str
+            and _SHA256.fullmatch(e.evidence_sha256) is not None
             and e.source == "trusted_test_runner"
             and all(type(value) is int for value in counts)
             and type(min_trials) is int and min_trials > 0
@@ -59,12 +68,17 @@ def evaluate_candidate(current: Evaluation, candidate: Evaluation, *, min_trials
 
     if not valid(current) or not valid(candidate):
         return Promotion("REJECT", "Insufficient or untrusted benchmark evidence")
-    if (current.suite_id, current.suite_sha256) != (candidate.suite_id, candidate.suite_sha256):
-        return Promotion("REJECT", "Candidate evaluated on a different suite")
+    benchmark = lambda e: (
+        e.suite_id, e.suite_sha256, e.repository_sha, e.environment_sha256,
+    )
+    if benchmark(current) != benchmark(candidate):
+        return Promotion("REJECT", "Candidate evaluated on a different benchmark context")
     if current.total != candidate.total:
         return Promotion("REJECT", "Candidate did not execute the complete comparison corpus")
     if current.strategy_id == candidate.strategy_id:
         return Promotion("KEEP", "No new strategy to compare")
+    if current.evidence_sha256 == candidate.evidence_sha256:
+        return Promotion("REJECT", "Benchmark evidence was reused across strategies")
     if candidate.critical_failures or candidate.security_failures or candidate.regressions:
         return Promotion("REJECT", "Candidate caused critical, security or regression failures")
     if candidate.rate <= current.rate:
