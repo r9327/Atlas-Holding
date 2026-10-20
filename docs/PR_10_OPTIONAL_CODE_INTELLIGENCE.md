@@ -1,10 +1,21 @@
-# PR 10 — Code Intelligence optionnelle (SPÉCIFICATION UNIQUEMENT)
+# PR 10 — Code Intelligence optionnelle (IMPLEMENTATION PARTIELLE)
+
+## État technique
+
+`holding/code_intelligence.py` expose une découverte Serena strictement en
+lecture et prépare des scans Semgrep locaux, bornés, sans métriques ni mise à
+jour réseau. Les publicités d'outils non bornées, chemins ressemblant à des
+options et rapports JSON ambigus sont refusés. Les rapports restent des avis :
+ils ne certifient rien et ne peuvent pas promouvoir une mission.
+
+Les processus Serena/Semgrep réels, benchmarks Dof-Atlas, mesures RAM et tests
+Windows de cycle de vie restent à exécuter avant toute sortie de Draft.
 
 ## Position dans le chantier
 
 Cette PR s'insère **après les PR #3, #5, #6 et #8, et avant la PR #9 (release Windows)**.
 Les PR #5 (hub MCP), #6 (liaison Doctor/Graphify/AI Context) et #3 (superviseur) restent propriétaires de leurs interfaces : ne pas dupliquer leurs moteurs.
-**État : aucun code d'intégration, aucun test, aucune certification réalisé dans cette PR à sa création.**
+**État initial : aucun code d'intégration, test ou certification n'existait à la création de la PR.**
 
 ## Objectif
 

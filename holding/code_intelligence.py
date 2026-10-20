@@ -26,6 +26,15 @@ class CodeIntelligenceError(ValueError):
     pass
 
 
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise CodeIntelligenceError("Tool report contains duplicate JSON keys")
+        result[key] = value
+    return result
+
+
 @dataclass(frozen=True)
 class SerenaAvailability:
     status: str
@@ -61,6 +70,7 @@ class SemgrepAdvisory:
 
 def _local_path(value: Any) -> bool:
     return (isinstance(value, str) and bool(_SAFE_PATH.fullmatch(value))
+            and not value.startswith("-")
             and all(part not in {".", ".."} for part in value.split("/")))
 
 
@@ -71,10 +81,20 @@ def discover_serena(
     """Expose only known symbolic read tools from an observed Serena server."""
     if type(installed) is not bool or permission not in {"READ", "NONE"}:
         raise CodeIntelligenceError("Invalid Serena discovery evidence")
-    tools = tuple(advertised_tools)
+    if isinstance(advertised_tools, (str, bytes, dict)):
+        raise CodeIntelligenceError("Invalid Serena tool advertisement")
+    try:
+        bounded_tools = []
+        for index, tool in enumerate(advertised_tools, start=1):
+            if index > 200:
+                raise CodeIntelligenceError("Invalid Serena tool advertisement")
+            bounded_tools.append(tool)
+    except TypeError as exc:
+        raise CodeIntelligenceError("Invalid Serena tool advertisement") from exc
+    tools = tuple(bounded_tools)
     if any(not isinstance(tool, str) or not tool or len(tool) > 100 for tool in tools):
         raise CodeIntelligenceError("Invalid Serena tool advertisement")
-    if len(set(tools)) != len(tools) or len(tools) > 200:
+    if len(set(tools)) != len(tools):
         raise CodeIntelligenceError("Invalid Serena tool advertisement")
     if not installed:
         if version is not None or tools:
@@ -120,7 +140,9 @@ def consume_semgrep_report(
             or observed_rules_sha256 != expected_rules_sha256):
         raise CodeIntelligenceError("Invalid Semgrep process evidence")
     try:
-        payload = json.loads(raw)
+        payload = json.loads(raw, object_pairs_hook=_unique_object)
+    except CodeIntelligenceError:
+        raise
     except (UnicodeError, ValueError) as exc:
         raise CodeIntelligenceError("Semgrep report is not valid JSON") from exc
     if not isinstance(payload, dict) or set(payload) != {"results", "errors"}:
