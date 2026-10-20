@@ -120,6 +120,9 @@ class HoldingService:
         worker = LocalCodeWorker(authenticated_git, adapter, health_directory=health_directory)
         service.worker = worker
         service.engine.worker = worker
+        # The currently implemented local adapter edits code only. Other
+        # roadmap operations await separately authenticated role adapters.
+        service.engine.supported_operations = frozenset({'code'})
         return service
 
     def _recovery_generations(self) -> dict[str, int]:
