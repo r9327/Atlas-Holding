@@ -97,6 +97,11 @@ class ControlPlane:
             "WHERE m.state='QA_PENDING' AND q.candidate_sha=m.candidate_sha "
             "ORDER BY q.checked_epoch DESC, m.id LIMIT ?", (limit,))]
 
+    def closure_status(self):
+        """Check every signed acceptance proof before claiming roadmap closure."""
+        from .closure import RoadmapClosure
+        return RoadmapClosure(self.store).inspect()
+
     def requirement_coverage(self):
         """Live read-only requirement/evidence report for the Control Center."""
         from .coverage import RequirementCoverage
