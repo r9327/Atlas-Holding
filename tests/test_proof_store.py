@@ -36,7 +36,8 @@ class ProofStoreTests(unittest.TestCase):
         artifact.write_text("Independent test result", encoding="utf-8")
         data = {
             "schema": 1, "mission_id": "first", "sha": candidate,
-            "runner": "doctor_atlas", "verdict": verdict, "artifact": artifact.name,
+            "runner": "github_certification" if verdict == "PASS" else "doctor_atlas",
+            "verdict": verdict, "artifact": artifact.name,
             "artifact_sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()
         }
         encoded = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
