@@ -54,6 +54,7 @@ def _safe_paths(value: Any) -> tuple[str, ...]:
     result = []
     for path in value:
         if (not isinstance(path, str) or not path or len(path) > 240
+                or path.startswith("-") or ":" in path or "\x00" in path
                 or path.startswith(("/", "\\")) or "\\" in path
                 or any(part in ("", ".", "..") for part in path.split("/"))):
             raise DoctorEvidenceError("Unsafe Doctor path scope")

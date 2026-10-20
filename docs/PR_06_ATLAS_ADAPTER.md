@@ -1,4 +1,17 @@
-# PR 06 — Liaison fiable à Dofus Atlas (SPECIFICATION, NON IMPLEMENTEE)
+# PR 06 — Liaison fiable à Dofus Atlas (IMPLEMENTATION PARTIELLE)
+
+## État technique
+
+`holding/atlas_doctor_runner.py` invoque maintenant la commande canonique
+`python -B -m tools.atlas_doctor --json agent ...` depuis un checkout Atlas
+exact-SHA. Les arguments sont construits par le superviseur, l'environnement
+retire les secrets, stdout/stderr sont plafonnés, le timeout est borné et
+l'arbre de processus est enfermé dans un groupe POSIX ou un Job Object Windows
+créé avant reprise du processus. HEAD et l'identité du worktree sont revérifiés
+après exécution avant consommation du rapport.
+
+Ce runner fournit uniquement un passeport local. Il ne signe pas une preuve,
+ne certifie pas FULL et ne remplace pas la CI exacte-SHA ou les scénarios UI.
 
 ## But
 Brancher le moteur Holding aux outils **déjà existants** d'Atlas sans les dupliquer. Les règles du dépôt cible au SHA exact sont la seule autorité de qualité.
