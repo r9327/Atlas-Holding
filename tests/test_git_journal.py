@@ -180,7 +180,7 @@ class GitJournalTests(unittest.TestCase):
             with StateStore(self.dbpath) as control:
                 with control._transaction():
                     control.db.execute(
-                        "UPDATE git_operations SET updated_epoch=updated_epoch+1 "
+                        "UPDATE git_operations SET state='INSPECT_REQUIRED' "
                         "WHERE mission_id=? AND operation_key=?",
                         (old.mission_id, old.key))
             return 'APPLIED'
