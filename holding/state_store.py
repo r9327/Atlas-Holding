@@ -198,14 +198,16 @@ class StateStore:
             raise StoreError("DAEMON_LEASE_LOST")
 
     def claim_next(self, *, online: bool, now_epoch: int | None = None,
-                   lease_owner: str | None = None) -> Decision:
+                   lease_owner: str | None = None,
+                   supported_operations: frozenset[str] | None = None) -> Decision:
         """Atomically choose and claim one mission; never dispatch an executor here."""
         now = int(time.time()) if now_epoch is None else now_epoch
         with self._transaction():
             self._assert_daemon_fence(lease_owner)
             if self._paused():
                 return Decision("WAIT", None, "Holding paused")
-            choice = choose_next(self.missions(), self._grants(), now_epoch=now, online=online)
+            choice = choose_next(self.missions(), self._grants(), now_epoch=now, online=online,
+                                 supported_operations=supported_operations)
             if choice.action == "RUN" and choice.mission_id:
                 updated = self.db.execute(
                     "UPDATE missions SET state='RUNNING', updated_at=? WHERE id=? AND state='READY'",
