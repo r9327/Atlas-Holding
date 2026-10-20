@@ -23,8 +23,20 @@ Cette PR Draft vérifie ensemble les contrats développés séparément dans :
 ## Limites explicites
 
 - Aucun token n'est fourni au coordinateur ou stocké dans SQLite.
-- Le transport GitHub privilégié concret reste à implémenter hors du processus écrivain.
+- Le transport réseau privilégié possède des routes fermées pour Draft/Ready,
+  certification et merge exact-SHA. Il doit encore être placé derrière une
+  frontière IPC/ACL : l'importer dans le processus écrivain ne constituerait
+  pas une isolation de secrets.
 - Le push reste bloqué tant qu'une preuve de non-divergence Git dédiée n'est pas fournie.
 - Un statut `SUCCEEDED` atteste l'effet de synchronisation observé, jamais la qualité produit.
 - Un contexte absent (ancienne base), corrompu ou incohérent bloque la récupération.
 - Cette PR ne rend pas les PR #1, #3 ou #7 prêtes à fusionner et ne remplace pas leur certification finale.
+
+## Contrats GitHub vérifiés
+
+- [Mutations GraphQL des pull requests](https://docs.github.com/en/enterprise-cloud@latest/graphql/reference/pulls)
+  pour Ready/Draft.
+- [Merge REST](https://docs.github.com/en/rest/pulls/pulls#merge-a-pull-request)
+  avec précondition `sha`.
+- [Workflow dispatch REST](https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event)
+  limité au workflow de certification et à la branche autorisée.
