@@ -30,6 +30,19 @@ class GitWorktreeTests(unittest.TestCase):
         self.assertNotEqual(sha,original)
         self.assertEqual(git(self.root,'rev-parse','HEAD'),original)
         self.assertFalse((self.root/'feature.py').exists())
+    def test_real_git_nul_delimited_staging_and_commit(self):
+        original = git(self.root, 'rev-parse', 'HEAD')
+        work = self.manager.create('feature1')
+        (work.path / 'one.py').write_text('one = 1\n')
+        (work.path / 'two.py').write_text('two = 2\n')
+        sha = self.manager.commit('feature1', ('one.py', 'two.py'),
+                                  'feat: commit two explicit paths')
+        committed = set(git(work.path, 'show', '--pretty=format:',
+                            '--name-only', sha).splitlines())
+        self.assertEqual(committed, {'one.py', 'two.py'})
+        self.assertEqual(git(self.root, 'rev-parse', 'HEAD'), original)
+        self.assertFalse((self.root / 'one.py').exists())
+
     def test_dirty_canonical_denied(self):
         (self.root/'NOTTRACKED').write_text('dirty')
         with self.assertRaises(GitSafetyError):self.manager.create('feat1')
@@ -70,7 +83,7 @@ class GitWorktreeTests(unittest.TestCase):
 
     def test_outside_symlink_refused(self):
         tree = self.manager.create('feat1')
-        outside = Path(self.temp.name) / 'outside'
+        outside = Path(self.tmp.name) / 'outside'
         outside.write_text('private')
         link = tree.path / 'linked.py'
         try:
