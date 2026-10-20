@@ -17,6 +17,9 @@ import time
 from typing import Callable
 
 
+HEALTH_TIMEOUT_SECONDS = 15.0
+
+
 class AgentProcessError(RuntimeError):
     pass
 
@@ -104,7 +107,7 @@ class LocalProcessAgent:
                 started = time.monotonic()
                 # Inventory/health checks must never use a coding-generation
                 # timeout (potentially hours). Health is an inexpensive probe.
-                deadline = min(self.config.timeout_seconds, 15.0) if action == 'health' else self.config.timeout_seconds
+                deadline = min(self.config.timeout_seconds, HEALTH_TIMEOUT_SECONDS) if action == 'health' else self.config.timeout_seconds
                 proc = subprocess.Popen([str(self.config.executable), *self.config.arguments],
                                         stdin=input_file, stdout=stdout,
                                         stderr=subprocess.DEVNULL, cwd=cwd,
