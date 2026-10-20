@@ -212,7 +212,8 @@ def coordinate_git_push(
         repository=repository, operation="github.push", branch=branch,
         candidate_sha=candidate_sha, now_epoch=now_epoch,
         expected_account_id=expected_account_id,
-        expected_policy_sha=expected_policy_sha)
+        expected_policy_sha=expected_policy_sha,
+        legacy_privileged_push_observer=True)
     try:
         before = control.observe(repository, branch, candidate_sha)
     except Exception:

@@ -64,6 +64,10 @@ class GitHubMutationGateTests(unittest.TestCase):
         self.assertFalse(intent.executes_action)
         self.assertFalse(intent.certifies_quality)
 
+    def test_push_without_topology_is_rejected_by_default(self):
+        with self.assertRaisesRegex(GitHubEvidenceError, "topology"):
+            prepare("github.push", push_state=None)
+
     def test_push_requires_fresh_fetched_main_and_exact_local_head(self):
         for state in (
             push_state(observed_at=NOW - 61),

@@ -132,6 +132,7 @@ def prepare_github_mutation(
     pr_state: dict[str, Any] | None = None,
     full_evidence: FullEvidence | None = None,
     push_state: GitPushState | None = None,
+    legacy_privileged_push_observer: bool = False,
 ) -> GitHubMutationIntent:
     """Validate prerequisites and return a non-executing immutable intent."""
     authorization_digest = _receipt(
@@ -149,12 +150,20 @@ def prepare_github_mutation(
     if operation == "github.push":
         if pr_state is not None or full_evidence is not None:
             raise GitHubEvidenceError("Unexpected GitHub evidence for this operation")
-        push_disposition = validate_push_state(
-            push_state, repository=repository, branch=branch,
-            candidate_sha=candidate_sha, now_epoch=now_epoch,
-        )
-        remote_main_head = push_state.remote_main_head
-        remote_branch_head = push_state.remote_branch_head
+        if type(legacy_privileged_push_observer) is not bool:
+            raise GitHubEvidenceError("Invalid legacy push observer declaration")
+        if push_state is None:
+            if not legacy_privileged_push_observer:
+                raise GitHubEvidenceError("Fresh Git topology is required for push")
+        else:
+            if legacy_privileged_push_observer:
+                raise GitHubEvidenceError("Conflicting Git topology authorities")
+            push_disposition = validate_push_state(
+                push_state, repository=repository, branch=branch,
+                candidate_sha=candidate_sha, now_epoch=now_epoch,
+            )
+            remote_main_head = push_state.remote_main_head
+            remote_branch_head = push_state.remote_branch_head
     elif operation in {"github.pr_draft", "github.pr_ready", "github.ci_trigger"}:
         if not isinstance(pr_state, dict) or set(pr_state) != {
                 "number", "draft", "state", "head_sha", "head_branch", "complete"}:
@@ -189,7 +198,8 @@ def prepare_github_mutation(
             raise GitHubEvidenceError("Merge lacks exact-head FULL GitHub evidence")
         pr_number = full_evidence.pr_number
         run_id = full_evidence.run_id
-    elif pr_state is not None or full_evidence is not None or push_state is not None:
+    elif (pr_state is not None or full_evidence is not None or push_state is not None
+          or legacy_privileged_push_observer is not False):
         raise GitHubEvidenceError("Unexpected GitHub evidence for this operation")
     return GitHubMutationIntent(
         operation, repository, branch, candidate_sha, pr_number,
