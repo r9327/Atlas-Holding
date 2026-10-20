@@ -116,7 +116,7 @@ class ControlCenterWindow(QMainWindow):
             task.state,
             task.phase,
             task.progress,
-            task.candidate_sha,
+            task.candidate_sha or "—",
             ("Aucune" if task.completion_evidence is None else
              f"{task.completion_evidence.kind} {task.completion_evidence.scope}"),
         ) for task in state.tasks)

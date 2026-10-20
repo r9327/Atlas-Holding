@@ -64,6 +64,22 @@ class ControlCenterUiTests(unittest.TestCase):
         self.assertFalse(hasattr(window, "engine"))
         self.assertTrue(window.close())
 
+    def test_pre_candidate_task_displays_no_fake_sha_or_evidence(self):
+        payload = snapshot()
+        payload["tasks"][0].update({
+            "state": "READY", "phase": "CODING", "progress": "WAITING",
+            "candidate_sha": None, "completion_evidence": None,
+        })
+        state = consume_dashboard_snapshot(
+            json.dumps(payload).encode("utf-8"),
+            trusted_engine_id="engine-1", expected_sequence=42, now_epoch=NOW,
+        )
+        window = ControlCenterWindow(trusted_engine_id="engine-1")
+        window.render_state(state)
+        self.assertEqual(window.tasks.item(0, 4).text(), "—")
+        self.assertEqual(window.tasks.item(0, 5).text(), "Aucune")
+        window.close()
+
 
 if __name__ == "__main__":
     unittest.main()

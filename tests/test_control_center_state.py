@@ -70,6 +70,36 @@ class ControlCenterStateTests(unittest.TestCase):
         with self.assertRaisesRegex(ControlCenterStateError, "DONE"):
             consume(payload)
 
+    def test_pre_candidate_task_has_no_invented_sha(self):
+        payload = snapshot()
+        payload["tasks"][0].update({
+            "state": "READY", "phase": "CODING", "progress": "WAITING",
+            "candidate_sha": None, "completion_evidence": None,
+        })
+        state = consume(payload)
+        self.assertIsNone(state.tasks[0].candidate_sha)
+
+    def test_verification_states_require_real_candidate_sha(self):
+        for state in ("QA_PENDING", "RECOVERY_REQUIRED", "DONE_UNVERIFIED"):
+            payload = snapshot()
+            payload["tasks"][0].update({
+                "state": state,
+                "progress": "WAITING" if state == "QA_PENDING" else "BLOCKED",
+                "candidate_sha": None,
+                "completion_evidence": None,
+            })
+            with self.subTest(state=state), self.assertRaisesRegex(
+                    ControlCenterStateError, "requires a candidate SHA"):
+                consume(payload)
+
+    def test_non_done_task_cannot_borrow_completion_evidence(self):
+        payload = snapshot()
+        payload["tasks"][0].update({
+            "state": "QA_PENDING", "phase": "TESTS", "progress": "WAITING",
+        })
+        with self.assertRaisesRegex(ControlCenterStateError, "Non-DONE"):
+            consume(payload)
+
     def test_evidence_must_match_candidate_sha(self):
         payload = snapshot()
         payload["tasks"][0]["completion_evidence"]["sha"] = "c" * 40
