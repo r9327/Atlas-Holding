@@ -19,7 +19,8 @@ from .service import default_database
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="atlas-holding")
     parser.add_argument("--db", type=Path, default=default_database())
-    parser.add_argument("action", choices=("status", "pause", "resume", "stop", "clear-stop", "import"))
+    parser.add_argument("action", choices=("status", "pause", "resume", "stop",
+                                           "clear-stop", "import", "coverage"))
     parser.add_argument("--roadmap-file", type=Path)
     parser.add_argument("--source")
     args = parser.parse_args(argv)
