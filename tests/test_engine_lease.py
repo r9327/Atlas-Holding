@@ -58,6 +58,18 @@ class EngineLeaseTests(unittest.TestCase):
             second.reset_stop()
             self.assertEqual(second.tick().action, "QA_PENDING")
 
+    def test_repeated_sha_is_bounded_no_progress_not_daemon_crash(self):
+        with self.engine() as engine:
+            engine.start()
+            engine.store.db.execute(
+                "UPDATE missions SET candidate_sha=? WHERE id='one'", (SHA,))
+            for attempt in range(3):
+                result = engine.tick()
+                self.assertEqual(result.action, "RETRY_OR_BLOCKED")
+                self.assertEqual(result.reason, "UNCHANGED_CANDIDATE_SHA")
+            self.assertEqual(engine.store.missions()[0].state, "BLOCKED")
+            self.assertEqual(engine.store.missions()[0].failures_without_progress, 3)
+
     def test_lost_lease_cannot_checkpoint(self):
         engine = None
         def worker(_mission):

@@ -103,6 +103,19 @@ class ProofStoreTests(unittest.TestCase):
         self.assertEqual(self.store.missions()[0].state, "DONE")
         self.assertEqual(self.store.missions()[0].evidence_sha, "b" * 40)
 
+    def test_old_signed_fail_replay_is_safe_store_error(self):
+        receipt = self.signed_receipt(verdict="FAIL")
+        self.verifier.apply(self.store, receipt, mission_id="first")
+        with self.store._transaction():
+            self.store._transition("first", "BLOCKED", "READY", "simulated replay")
+            self.store._transition("first", "READY", "RUNNING", "simulated replay")
+            self.store._transition("first", "RUNNING", "QA_PENDING")
+        with self.assertRaisesRegex(StoreError, "cannot be replayed"):
+            self.verifier.apply(self.store, receipt, mission_id="first")
+        self.assertEqual(self.store.missions()[0].state, "QA_PENDING")
+        self.assertEqual(self.store.db.execute(
+            "SELECT COUNT(*) FROM signed_proof_history").fetchone()[0], 1)
+
     def test_direct_proof_apply_cannot_bypass_pause_or_stop(self):
         receipt = self.signed_receipt()
         self.store.set_paused(True)

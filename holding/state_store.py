@@ -248,6 +248,15 @@ class StateStore:
             raise StoreError("Candidate SHA must be a real Git SHA-1 object ID")
         with self._transaction():
             self._assert_daemon_fence(lease_owner)
+            prior = self.db.execute(
+                "SELECT candidate_sha FROM missions WHERE id=? AND state='RUNNING'",
+                (mission_id,)).fetchone()
+            if prior is None:
+                raise StoreError("Checkpoint requires a RUNNING mission")
+            if prior["candidate_sha"] == candidate_sha.lower():
+                # A failed SHA can never be "repaired" by resubmitting the
+                # same commit. Keep the existing QA history and retry budget.
+                raise StoreError("UNCHANGED_CANDIDATE_SHA")
             self._transition(mission_id, "RUNNING", "QA_PENDING")
             self.db.execute(
                 "UPDATE missions SET candidate_sha=?,evidence_sha='', "

@@ -120,6 +120,21 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(self.store.missions()[0].failures_without_progress, 0)
         self.assertEqual(self.store.missions()[0].state, 'QA_PENDING')
 
+    def test_repair_requires_new_candidate_sha_without_clearing_failure_budget(self):
+        self.store.add_missions([Mission('a', REPO)])
+        self.assertEqual(self.claim().mission_id, 'a')
+        self.store.checkpoint('a', SHA)
+        with self.store._transaction():
+            self.store._transition('a', 'QA_PENDING', 'BLOCKED', 'test-only signed fail')
+            self.store._transition('a', 'BLOCKED', 'READY', 'test-only repair')
+        self.assertEqual(self.claim().mission_id, 'a')
+        with self.assertRaisesRegex(StoreError, 'UNCHANGED_CANDIDATE_SHA'):
+            self.store.checkpoint('a', SHA)
+        self.assertEqual(self.store.missions()[0].state, 'RUNNING')
+        self.assertEqual(self.store.missions()[0].candidate_sha, SHA)
+        self.store.fail_running('a', 'unchanged candidate')
+        self.assertEqual(self.store.missions()[0].failures_without_progress, 1)
+
     def test_independent_task_continues_when_other_blocked(self):
         self.store.add_missions([Mission('z', REPO, priority=10), Mission('a', REPO)])
         for i in range(3):

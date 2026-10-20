@@ -141,6 +141,14 @@ class ProofVerifier:
                 recorded_epoch INTEGER NOT NULL,
                 UNIQUE(mission_id,candidate_sha)
             )""")
+            replay = store.db.execute(
+                "SELECT 1 FROM signed_proof_history WHERE mission_id=? AND candidate_sha=?",
+                (mission_id, proof.sha)).fetchone()
+            if replay is not None:
+                # A repeated signed SHA is not fresh evidence. Return a
+                # controlled error rather than crashing the QA watcher on
+                # the history table's UNIQUE constraint.
+                raise StoreError("Previously verified candidate SHA cannot be replayed")
             store.db.execute("""INSERT INTO signed_proof_history
                 (mission_id,candidate_sha,verdict,artifact,receipt_digest,recorded_epoch)
                 VALUES(?,?,?,?,?,strftime('%s','now'))""",

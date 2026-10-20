@@ -118,6 +118,19 @@ class HoldingEngine:
             return Tick('RECOVERY_REQUIRED', mission.id,
                         'Worker was preempted; no retry budget consumed')
         except (LeaseError, StoreError) as failure:
+            if isinstance(failure, StoreError) and str(failure) == 'UNCHANGED_CANDIDATE_SHA':
+                # Count lack of forward progress instead of crashing the daemon
+                # or falsely reusing a previous signed receipt.
+                try:
+                    self.store.fail_running(
+                        mission.id, 'UNCHANGED_CANDIDATE_SHA',
+                        lease_owner=self.lease.owner)
+                except StoreError as fence:
+                    if str(fence) == 'DAEMON_LEASE_LOST':
+                        self._stop.set()
+                        return Tick('LEASE_LOST', mission.id, 'Lease lost during no-progress handling')
+                    raise
+                return Tick('RETRY_OR_BLOCKED', mission.id, 'UNCHANGED_CANDIDATE_SHA')
             if isinstance(failure, StoreError) and str(failure) != 'DAEMON_LEASE_LOST':
                 raise
             self._stop.set()
