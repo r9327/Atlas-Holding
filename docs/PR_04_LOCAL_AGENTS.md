@@ -1,4 +1,18 @@
-# PR 04 — Exécution IA locale de qualité (SPECIFICATION, NON IMPLEMENTEE)
+# PR 04 — Exécution IA locale de qualité (IMPLEMENTATION PARTIELLE)
+
+## État technique
+
+`holding/model_selection.py` sélectionne désormais automatiquement un modèle
+déjà installé pour un rôle, uniquement à partir de benchmarks indépendants liés
+au SHA du dépôt, à la suite, à l'environnement et au digest exact du modèle.
+Les tests fonctionnels/outils/sécurité/régression et les budgets RAM, VRAM et
+contexte sont bloquants. `BALANCED_VERIFIED` accepte une tolérance qualité de
+deux points avant de privilégier latence/ressources ; `QUALITY_FIRST` conserve
+le meilleur score indépendant. Aucun téléchargement ni démarrage de modèle
+n'est effectué par ce composant.
+
+Le runtime Ollama/OpenCode, l'alternance effective des rôles, les watchdogs et
+les benchmarks Atlas natifs restent à implémenter et prouver ; la PR reste Draft.
 
 **But :** Ryzen 7 5800X, 32 Go RAM et RTX 3060 Ti 8 Go : meilleur compromis qualité/temps **avec qualité, sécurité et non-régression comme critères bloquants**, modèle local unique chargé à un instant donné, pas d'abonnement obligatoire.
 
