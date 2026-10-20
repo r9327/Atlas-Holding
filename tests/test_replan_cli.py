@@ -41,7 +41,7 @@ class OperatorRoadmapCliTests(unittest.TestCase):
 
     def run_cli(self, action: str, *, expect=0):
         args = ["--db", str(self.db), action]
-        if action in {"import", "replan"}:
+        if action in {"import", "replan", "direction"}:
             args.extend(["--roadmap-file", str(self.path),
                          "--source", "operator:direction"])
         output = io.StringIO()
@@ -65,6 +65,20 @@ class OperatorRoadmapCliTests(unittest.TestCase):
         closure = self.run_cli("closure", expect=1)
         self.assertFalse(closure["ready"])
         self.assertEqual(closure["reason"], "ROADMAP_REQUIREMENTS_UNPROVEN")
+
+    def test_new_direction_needs_only_new_goals_not_entire_roadmap(self):
+        self.path.write_text(FIRST, encoding="utf-8")
+        self.run_cli("import")
+        delta = ("Repository: r9327/Dof-Atlas\\n"
+                 "## b\\nOperation: code\\nDepends_on: a\\n"
+                 "Acceptance:\\n- Pass second contract\\n")
+        self.path.write_text(delta, encoding="utf-8")
+        result = self.run_cli("direction")
+        self.assertEqual(result["added"], ["b"])
+        self.assertEqual(result["preserved"], ["a"])
+        self.assertEqual(len(self.run_cli("coverage")["requirements_total"].__str__()), 1)
+        with StateStore(self.db) as state:
+            self.assertEqual(len(state.missions()), 2)
 
     def test_replan_same_text_is_noop_after_restart(self):
         self.path.write_text(FIRST, encoding="utf-8")
