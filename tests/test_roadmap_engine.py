@@ -22,6 +22,7 @@ class ImportTests(unittest.TestCase):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.path=Path(self.tmp.name)/'state.sqlite'
         self.store=StateStore(self.path);self.addCleanup(self.store.close)
+        self.addCleanup(lambda: self.store.close())  # close reopened handles on Windows
         self.importer=RoadmapImporter(self.store)
     def test_atomic_import_with_dependencies(self):
         result=self.importer.import_text(roadmap([task('a'),task('b',['a']),task('c')]),source='user:1')
