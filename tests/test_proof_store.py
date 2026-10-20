@@ -63,6 +63,38 @@ class ProofStoreTests(unittest.TestCase):
         self.assertEqual(self.store.missions()[0].state, "QA_PENDING")
         self.assertEqual(self.store.claim_next(online=False).action, "WAIT")
 
+    def test_control_pause_can_write_sqlite_while_artifact_is_verified(self):
+        receipt = self.signed_receipt()
+        original = self.verifier.verify
+        def independent_hash(*args, **kwargs):
+            verified = original(*args, **kwargs)
+            with StateStore(self.store.path) as control:
+                control.set_paused(True)
+            return verified
+        from unittest.mock import patch
+        with patch.object(self.verifier, "verify", side_effect=independent_hash):
+            with self.assertRaisesRegex(StoreError, "paused or stopped"):
+                self.verifier.apply(self.store, receipt, mission_id="first")
+        self.assertEqual(self.store.missions()[0].state, "QA_PENDING")
+        self.assertTrue(self.store.background_suspended())
+
+    def test_stale_candidate_change_during_checksum_is_rejected(self):
+        receipt = self.signed_receipt()
+        original = self.verifier.verify
+        def change_sha(*args, **kwargs):
+            verified = original(*args, **kwargs)
+            with StateStore(self.store.path) as control:
+                control.db.execute(
+                    "UPDATE missions SET candidate_sha=? WHERE id='first'",
+                    ("c" * 40,))
+            return verified
+        from unittest.mock import patch
+        with patch.object(self.verifier, "verify", side_effect=change_sha):
+            with self.assertRaisesRegex(StoreError, "changed during proof"):
+                self.verifier.apply(self.store, receipt, mission_id="first")
+        self.assertEqual(self.store.missions()[0].state, "QA_PENDING")
+        self.assertEqual(self.store.missions()[0].candidate_sha, "c" * 40)
+
     def test_signed_doctor_pass_is_advisory_not_final(self):
         receipt = self.signed_receipt(verdict="PASS", runner="doctor_atlas")
         with self.assertRaisesRegex(ProofError, "advisory"):

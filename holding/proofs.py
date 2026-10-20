@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import json
 from pathlib import Path
+from typing import Callable
 import re
 
 SHA = re.compile(r"^[a-f0-9]{40}$")
@@ -45,7 +46,10 @@ class ProofVerifier:
             raise ProofError("A protected 256-bit verifier secret is required")
         self.__key = secret
 
-    def verify(self, receipt_name: str, *, mission_id: str, sha: str) -> VerifiedProof:
+    def verify(self, receipt_name: str, *, mission_id: str, sha: str,
+               should_stop: Callable[[], bool] | None = None) -> VerifiedProof:
+        if should_stop is not None and should_stop():
+            raise ProofError("Evidence verification interrupted by controller")
         if not NAME.fullmatch(receipt_name) or not SHA.fullmatch(sha):
             raise ProofError("Invalid receipt identifier or SHA")
         receipt_file = self.root / receipt_name
@@ -90,9 +94,16 @@ class ProofVerifier:
             raise ProofError("Invalid evidence checksum")
         # Doctor artifacts may be large. Hash in bounded chunks so QA does
         # not cause unclassified Holding RAM spikes during regular coding.
+        if artifact.stat().st_size > 1024 ** 3:
+            raise ProofError("Evidence artifact exceeds 1 GiB limit")
         digest = hashlib.sha256()
         with artifact.open("rb") as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            while True:
+                if should_stop is not None and should_stop():
+                    raise ProofError("Evidence verification interrupted by controller")
+                chunk = stream.read(1024 * 1024)
+                if not chunk:
+                    break
                 digest.update(chunk)
         actual = digest.hexdigest()
         if not hmac.compare_digest(actual, payload["artifact_sha256"]):
@@ -107,21 +118,31 @@ class ProofVerifier:
         verifier secret or direct SQLite access to an LLM or code worker.
         """
         from .state_store import StoreError
+        if store.background_suspended():
+            raise StoreError("Holding paused or stopped; signed QA settlement deferred")
+        row = store.db.execute(
+            "SELECT candidate_sha FROM missions WHERE id=? AND state='QA_PENDING'",
+            (mission_id,),
+        ).fetchone()
+        if row is None or not SHA.fullmatch(row["candidate_sha"]):
+            raise StoreError("No pending candidate to validate")
+        candidate_sha = row["candidate_sha"]
+        # Hash potentially large artifacts OUTSIDE BEGIN IMMEDIATE. Otherwise
+        # a slow disk can prevent Pause/STOP for an unbounded time.
+        proof = self.verify(
+            receipt_name, mission_id=mission_id, sha=candidate_sha,
+            should_stop=store.background_suspended)
+        if proof.verdict == "PASS" and proof.runner != "github_certification":
+            raise ProofError("A local Doctor PASS is advisory, not final certification")
         with store._transaction():
             if store.background_suspended():
                 raise StoreError("Holding paused or stopped; signed QA settlement deferred")
-            row = store.db.execute(
+            current = store.db.execute(
                 "SELECT candidate_sha FROM missions WHERE id=? AND state='QA_PENDING'",
                 (mission_id,),
             ).fetchone()
-            if row is None or not SHA.fullmatch(row["candidate_sha"]):
-                raise StoreError("No pending candidate to validate")
-            proof = self.verify(receipt_name, mission_id=mission_id, sha=row["candidate_sha"])
-            # Local Doctor results are useful for correction, never for the
-            # final FULL certification gate. Even a properly signed scoped
-            # Doctor PASS must not unlock dependent work as certified.
-            if proof.verdict == "PASS" and proof.runner != "github_certification":
-                raise ProofError("A local Doctor PASS is advisory, not final certification")
+            if current is None or current["candidate_sha"] != proof.sha:
+                raise StoreError("QA candidate changed during proof verification")
             store.db.execute("""CREATE TABLE IF NOT EXISTS signed_proofs (
                 mission_id TEXT PRIMARY KEY REFERENCES missions(id),
                 candidate_sha TEXT NOT NULL,
