@@ -110,6 +110,16 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(self.store.missions()[0].state, 'BLOCKED')
         self.assertEqual(self.claim().action, 'BLOCKED')
 
+    def test_real_checkpoint_resets_consecutive_no_progress_failures(self):
+        self.store.add_missions([Mission('a', REPO)])
+        self.assertEqual(self.claim().mission_id, 'a')
+        self.store.fail_running('a', 'transient failure')
+        self.assertEqual(self.store.missions()[0].failures_without_progress, 1)
+        self.assertEqual(self.claim().mission_id, 'a')
+        self.store.checkpoint('a', SHA)
+        self.assertEqual(self.store.missions()[0].failures_without_progress, 0)
+        self.assertEqual(self.store.missions()[0].state, 'QA_PENDING')
+
     def test_independent_task_continues_when_other_blocked(self):
         self.store.add_missions([Mission('z', REPO, priority=10), Mission('a', REPO)])
         for i in range(3):
