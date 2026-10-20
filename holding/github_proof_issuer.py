@@ -91,8 +91,10 @@ class GitHubProofIssuer:
         if not self._isolation_check():
             raise GitHubEvidenceError("Trusted OS separation and ACLs have not been verified")
         full = observe_full_pr(self.client, pr_number)
-        if full.candidate_sha != expected_sha:
-            raise GitHubEvidenceError("PR moved since local exact-SHA checkpoint")
+        if (full.repository != self.client.repo or full.pr_number != pr_number
+                or full.status != "FULL_VERIFIED_BY_GITHUB"
+                or full.candidate_sha != expected_sha):
+            raise GitHubEvidenceError("Independent GitHub identity or SHA mismatch")
         # This matches Holding Core's receipt_name() without importing the
         # other Draft PR before their dependencies are merged.
         identity = hashlib.sha256(mission_id.encode("utf-8")).hexdigest()[:20]
