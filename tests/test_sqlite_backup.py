@@ -1,3 +1,4 @@
+from contextlib import closing
 import sqlite3
 import tempfile
 from pathlib import Path
@@ -27,7 +28,7 @@ class SQLiteBackupTests(unittest.TestCase):
         backup = self.snapshot()
         self.assertEqual(len(backup.digest), 64)
         restored = restore_snapshot(backup.database, self.root / "restored.sqlite")
-        with sqlite3.connect(restored) as db:
+        with closing(sqlite3.connect(restored)) as db:
             self.assertEqual(db.execute("SELECT payload FROM checkpoints").fetchone()[0], "after-crash")
             self.assertEqual(db.execute("PRAGMA integrity_check").fetchone()[0], "ok")
 

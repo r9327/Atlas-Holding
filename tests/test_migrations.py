@@ -1,3 +1,4 @@
+from contextlib import closing
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -25,7 +26,7 @@ class MigrationTests(unittest.TestCase):
         self.assertIsNotNone(upgrade.backup)
         self.assertEqual(self.store.db.execute('PRAGMA user_version').fetchone()[0],1)
         restore=restore_snapshot(upgrade.backup.database,self.root/'restored.sqlite')
-        with sqlite3.connect(restore) as db:
+        with closing(sqlite3.connect(restore)) as db:
             self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0],0)
             self.assertEqual(db.execute("SELECT id FROM missions").fetchone()[0],'one')
 
