@@ -28,10 +28,12 @@ class Tick:
 
 
 class HoldingEngine:
-    def __init__(self, db_path: str | Path, worker: Worker, *, online: Callable[[], bool]):
+    def __init__(self, db_path: str | Path, worker: Worker, *, online: Callable[[], bool],
+                 supported_operations: frozenset[str] | None = None):
         self.store = StateStore(db_path)
         self.worker = worker
         self.online = online
+        self.supported_operations = supported_operations
         self._stop = threading.Event()
         self._started = False
         self.lease = DaemonLease(db_path)
@@ -87,7 +89,8 @@ class HoldingEngine:
             return Tick('STOPPED', None, 'Stop requested')
         self.lease.assert_owned()
         try:
-            choice = self.store.claim_next(online=bool(self.online()), lease_owner=self.lease.owner)
+            choice = self.store.claim_next(online=bool(self.online()), lease_owner=self.lease.owner,
+                                           supported_operations=self.supported_operations)
         except StoreError as exc:
             if str(exc) == 'DAEMON_LEASE_LOST':
                 self._stop.set()
