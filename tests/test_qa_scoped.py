@@ -143,7 +143,7 @@ class ScopedDoctorRunnerTests(unittest.TestCase):
                 REPO, frozenset({"code", "local_test"}), int(time.time()) + 1000))
             self.assertEqual(state.claim_next(online=False).mission_id, "mission")
             state.checkpoint("mission", SHA)
-            with patch("holding.qa_scoped.subprocess.run",
+            with patch("holding.qa_scoped._run_limited_doctor",
                        side_effect=self._write_successful_report):
                 result = self.runner.run_pending(state, "mission")
             self.assertEqual(result.status, "SCOPED_TESTS_PASS")

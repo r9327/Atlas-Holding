@@ -137,6 +137,20 @@ else:
         with self.assertRaisesRegex(CodePlanError,'modified worktree'):worker(Mission('job',REPO))
         self.assertFalse((self.root/'trees'/'job'/'src'/'feature.py').exists())
 
+    def test_pause_during_model_response_prevents_any_patch_write(self):
+        worker = self.worker(self.plan())
+        original = worker.agent.request
+        def paused_reply(action, payload, *, cwd):
+            result = original(action, payload, cwd=cwd)
+            if action == 'plan_patch':
+                self.store.set_paused(True)
+            return result
+        worker.agent.request = paused_reply
+        from holding.process_agent import AgentInterrupted
+        with self.assertRaises(AgentInterrupted):
+            worker(Mission('job', REPO))
+        self.assertFalse((self.root/'trees'/'job'/'src'/'feature.py').exists())
+
     def test_no_healthy_worker_makes_no_git_changes(self):
         worker=self.worker(self.plan(),ready=False)
         self.assertFalse(worker.ready())

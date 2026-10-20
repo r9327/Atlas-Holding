@@ -16,7 +16,7 @@ import time
 from .autonomy import Mission
 from .executor import AuthorizedGit
 from .git_worktree import GitSafetyError
-from .process_agent import LocalProcessAgent, AgentProcessError
+from .process_agent import LocalProcessAgent, AgentProcessError, AgentInterrupted
 
 _SAFE_PATH = re.compile(r'^[A-Za-z0-9_./-]{1,160}$')
 _FORBIDDEN_PARTS = {'.git', '.github', '.env', 'secrets', 'tokens', 'credentials'}
@@ -175,6 +175,11 @@ class LocalCodeWorker:
             raise CodePlanError('Agent response contains unsupported actions')
         plan = response['plan']
         files = self._files(plan, worktree.path)
+        # The operator may have pressed Pause/STOP while the local model
+        # generated its plan. No writes, even temporary files, after that.
+        if self.git.store.background_suspended():
+            raise AgentInterrupted('Controller suspended before patch application')
+        self.git._require(mission.id, 'code', 'commit')
         digest = hashlib.sha256(json.dumps(plan, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         # Validation finishes before the first write. Failures after writes are
         # quarantined; never reset an uncertain worktree or retry a commit blindly.

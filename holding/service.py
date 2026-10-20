@@ -99,7 +99,7 @@ class HoldingService:
         last_fence_check = [0.0]
         last_resource_check = [0.0]
         def should_stop_agent() -> bool:
-            if service._stop.is_set() or service.engine._stop_requested():
+            if service._stop.is_set() or service.engine.store.background_suspended():
                 return True
             # Health probes run before acquiring the daemon lease. Once
             # started, revoke execution quickly if another daemon takes over.
@@ -194,6 +194,9 @@ class HoldingService:
             # Persistent STOP is never delayed by resource pressure or a dead model.
             if self.engine._stop_requested():
                 result = Tick("STOPPED", None, "Stop requested")
+            elif self.engine.store._paused():
+                # Do not even start health probes or models during Pause.
+                result = Tick("WAIT", None, "Holding paused")
             else:
                 resources = self.resource_guard.check()
                 if not resources.safe:

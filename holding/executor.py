@@ -29,8 +29,8 @@ class AuthorizedGit:
         job = rows[0]
         if job.repo != self.git.repository:
             raise GitSafetyError('Mission repository differs from canonical Git repository')
-        if self.store._paused():
-            raise GitSafetyError('Execution paused')
+        if self.store.background_suspended():
+            raise GitSafetyError('Execution paused or stopped')
         now = int(time.time())
         grants = self.store._grants()
         for op in operations:

@@ -75,5 +75,11 @@ class AuthorizedGitTests(unittest.TestCase):
     def test_pause_refuses_operations(self):
         self.grant('code');self.claim();self.store.set_paused(True)
         with self.assertRaises(GitSafetyError):self.actor.create('one')
+    def test_stop_refuses_git_even_if_mission_is_already_claimed(self):
+        self.grant('code','commit');self.claim()
+        self.store.db.execute(
+            "INSERT INTO settings(key,value) VALUES('stop_requested','1')")
+        with self.assertRaisesRegex(GitSafetyError,'stopped'):
+            self.actor.create('one')
 
 if __name__=='__main__':unittest.main()

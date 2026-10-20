@@ -55,6 +55,9 @@ have not been executed in this session. All checks are pending, not PASS.
 **Pause/STOP gate:** the SQLite dispatcher must not claim new scoped tests
 while paused/stopped; direct test runs and signed-proof settlement must also
 refuse work under the same durable controls. An in-flight scoped check cannot
-persist an advisory if suspension was recorded before settlement. This is a
-source/test contract pending executable CI and Windows verification; it does
-not claim instant termination of a running test process.
+persist an advisory if suspension was recorded before settlement. The coding
+agent is preempted on pause, and its returned patch plan is re-authorized
+before any file write. Authorized Git refuses stopped work; the service does not
+launch fresh health checks while paused. These are source/test contracts pending
+executable CI and Windows verification; they do not claim instant termination
+of a scoped Doctor process already running.
