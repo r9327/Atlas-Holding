@@ -107,6 +107,14 @@ class CoverageTests(unittest.TestCase):
             self.assertFalse(report.ready_to_close)
             self.assertEqual(len(control.requirement_page(limit=3)), 3)
 
+    def test_untracked_legacy_mission_cannot_be_silently_omitted(self):
+        from holding.autonomy import Mission
+        self.store.add_missions([Mission("untracked", REPO)])
+        summary = RequirementCoverage(self.store).summary()
+        self.assertEqual(summary.missions_total, 3)
+        self.assertEqual(summary.unmapped_missions, 1)
+        self.assertFalse(summary.ready_to_close)
+
     def test_missing_or_corrupt_mapping_is_never_proven(self):
         self.store.db.execute(
             "UPDATE mission_specs SET spec_json='{}' WHERE id='step-a'")
