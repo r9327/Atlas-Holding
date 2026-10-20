@@ -92,6 +92,10 @@ class QaRepairCoordinator:
         # Recheck all mutable conditions under a daemon-fenced SQL transaction.
         with self.store._transaction():
             self.store._assert_daemon_fence(self.lease.owner)
+            stop = self.store.db.execute(
+                "SELECT value FROM settings WHERE key='stop_requested'").fetchone()
+            if self.store._paused() or (stop is not None and stop[0] == "1"):
+                return RepairDecision("PAUSED", mid, "Operator paused during QA inspection")
             current = self.store.db.execute("""
                 SELECT m.candidate_sha,p.verdict,p.candidate_sha AS proof_sha
                   FROM missions m JOIN signed_proofs p ON p.mission_id=m.id
