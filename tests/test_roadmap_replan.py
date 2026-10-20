@@ -117,6 +117,13 @@ class RoadmapReplanTests(unittest.TestCase):
             self.replan.apply(document(modified, B), source="unsafe")
         self.assertEqual(self.store.missions()[0].operation, "code")
 
+    def test_original_import_api_rejects_replay_after_revision(self):
+        newer = dict(B, acceptance=["B verified by regression tests"])
+        self.replan.apply(document(A, newer), source="changed")
+        with self.assertRaisesRegex(StoreError, "Stale roadmap version"):
+            RoadmapImporter(self.store).import_text(
+                document(A, B), source="old-import-replay")
+
     def test_replay_of_old_roadmap_version_cannot_undo_revision(self):
         b2 = dict(B, acceptance=["New B requirement"])
         self.replan.apply(document(A, b2), source="new")
