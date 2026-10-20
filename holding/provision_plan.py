@@ -64,6 +64,8 @@ def make_plan(snapshot: Inventory, *, online: bool) -> ProvisionPlan:
         state = "BLOCKED"
     elif any(item.action == "REPAIR" for item in items):
         state = "REPAIR_REQUIRED"
+    elif any(item.action == "INSPECT" for item in items):
+        state = "INSPECTION_REQUIRED"
     elif any(item.action in ("INSTALL", "BENCHMARK_OR_DOWNLOAD") for item in items):
         state = "PROVISIONING_REQUIRED"
     else:
