@@ -117,19 +117,30 @@ class GitJournal:
             return self._load(mission_id, key)
 
     def inspect_recovery(self, mission_id: str, key: str) -> str:
-        """APPLIED / NOT_APPLIED / INSPECT_REQUIRED; NEVER automatically rerun."""
+        """Inspect Git outside SQLite write locks; reconcile using a fenced CAS.
+
+        Git may stall for many seconds. Never hold BEGIN IMMEDIATE while
+        waiting on an external child or block a Control Center Pause/STOP.
+        """
         with self.store._transaction():
             self.store._assert_daemon_fence(self.lease_owner)
             old = self._load(mission_id, key)
             if old is None:
                 raise StoreError('Unknown Git operation')
-            result = self._verify(old)
+        # Potentially slow/untrusted filesystem work WITHOUT a SQLite write
+        # transaction. Concurrent control actions remain responsive.
+        result = self._verify(old)
+        sha = ''
+        if old.status != 'APPLIED' and result == 'APPLIED':
+            sha = (old.base_sha if old.kind == 'CREATE'
+                   else self.git.inspect(mission_id).base_sha)
+        with self.store._transaction():
+            self.store._assert_daemon_fence(self.lease_owner)
+            if self._load(mission_id, key) != old:
+                raise StoreError('Git journal changed during recovery inspection')
             if old.status == 'APPLIED':
                 return result
             if result == 'APPLIED':
-                sha = self.git.inspect(mission_id).base_sha
-                if old.kind == 'CREATE':
-                    sha = old.base_sha
                 self.store.db.execute("""UPDATE git_operations SET state='APPLIED',
                     result_sha=?,updated_epoch=? WHERE mission_id=? AND operation_key=?""",
                     (sha, int(time.time()), mission_id, key))

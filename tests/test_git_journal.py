@@ -157,6 +157,37 @@ class GitJournalTests(unittest.TestCase):
                 self.assertEqual(db.missions()[0].state, 'RECOVERY_REQUIRED')
                 self.assertEqual(git(tree.path, 'rev-parse', 'HEAD'), saved_sha)
 
+    def test_git_recovery_does_not_hold_sqlite_writer_lock(self):
+        self.actor.create('job')
+        journal = self.actor.journal
+        def inspect_while_operator_changes_settings(old):
+            # A distinct connection is allowed to commit an operator command
+            # while potentially slow Git inspection is still in progress.
+            with StateStore(self.dbpath) as control:
+                control.set_paused(True)
+                self.assertTrue(control.background_suspended())
+            return 'APPLIED'
+        with patch.object(journal, '_verify',
+                          side_effect=inspect_while_operator_changes_settings):
+            self.assertEqual(journal.inspect_recovery('job', 'worktree-create-v1'),
+                             'APPLIED')
+        self.assertTrue(self.store.background_suspended())
+
+    def test_journal_mutated_while_inspecting_refuses_stale_result(self):
+        self.actor.create('job')
+        journal = self.actor.journal
+        def concurrent_update(old):
+            with StateStore(self.dbpath) as control:
+                with control._transaction():
+                    control.db.execute(
+                        "UPDATE git_operations SET updated_epoch=updated_epoch+1 "
+                        "WHERE mission_id=? AND operation_key=?",
+                        (old.mission_id, old.key))
+            return 'APPLIED'
+        with patch.object(journal, '_verify', side_effect=concurrent_update):
+            with self.assertRaisesRegex(StoreError, 'changed during recovery'):
+                journal.inspect_recovery('job', 'worktree-create-v1')
+
     def test_lost_lease_refuses_new_git_operation(self):
         self.lease.release()
         with self.assertRaises(Exception):
