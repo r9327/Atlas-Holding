@@ -195,6 +195,12 @@ class ScopedDoctorRunner:
             "AND state='QA_PENDING'", (mission_id, self.git.repository)).fetchone()
         if row is None or not _SHA.fullmatch(row["candidate_sha"]):
             raise StoreError("Only a QA_PENDING mission with real SHA can be checked")
+        # A code grant is not permission to execute tests. This distinction
+        # is enforced by the trusted supervisor, never a prompt or roadmap.
+        import time
+        if not any(grant.allows(self.git.repository, "local_test", int(time.time()))
+                   for grant in store._grants()):
+            raise StoreError("No active exact-repository local_test permission")
         result = self.run(mission_id, row["candidate_sha"])
         with store._transaction():
             current = store.db.execute(
