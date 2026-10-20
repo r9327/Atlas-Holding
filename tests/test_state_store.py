@@ -14,6 +14,8 @@ class StoreTests(unittest.TestCase):
         self.path = Path(self.temp.name) / 'holding.sqlite'
         self.store = StateStore(self.path)
         self.addCleanup(self.store.close)
+        # Track the current handle too: restart tests replace self.store.
+        self.addCleanup(lambda: self.store.close())
         self.store.grant_for_onboarding(StandingGrant(REPO, frozenset({'code'}), 1000000))
 
     def claim(self):
