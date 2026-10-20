@@ -1,1 +1,1 @@
-"""Atlas Holding Control Center contracts."""
+"""Atlas Holding foundational policy and Control Center contracts."""
