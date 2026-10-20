@@ -19,6 +19,7 @@ class ControlSnapshot:
     mission_counts: dict[str, int]
     last_event_seq: int
     scoped_qa_counts: dict[str, int] = field(default_factory=dict)
+    repair_counts: dict[str, int] = field(default_factory=dict)
 
 
 class ControlPlane:
@@ -50,7 +51,26 @@ class ControlPlane:
         last = self.store.db.execute("SELECT COALESCE(MAX(seq),0) FROM events").fetchone()[0]
         return ControlSnapshot(self._setting("paused"), self._setting("stop_requested"),
                                lease is not None and lease["expires_epoch"] > int(time.time()),
-                               counts, last, self.scoped_qa_counts())
+                               counts, last, self.scoped_qa_counts(),
+                               self.qa_repair_counts())
+
+    def qa_repair_counts(self) -> dict[str, int]:
+        """Show actual durable QA retries, never projected completion."""
+        present = self.store.db.execute(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' "
+            "AND name='qa_repair_attempts'").fetchone()[0]
+        if not present:
+            return {}
+        row = self.store.db.execute(
+            "SELECT COUNT(*) AS total, COUNT(DISTINCT mission_id) AS tasks "
+            "FROM qa_repair_attempts").fetchone()
+        blocked = self.store.db.execute("""
+            SELECT COUNT(*) FROM missions m
+            WHERE m.state='BLOCKED' AND EXISTS (
+                SELECT 1 FROM qa_repair_attempts r WHERE r.mission_id=m.id)
+        """).fetchone()[0]
+        return {"attempts": int(row["total"]), "missions": int(row["tasks"]),
+                "blocked": int(blocked)}
 
     def scoped_qa_counts(self) -> dict[str, int]:
         """Advisory-only status for the UI, never a certification badge."""
