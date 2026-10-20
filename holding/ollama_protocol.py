@@ -108,6 +108,10 @@ def _snapshot(root: Path, *, keywords=()) -> list[dict]:
     Limits prevent a large repository from causing a RAM spike during coding.
     No keyword ever bypasses the private-path or symlink exclusions.
     """
+    # Windows temp paths can contain 8.3 aliases (RUNNER~1) while
+    # Path.resolve() returns canonical long paths. Resolve both sides before
+    # containment checks or every safe file may be rejected as "outside".
+    root = root.resolve(strict=True)
     stopwords = {'the', 'and', 'for', 'from', 'with', 'into', 'should',
                  'must', 'add', 'fix', 'code', 'file', 'test', 'dans',
                  'pour', 'avec', 'une', 'des', 'les', 'sur'}
