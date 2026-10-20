@@ -120,6 +120,11 @@ class ControlPlane:
         from .roadmap_replan import SafeRoadmapReplanner
         return SafeRoadmapReplanner(self.store).preview(raw)
 
+    def preview_roadmap_direction(self, raw: str):
+        """Classify one additional direction before its atomic append."""
+        from .roadmap_replan import SafeRoadmapReplanner
+        return SafeRoadmapReplanner(self.store).preview_direction(raw)
+
     def append_roadmap_direction(self, raw: str, *, source: str):
         """Add user directions without requiring all old roadmap tasks again."""
         from .roadmap_replan import SafeRoadmapReplanner
