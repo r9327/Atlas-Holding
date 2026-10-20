@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from typing import Callable
 import re
 import signal
 import subprocess
@@ -37,7 +38,8 @@ class DoctorAdvice:
 
 
 def _run_bounded_planning(command: list[str], *, cwd: Path,
-                          timeout_seconds: int) -> tuple[int, bytes]:
+                          timeout_seconds: int,
+                          should_stop: Callable[[], bool] | None = None) -> tuple[int, bytes]:
     """Execute plan-only Doctor with bounded output and a contained process tree.
 
     A timeout on subprocess.run() kills its direct child only: helpers may
@@ -70,6 +72,8 @@ def _run_bounded_planning(command: list[str], *, cwd: Path,
             if job is not None:
                 job.attach(proc)
             while proc.poll() is None:
+                if should_stop is not None and should_stop():
+                    raise DoctorPlanError("Doctor planning interrupted by controller")
                 if time.monotonic() - started > timeout_seconds:
                     raise DoctorPlanError("Doctor planning exceeded deadline")
                 if os.fstat(output.fileno()).st_size > _MAX_REPORT:
@@ -115,7 +119,8 @@ class DoctorPlanner:
         self.interpreter = interpreter
         self.timeout_seconds = timeout_seconds
 
-    def plan(self, mission_id: str, candidate_sha: str) -> DoctorAdvice:
+    def plan(self, mission_id: str, candidate_sha: str, *,
+             should_stop: Callable[[], bool] | None = None) -> DoctorAdvice:
         if not _SHA.fullmatch(candidate_sha):
             raise DoctorPlanError('Exact candidate SHA required')
         work = self.git.inspect(mission_id)
@@ -156,8 +161,10 @@ class DoctorPlanner:
                'certify', '--base-ref', main_sha,
                '--expected-sha', candidate_sha, '--json']
         try:
-            exit_code, raw = _run_bounded_planning(
-                cmd, cwd=work.path, timeout_seconds=self.timeout_seconds)
+            options = {"cwd": work.path, "timeout_seconds": self.timeout_seconds}
+            if should_stop is not None:
+                options["should_stop"] = should_stop
+            exit_code, raw = _run_bounded_planning(cmd, **options)
         except (OSError, subprocess.SubprocessError) as exc:
             raise DoctorPlanError('Doctor planning process failed') from exc
         try:

@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from typing import Callable
 import re
 import subprocess
 import tempfile
@@ -41,7 +42,8 @@ class ScopedQaResult:
 
 
 def _run_limited_doctor(command: list[str], *, cwd: Path,
-                        timeout_seconds: int) -> tuple[int, bytes]:
+                        timeout_seconds: int,
+                        should_stop: Callable[[], bool] | None = None) -> tuple[int, bytes]:
     """Time/output-bound process tree: never buffer arbitrary test output in RAM."""
     environment = {key: value for key, value in os.environ.items()
                    if key.upper() in {"PATH", "SYSTEMROOT", "WINDIR", "TEMP",
@@ -65,6 +67,8 @@ def _run_limited_doctor(command: list[str], *, cwd: Path,
             if job is not None:
                 job.attach(proc)
             while proc.poll() is None:
+                if should_stop is not None and should_stop():
+                    raise ScopedQaError("Scoped Doctor interrupted by controller")
                 if time.monotonic() - start > timeout_seconds:
                     raise ScopedQaError("Scoped Doctor timed out")
                 if os.fstat(output.fileno()).st_size > _MAX_REPORT:
@@ -119,14 +123,19 @@ class ScopedDoctorRunner:
         self.interpreter = interpreter
         self.timeout_seconds = timeout_seconds
 
-    def run(self, mission_id: str, candidate_sha: str) -> ScopedQaResult:
+    def run(self, mission_id: str, candidate_sha: str, *,
+            should_stop: Callable[[], bool] | None = None) -> ScopedQaResult:
         if not isinstance(candidate_sha, str) or not _SHA.fullmatch(candidate_sha):
             raise ScopedQaError("An exact lowercase candidate SHA is required")
         # Reuse existing Doctor planning gates: trust-boundary modifications,
         # stale comparison base, dirty checkouts and missing Doctor are rejected.
         try:
-            advice = DoctorPlanner(self.git, self.interpreter).plan(
-                mission_id, candidate_sha)
+            preflight = DoctorPlanner(self.git, self.interpreter)
+            if should_stop is None:
+                advice = preflight.plan(mission_id, candidate_sha)
+            else:
+                advice = preflight.plan(
+                    mission_id, candidate_sha, should_stop=should_stop)
         except (DoctorPlanError, GitSafetyError) as exc:
             raise ScopedQaError("Trusted Doctor preflight failed") from exc
         tree = self.git.inspect(mission_id)
@@ -147,8 +156,10 @@ class ScopedDoctorRunner:
         # The caller must be a separately sandboxed/unprivileged supervisor.
         # Keep stdout and descendants bounded, even for malicious test code.
         try:
-            return_code, raw = _run_limited_doctor(
-                cmd, cwd=tree.path, timeout_seconds=self.timeout_seconds)
+            options = {"cwd": tree.path, "timeout_seconds": self.timeout_seconds}
+            if should_stop is not None:
+                options["should_stop"] = should_stop
+            return_code, raw = _run_limited_doctor(cmd, **options)
         except (OSError, subprocess.SubprocessError) as exc:
             raise ScopedQaError("Scoped Doctor execution failed") from exc
         if not raw or len(raw) > _MAX_REPORT:
@@ -205,7 +216,9 @@ class ScopedDoctorRunner:
         if not any(grant.allows(self.git.repository, "local_test", int(time.time()))
                    for grant in store._grants()):
             raise StoreError("No active exact-repository local_test permission")
-        result = self.run(mission_id, row["candidate_sha"])
+        result = self.run(
+            mission_id, row["candidate_sha"],
+            should_stop=store.background_suspended)
         with store._transaction():
             if store.background_suspended():
                 raise StoreError("Holding paused or stopped during scoped QA")

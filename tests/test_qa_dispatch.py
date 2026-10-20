@@ -48,13 +48,15 @@ class ScopedQaDispatchTests(unittest.TestCase):
             second = self.dispatch.tick(now_epoch=self.now)
         self.assertEqual(first.action, "SCOPED_TESTS_PASS")
         self.assertEqual(second.action, "IDLE")
-        run.assert_called_once_with("first", SHA)
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args, ("first", SHA))
+        self.assertTrue(callable(run.call_args.kwargs["should_stop"]))
         self.assertEqual(self.db.missions()[0].state, "QA_PENDING")
         self.assertEqual(self.db.missions()[0].evidence_sha, "")
 
     def test_second_dispatcher_cannot_claim_in_flight_same_sha(self):
         second = ScopedQaDispatcher(self.db, self.runner)
-        def checking_run(*args):
+        def checking_run(*args, **kwargs):
             self.assertEqual(second.tick(now_epoch=self.now).action, "IDLE")
             return self.advice()
         with patch.object(self.runner, "run", side_effect=checking_run):
@@ -103,7 +105,9 @@ class ScopedQaDispatchTests(unittest.TestCase):
                              "SCOPED_TESTS_PASS")
             self.assertEqual(self.dispatch.tick(now_epoch=self.now).action,
                              "IDLE")
-        run.assert_called_once_with("first", SHA)
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args, ("first", SHA))
+        self.assertTrue(callable(run.call_args.kwargs["should_stop"]))
 
     def test_git_inspection_error_is_bounded_retry(self):
         from holding.git_worktree import GitSafetyError
@@ -143,7 +147,7 @@ class ScopedQaDispatchTests(unittest.TestCase):
             run.assert_called_once()
 
     def test_pause_during_runner_discards_claim_without_false_advisory(self):
-        def suspend_during_run(*_args):
+        def suspend_during_run(*_args, **_kwargs):
             self.db.set_paused(True)
             return self.advice()
         with patch.object(self.runner, "run", side_effect=suspend_during_run):

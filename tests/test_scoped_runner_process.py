@@ -43,6 +43,15 @@ class ScopedRunnerProcessTests(unittest.TestCase):
                 cwd=self.root, timeout_seconds=5)
         self.assertLess(time.monotonic() - start, 4)
 
+    def test_live_pause_interrupts_scoped_qa(self):
+        started = time.monotonic()
+        with self.assertRaisesRegex(ScopedQaError, "interrupted by controller"):
+            _run_limited_doctor(
+                [sys.executable, "-c", "import time;time.sleep(20)"],
+                cwd=self.root, timeout_seconds=10,
+                should_stop=lambda: time.monotonic() - started >= .2)
+        self.assertLess(time.monotonic() - started, 4)
+
     def test_stalled_child_hits_timeout(self):
         start = time.monotonic()
         with self.assertRaisesRegex(ScopedQaError, "timed out"):

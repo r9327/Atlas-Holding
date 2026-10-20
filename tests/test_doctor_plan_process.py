@@ -43,6 +43,15 @@ class BoundedPlannerTests(unittest.TestCase):
                 cwd=self.root, timeout_seconds=5)
         self.assertLess(time.monotonic() - started, 4)
 
+    def test_live_pause_interrupts_planning(self):
+        started = time.monotonic()
+        with self.assertRaisesRegex(DoctorPlanError, "interrupted by controller"):
+            _run_bounded_planning(
+                [sys.executable, "-c", "import time;time.sleep(20)"],
+                cwd=self.root, timeout_seconds=10,
+                should_stop=lambda: time.monotonic() - started >= .2)
+        self.assertLess(time.monotonic() - started, 4)
+
     def test_hung_child_timeout_is_enforced(self):
         started = time.monotonic()
         with self.assertRaisesRegex(DoctorPlanError, "exceeded deadline"):
