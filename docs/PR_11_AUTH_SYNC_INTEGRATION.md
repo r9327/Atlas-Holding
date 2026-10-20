@@ -36,6 +36,10 @@ Cette PR Draft vérifie ensemble les contrats développés séparément dans :
     tous ses pins de fichiers, son spool absolu et son timeout. Il refuse les
     packages Python partiellement épinglés, revérifie les empreintes au chargement
     puis avant chaque IPC, active le rôle `push` et alimente sa santé via le broker.
+12. L'observation Git distante et le push exact-SHA traversent aussi ce même IPC.
+    Le broker reconstruit son propre `GitWorktrees` depuis sa configuration trusted,
+    résout l'unique `source_id`, refuse force/protected/dirty/divergent et conserve
+    le credential Git hors du daemon principal.
 
 ## Limites explicites
 
@@ -61,9 +65,9 @@ Cette PR Draft vérifie ensemble les contrats développés séparément dans :
   demeure volontairement local-only et ne peut pas muter GitHub.
 - Le code ne peut pas prouver à lui seul l'identité Windows qui lance la commande
   broker. Une installation réelle doit encore exécuter ce broker sous l'identité
-  et les ACL dédiées décrites ci-dessus. De plus, le `git push` borné utilise
-  actuellement Git sous l'identité du daemon : l'isolation d'un credential Git
-  minimal reste un prérequis de déploiement, pas une propriété déjà certifiée.
+  et les ACL dédiées décrites ci-dessus. Le schéma v2 route désormais le credential
+  API et le credential Git vers cette frontière, mais l'identité/ACL effective reste
+  un prérequis de déploiement natif, pas une propriété prouvable par un test Python.
 
 ## Contrats GitHub vérifiés
 

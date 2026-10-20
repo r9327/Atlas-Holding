@@ -13,6 +13,7 @@ from typing import Any
 
 from .github_full_evidence import FullEvidence, GitHubEvidenceError
 from .github_mutation_gate import GitHubMutationIntent
+from .git_push import GitPushState
 from .sync_coordinator import LiveGitHubState, MutationFailure
 
 
@@ -20,10 +21,12 @@ SCHEMA_VERSION = 1
 MAX_MESSAGE_BYTES = 64 * 1024
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _REQUEST_ACTIONS = frozenset({
-    "observe_account", "observe_pr", "observe_full", "mutate",
+    "observe_account", "observe_pr", "observe_full", "observe_git",
+    "mutate", "push_git",
 })
 _ACCOUNT = re.compile(
     r"^github:[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
+_SOURCE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 
 
 class GitHubAccountProbeError(RuntimeError):
@@ -326,6 +329,49 @@ class GitHubBrokerProcessControl:
                 "intent": asdict(intent), "idempotency_key": idempotency_key,
             }, mutation=True,
         )
+        if result:
+            raise MutationFailure(
+                "TRANSIENT_UNAVAILABLE", retryable=True, outcome_known=False)
+
+
+class BrokerGitPushControl:
+    """Exact-source Git observer/pusher executed by the privileged broker."""
+
+    def __init__(self, broker: GitHubBrokerProcessControl, source_id: str):
+        if (not isinstance(broker, GitHubBrokerProcessControl)
+                or not isinstance(source_id, str)
+                or not _SOURCE_ID.fullmatch(source_id)):
+            raise GitHubEvidenceError("Invalid privileged Git source")
+        self.broker = broker
+        self.source_id = source_id
+
+    def observe(self, repository: str, branch: str,
+                candidate_sha: str) -> GitPushState:
+        result = self.broker._invoke("observe_git", {
+            "source_id": self.source_id, "repository": repository,
+            "branch": branch, "candidate_sha": candidate_sha,
+        }, mutation=False)
+        if (set(result) != {
+                "repository", "branch", "candidate_sha", "remote_sha",
+                "fast_forward_safe"}
+                or not isinstance(result["repository"], str)
+                or not isinstance(result["branch"], str)
+                or not isinstance(result["candidate_sha"], str)
+                or (result["remote_sha"] is not None
+                    and not isinstance(result["remote_sha"], str))
+                or type(result["fast_forward_safe"]) is not bool):
+            raise GitHubEvidenceError("Invalid privileged Git observation")
+        return GitPushState(**result)
+
+    def push(self, intent: GitHubMutationIntent,
+             idempotency_key: str) -> None:
+        if (not isinstance(intent, GitHubMutationIntent)
+                or intent.operation != "github.push"):
+            raise MutationFailure("REJECTED", retryable=False, outcome_known=True)
+        result = self.broker._invoke("push_git", {
+            "source_id": self.source_id, "intent": asdict(intent),
+            "idempotency_key": idempotency_key,
+        }, mutation=True)
         if result:
             raise MutationFailure(
                 "TRANSIENT_UNAVAILABLE", retryable=True, outcome_known=False)

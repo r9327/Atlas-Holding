@@ -8,7 +8,8 @@ import unittest
 from unittest.mock import patch
 
 from holding.github_broker_protocol import (
-    BrokerFilePin, BrokerProcessConfig, GitHubBrokerProcessControl,
+    BrokerFilePin, BrokerGitPushControl, BrokerProcessConfig,
+    GitHubBrokerProcessControl,
 )
 from holding.github_full_evidence import GitHubEvidenceError
 from holding.github_mutation_gate import GitHubMutationIntent
@@ -38,6 +39,10 @@ elif action=="observe_full":
       "job_id":88,"status":"FULL_VERIFIED_BY_GITHUB"}
 elif action=="observe_account":
     result={"account_id":"github:r9327"}
+elif action=="observe_git":
+    result={"repository":payload["repository"],"branch":payload["branch"],
+      "candidate_sha":payload["candidate_sha"],"remote_sha":None,
+      "fast_forward_safe":True}
 else:
     result={}
 json.dump({"schema_version":1,"request_id":request["request_id"],
@@ -81,6 +86,16 @@ class GitHubBrokerProtocolTests(unittest.TestCase):
                 "GITHUB_TOKEN": "must-not-leak", "GH_TOKEN": "also-secret"}):
             self.control.mutate(intent, KEY)
 
+    def test_git_observation_and_push_stay_behind_same_pinned_broker(self):
+        control = BrokerGitPushControl(self.control, "mission-1")
+        state = control.observe(REPO, BRANCH, SHA)
+        self.assertEqual(
+            (state.repository, state.branch, state.candidate_sha),
+            (REPO, BRANCH, SHA))
+        intent = GitHubMutationIntent(
+            "github.push", REPO, BRANCH, SHA, None, "c" * 64, None)
+        control.push(intent, KEY)
+
     def test_changed_broker_file_is_refused_before_launch(self):
         self.script.write_text(SCRIPT + "\n# changed", encoding="utf-8")
         with self.assertRaisesRegex(GitHubEvidenceError, "pin mismatch"):
@@ -101,6 +116,24 @@ class GitHubBrokerProtocolTests(unittest.TestCase):
             "github.pr_ready", REPO, BRANCH, SHA, 42, "c" * 64, None)
         with self.assertRaises(MutationFailure) as raised:
             control.mutate(intent, KEY)
+        self.assertFalse(raised.exception.outcome_known)
+
+    def test_broker_crash_after_git_push_request_is_ambiguous(self):
+        self.script.write_text("raise SystemExit(7)\n", encoding="utf-8")
+        executable = Path(sys.executable).resolve()
+        config = BrokerProcessConfig(
+            command=(str(executable), str(self.script)),
+            file_pins=(
+                BrokerFilePin(executable, digest(executable)),
+                BrokerFilePin(self.script, digest(self.script)),
+            ), spool_root=self.root,
+        )
+        control = BrokerGitPushControl(
+            GitHubBrokerProcessControl(config), "mission-1")
+        intent = GitHubMutationIntent(
+            "github.push", REPO, BRANCH, SHA, None, "c" * 64, None)
+        with self.assertRaises(MutationFailure) as raised:
+            control.push(intent, KEY)
         self.assertFalse(raised.exception.outcome_known)
 
     def test_unpinned_python_code_argument_is_rejected(self):

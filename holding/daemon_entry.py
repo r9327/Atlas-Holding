@@ -16,7 +16,8 @@ import re
 
 from .git_worktree import GitWorktrees
 from .github_broker_protocol import (
-    BrokerFilePin, BrokerProcessConfig, GitHubBrokerProcessControl,
+    BrokerFilePin, BrokerGitPushControl, BrokerProcessConfig,
+    GitHubBrokerProcessControl,
 )
 from .github_full_evidence import GitHubEvidenceError
 from .process_agent import AgentProgram
@@ -216,6 +217,8 @@ class Installation:
             service.enable_git_push(
                 expected_account_id=self.github.account_id,
                 expected_policy_sha=self.github.policy_sha,
+                control_factory=lambda source_id: BrokerGitPushControl(
+                    control, source_id),
                 health_probe=control)
         return service
 

@@ -4,6 +4,7 @@ import unittest
 
 from holding.github_broker_protocol import SCHEMA_VERSION
 from holding.github_full_evidence import FullEvidence
+from holding.git_push import GitPushState
 from holding.github_mutation_gate import GitHubMutationIntent
 from holding.github_privileged_worker import handle_request
 from holding.github_privileged_transport import GitHubCredentialRejected
@@ -50,6 +51,27 @@ class FakeTransport:
         self.calls.append(("mutate", intent, idempotency_key))
         if self.failure:
             raise self.failure
+
+
+class FakeGitControl:
+    def __init__(self):
+        self.calls = []
+
+    def observe(self, repository, branch, candidate_sha):
+        self.calls.append(("observe", repository, branch, candidate_sha))
+        return GitPushState(repository, branch, candidate_sha, None, True)
+
+    def push(self, intent, idempotency_key):
+        self.calls.append(("push", intent, idempotency_key))
+
+
+def push_intent():
+    return {
+        "operation": "github.push", "repository": REPO,
+        "branch": BRANCH, "candidate_sha": SHA, "pr_number": None,
+        "authorization_sha256": "c" * 64, "evidence_run_id": None,
+        "executes_action": True, "certifies_quality": False,
+    }
 
 
 class PrivilegedWorkerTests(unittest.TestCase):
@@ -110,6 +132,45 @@ class PrivilegedWorkerTests(unittest.TestCase):
         self.assertEqual(set(response), {
             "schema_version", "request_id", "status", "code",
             "retryable", "outcome_known"})
+
+    def test_git_observe_and_push_use_exact_source_inside_broker(self):
+        transport = FakeTransport()
+        git = FakeGitControl()
+        factory_calls = []
+        def factory(source_id):
+            factory_calls.append(source_id)
+            return git
+        observed = json.loads(handle_request(request("observe_git", {
+            "source_id": "source-1", "repository": REPO,
+            "branch": BRANCH, "candidate_sha": SHA,
+        }), transport, git_control_factory=factory))
+        pushed = json.loads(handle_request(request("push_git", {
+            "source_id": "source-1", "intent": push_intent(),
+            "idempotency_key": KEY,
+        }), transport, git_control_factory=factory))
+        self.assertEqual(observed["result"]["candidate_sha"], SHA)
+        self.assertEqual(pushed["result"], {})
+        self.assertEqual(factory_calls, ["source-1", "source-1"])
+        self.assertEqual(git.calls[0], ("observe", REPO, BRANCH, SHA))
+        self.assertEqual(git.calls[1][0], "push")
+
+    def test_git_push_without_privileged_git_binding_is_rejected(self):
+        response = json.loads(handle_request(request("push_git", {
+            "source_id": "source-1", "intent": push_intent(),
+            "idempotency_key": KEY,
+        }), FakeTransport()))
+        self.assertEqual(response["code"], "REJECTED")
+        self.assertFalse(response["retryable"])
+        self.assertTrue(response["outcome_known"])
+
+    def test_unsafe_git_source_never_reaches_privileged_factory(self):
+        calls = []
+        response = json.loads(handle_request(request("observe_git", {
+            "source_id": "../canonical", "repository": REPO,
+            "branch": BRANCH, "candidate_sha": SHA,
+        }), FakeTransport(), git_control_factory=lambda source: calls.append(source)))
+        self.assertEqual(response["status"], "ERROR")
+        self.assertEqual(calls, [])
 
     def test_tampered_request_id_never_executes(self):
         transport = FakeTransport()

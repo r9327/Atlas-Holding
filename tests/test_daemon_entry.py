@@ -9,6 +9,7 @@ import unittest
 
 from holding.autonomy import Mission, StandingGrant
 from holding.daemon_entry import Installation, BootstrapError
+from holding.github_broker_protocol import BrokerGitPushControl
 from holding.state_store import StateStore
 from holding.roadmap_import import RoadmapImporter
 
@@ -94,6 +95,9 @@ json.dump({'schema_version':1,'request_id':r['request_id'],'status':'OK',
         with installation.build_service() as service:
             self.assertEqual(
                 service.worker.available_operations(), frozenset({'code', 'push'}))
+            push = service.worker._adapters['push']
+            self.assertIsInstance(
+                push.control_factory('source-1'), BrokerGitPushControl)
             self.assertIsNotNone(service._github_health)
             now = [100]
             service._github_health.clock = lambda: now[0]
