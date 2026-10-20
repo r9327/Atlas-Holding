@@ -53,8 +53,41 @@ class AuthorizationDecision:
     branch: str | None
     candidate_sha: str | None
     grant_sha256: str
+    policy_sha: str
+    decision_epoch: int
+    expires_at: int
     executes_action: bool = False
     certifies_quality: bool = False
+
+
+def serialize_github_authorization(decision: AuthorizationDecision) -> bytes:
+    """Return the canonical bounded receipt consumed by the GitHub gate."""
+    if (not isinstance(decision, AuthorizationDecision)
+            or decision.status != "AUTHORIZED_SCOPE_ONLY"
+            or decision.operation not in _SHA_OPERATIONS
+            or not isinstance(decision.branch, str)
+            or not isinstance(decision.candidate_sha, str)):
+        raise StandingGrantError("Expected an authorized GitHub decision")
+    payload = {
+        "schema_version": 1,
+        "status": decision.status,
+        "grant_id": decision.grant_id,
+        "account_id": decision.account_id,
+        "repository": decision.repository,
+        "operation": decision.operation,
+        "branch": decision.branch,
+        "candidate_sha": decision.candidate_sha,
+        "grant_sha256": decision.grant_sha256,
+        "policy_sha": decision.policy_sha,
+        "decision_epoch": decision.decision_epoch,
+        "expires_at": decision.expires_at,
+    }
+    raw = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+    ).encode("ascii")
+    if len(raw) > MAX_GRANT_BYTES:
+        raise StandingGrantError("Authorization receipt exceeds size limit")
+    return raw
 
 
 def _integer(value: Any, label: str) -> int:
@@ -163,5 +196,5 @@ def authorize_operation(
 
     return AuthorizationDecision(
         "AUTHORIZED_SCOPE_ONLY", grant_id, account_id, repository, operation,
-        branch, candidate_sha, digest,
+        branch, candidate_sha, digest, expected_policy_sha, now_epoch, expires_at,
     )

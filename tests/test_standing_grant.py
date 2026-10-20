@@ -2,7 +2,11 @@ import hashlib
 import json
 import unittest
 
-from holding.standing_grant import StandingGrantError, authorize_operation
+from holding.standing_grant import (
+    StandingGrantError,
+    authorize_operation,
+    serialize_github_authorization,
+)
 
 
 POLICY_SHA = "a" * 40
@@ -50,6 +54,32 @@ class StandingGrantTests(unittest.TestCase):
         self.assertEqual(decision.status, "AUTHORIZED_SCOPE_ONLY")
         self.assertFalse(decision.executes_action)
         self.assertFalse(decision.certifies_quality)
+
+    def test_github_decision_serializes_to_canonical_consumer_contract(self):
+        decision = authorize(grant())
+        first = serialize_github_authorization(decision)
+        second = serialize_github_authorization(decision)
+        self.assertEqual(first, second)
+        self.assertEqual(first.decode("ascii"), json.dumps({
+            "schema_version": 1,
+            "status": "AUTHORIZED_SCOPE_ONLY",
+            "grant_id": "grant-1",
+            "account_id": "github:r9327",
+            "repository": "r9327/Dof-Atlas",
+            "operation": "github.push",
+            "branch": "codex/lot-1",
+            "candidate_sha": CANDIDATE_SHA,
+            "grant_sha256": decision.grant_sha256,
+            "policy_sha": POLICY_SHA,
+            "decision_epoch": NOW,
+            "expires_at": NOW + 10_000,
+        }, sort_keys=True, separators=(",", ":")))
+
+    def test_non_github_decision_cannot_be_serialized_as_github_authority(self):
+        decision = authorize(
+            grant(), operation="repo.read", branch=None, candidate_sha=None)
+        with self.assertRaisesRegex(StandingGrantError, "GitHub decision"):
+            serialize_github_authorization(decision)
 
     def test_record_digest_is_bound_to_trusted_storage(self):
         payload = grant()
