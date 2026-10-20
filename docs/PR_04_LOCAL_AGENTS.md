@@ -1,6 +1,6 @@
 # PR 04 — Exécution IA locale de qualité (SPECIFICATION, NON IMPLEMENTEE)
 
-**But :** Ryzen 7 5800X, 32 Go RAM et RTX 3060 Ti 8 Go : qualité supérieure à la vitesse, modèle local unique chargé à un instant donné, pas d'abonnement obligatoire.
+**But :** Ryzen 7 5800X, 32 Go RAM et RTX 3060 Ti 8 Go : meilleur compromis qualité/temps **avec qualité, sécurité et non-régression comme critères bloquants**, modèle local unique chargé à un instant donné, pas d'abonnement obligatoire.
 
 ## Pipeline des rôles
 - CEO (décision de planification), architecte, codeur, auditeur, testeur/Doctor, intégrateur, **en alternance**, chacun avec contrat de sortie JSON strict et historique traçable.
@@ -27,6 +27,18 @@ La Holding ne doit jamais demander à l'utilisateur de choisir lui-même « Qwen
 - [ ] Benchmarks locaux reproductibles sur worktrees jetables : correctif rouge→vert, appel d'outil, respect des garde-fous, relecture d'anomalies et gestion d'incertitude.
 - [ ] Chaque score s'appuie sur des preuves non générées par les IA : tests, Doctor, diff et critères d'acceptation.
 - [ ] Routeur qui désigne codeur/auditeur automatiquement ; un deuxième modèle (facultatif) seulement si avantage validé, téléchargement autorisé et RAM suffisante.
-- [ ] Score prioritaire sur qualité, sécurité comme gate bloquant ; vitesse ne départage qu'en dernier pour le profil `QUALITY_FIRST`.
+- [ ] Profil **par défaut `BALANCED_VERIFIED`** : sécurités et tests d'acceptation comme gates bloquants, puis classement parmi les solutions conformes par qualité démontrée, temps réel, itérations et ressources. Profil optionnel `QUALITY_FIRST` pour les tâches justifiant un effort supplémentaire ; ne jamais conclure à la qualité sur la seule auto-note d'une IA.
 - [ ] Modèle devenu incompatible/OOM/timeout : réévaluer puis rollback ; pas de changement silencieux de modèle en plein commit.
 - [ ] Profil et résultats visibles depuis Control Center #8 et persistant en SQLite.
+
+## Efficacité adaptative, mémoire et apprentissage (décision utilisateur du 20/10/2026 — À IMPLÉMENTER)
+
+- [ ] Choix automatique des rôles : petite tâche → codeur et tests ciblés ; difficulté, criticité, faible confiance ou échecs → architecte/auditeur/Doctor supplémentaires selon gain mesuré. Ne pas payer le coût multi-agent systématiquement.
+- [ ] Routage par benchmark Atlas **reproductible** : succès fonctionnel et tests cachés en prérequis, puis temps jusqu'à résolution, nombre de corrections, consommation CPU/GPU/RAM et taux de régression ; comparaison sur tâches de difficulté comparable et versions/SHAs identifiées.
+- [ ] Mémoire technique **sourcée et invalidable** : conserver références aux fichiers/SHAs, diagnostics réussis ou échoués, solutions validées et zones impactées ; réutiliser uniquement les extraits pertinents ; invalider les faits périmés et interdire que la mémoire déclare un test PASS.
+- [ ] Après stagnation détectée par #3 : ne pas répéter la même stratégie ; produire un nouveau diagnostic testable, mobiliser outil/rôle différent seulement s'il apporte de l'information, ou passer BLOCKED avec justification et sauvegarde sûre.
+- [ ] Apprentissage prudent : préférer une stratégie seulement après amélioration confirmée sur jeux de tests indépendants et absence de régression ; conserver rollback, historique et comparaison avant/après. Aucune « auto-amélioration » fondée sur la satisfaction auto-déclarée du modèle.
+- [ ] Mesurer aussi la latence des transitions de modèles et le coût de contexte ; les budgets de temps sont des cibles de pilotage calibrées, jamais des raisons de sauter une vérification requise.
+- [ ] Tests : petit correctif sans cascade d'agents, échec répété basculant de stratégie, benchmark qui rejette une option rapide mais défectueuse, et absence d'escalade coûteuse si aucune plus-value démontrée.
+
+**Non certifié** : exigences nouvelles tant que les essais de bout en bout sur Atlas et Windows ne sont pas exécutés.
