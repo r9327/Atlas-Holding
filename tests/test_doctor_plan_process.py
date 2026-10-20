@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 from holding.doctor_plan import DoctorPlanError, _run_bounded_planning
 
@@ -62,12 +63,22 @@ class BoundedPlannerTests(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 4)
 
     def test_hung_child_timeout_is_enforced(self):
+        import subprocess
+        processes = []
+        real_popen = subprocess.Popen
+        def tracked(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            processes.append(process)
+            return process
         started = time.monotonic()
-        with self.assertRaisesRegex(DoctorPlanError, "exceeded deadline"):
-            _run_bounded_planning(
-                [sys.executable, "-c", "import time;time.sleep(20)"],
-                cwd=self.root, timeout_seconds=1)
+        with patch("holding.doctor_plan.subprocess.Popen", side_effect=tracked):
+            with self.assertRaisesRegex(DoctorPlanError, "exceeded deadline"):
+                _run_bounded_planning(
+                    [sys.executable, "-c", "import time;time.sleep(20)"],
+                    cwd=self.root, timeout_seconds=1)
         self.assertLess(time.monotonic() - started, 4)
+        self.assertTrue(processes)
+        self.assertTrue(all(process.poll() is not None for process in processes))
 
 
 if __name__ == "__main__":

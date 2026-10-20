@@ -20,10 +20,19 @@ class AgentStdinBackpressureTests(unittest.TestCase):
             agent = LocalProcessAgent(
                 AgentProgram(Path(sys.executable).resolve(), (str(child),),
                              timeout_seconds=1, output_limit=2048))
+            processes = []
+            real_popen = subprocess.Popen
+            def tracked(*args, **kwargs):
+                process = real_popen(*args, **kwargs)
+                processes.append(process)
+                return process
             start = time.monotonic()
-            with self.assertRaisesRegex(AgentProcessError, 'timed out'):
-                agent.request("plan_patch", {"source": "x" * 60_000}, cwd=root)
+            with patch("holding.process_agent.subprocess.Popen", side_effect=tracked):
+                with self.assertRaisesRegex(AgentProcessError, 'timed out'):
+                    agent.request("plan_patch", {"source": "x" * 60_000}, cwd=root)
             self.assertLess(time.monotonic() - start, 4)
+            self.assertTrue(processes)
+            self.assertTrue(all(process.poll() is not None for process in processes))
 
     def test_child_stdin_is_seekable_file_not_bounded_pipe(self):
         with tempfile.TemporaryDirectory() as temp:

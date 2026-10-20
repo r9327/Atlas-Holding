@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 from holding.qa_scoped import _run_limited_doctor, ScopedQaError
 
@@ -62,12 +63,22 @@ class ScopedRunnerProcessTests(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 4)
 
     def test_stalled_child_hits_timeout(self):
+        import subprocess
+        processes = []
+        real_popen = subprocess.Popen
+        def tracked(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            processes.append(process)
+            return process
         start = time.monotonic()
-        with self.assertRaisesRegex(ScopedQaError, "timed out"):
-            _run_limited_doctor(
-                [sys.executable, "-c", "import time;time.sleep(10)"],
-                cwd=self.root, timeout_seconds=0.2)
+        with patch("holding.qa_scoped.subprocess.Popen", side_effect=tracked):
+            with self.assertRaisesRegex(ScopedQaError, "timed out"):
+                _run_limited_doctor(
+                    [sys.executable, "-c", "import time;time.sleep(10)"],
+                    cwd=self.root, timeout_seconds=0.2)
         self.assertLess(time.monotonic() - start, 3)
+        self.assertTrue(processes)
+        self.assertTrue(all(process.poll() is not None for process in processes))
 
 
 if __name__ == "__main__":

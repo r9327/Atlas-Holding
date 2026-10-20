@@ -113,6 +113,22 @@ class LocalProcessAgent:
             proc.kill()
             proc.wait(timeout=5)
 
+    @staticmethod
+    def _reap_after_job_close(proc: subprocess.Popen | None) -> None:
+        """Reap the root process after a Windows Job was terminated or closed.
+
+        Closing a kill-on-close Job requests termination of its members, but it
+        does not wait for the root ``Popen`` object.  Letting that object reach
+        ``__del__`` while Windows is still completing termination emits a
+        ResourceWarning and can retain a process handle longer than intended.
+        """
+        if proc is None:
+            return
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            LocalProcessAgent._stop_tree(proc)
+
     def request(self, action: str, payload: dict, *, cwd: Path) -> dict:
         self.last_job_peak_bytes = None
         if action not in ('health', 'plan_patch'):
@@ -211,6 +227,7 @@ class LocalProcessAgent:
                         # must never be misreported as a measured zero peak.
                         self.last_job_peak_bytes = None
                     job.close()
+                    self._reap_after_job_close(proc)
                 elif os.name != 'nt' and proc is not None:
                     # A parent can exit successfully after spawning helpers.
                     # Kill its original POSIX process group on every exit.

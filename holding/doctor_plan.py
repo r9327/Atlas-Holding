@@ -101,6 +101,7 @@ def _run_bounded_planning(command: list[str], *, cwd: Path,
         finally:
             if job is not None:
                 job.close()
+                LocalProcessAgent._reap_after_job_close(proc)
             elif os.name != "nt" and proc is not None:
                 # The parent may have returned after spawning a helper.
                 try:

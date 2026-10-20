@@ -96,6 +96,7 @@ def _run_limited_doctor(command: list[str], *, cwd: Path,
         finally:
             if job is not None:
                 job.close()
+                LocalProcessAgent._reap_after_job_close(proc)
             elif os.name != "nt" and proc is not None:
                 # The root process may have exited after spawning helpers.
                 import signal
