@@ -1,4 +1,15 @@
-# PR 07 — Synchronisation réseau et validation différée (SPECIFICATION, NON IMPLEMENTEE)
+# PR 07 — Synchronisation réseau et validation différée (IMPLEMENTATION PARTIELLE)
+
+## État technique
+
+La branche contient les preuves FULL exact-SHA, l'émetteur séparé, les gates
+d'autorisation GitHub, l'hystérésis par service et l'idempotence des tentatives.
+Le push exige désormais une topologie fraîche issue d'un fetch : HEAD local au
+SHA autorisé, candidat contenant `origin/main`, et branche distante absente ou
+ancêtre du candidat. Une divergence est bloquée ; aucun force-push n'est produit.
+
+Restent notamment à brancher les exécuteurs privilégiés réels, le checkpoint du
+writer et les probes Context7/Firecrawl avec leur journal de dettes externes.
 
 **But :** connexion mobile intermittente. Travail 100 % local en absence de réseau ; dès reconnexion fiable, vérifier hypothèses externes, réconcilier GitHub, pousser et certifier les PR **complètes**.
 

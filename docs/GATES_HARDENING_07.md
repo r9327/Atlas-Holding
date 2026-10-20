@@ -1,4 +1,4 @@
-# PR #7 — Réseau mobile et opérations GitHub : gates supplémentaires (non implémentés)
+# PR #7 — Réseau mobile et opérations GitHub : gates supplémentaires (partiels)
 
 Référence : `docs/OPERATIONAL_READINESS.md` de la PR #1.
 
