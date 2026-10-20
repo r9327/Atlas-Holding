@@ -100,6 +100,17 @@ class ServiceTests(unittest.TestCase):
         self.assertTrue(self.invoke("status")["stop_requested"])
         self.assertFalse(self.invoke("clear-stop")["stop_requested"])
 
+    def test_lost_sqlite_fence_during_qa_repair_stops_without_retry(self):
+        from holding.state_store import StoreError
+        from unittest.mock import Mock
+        with self.make(FakeWorker()) as service:
+            service.start()
+            service._qa_repair = Mock()
+            service._qa_repair.requeue_one.side_effect = StoreError("DAEMON_LEASE_LOST")
+            outcome = service.run(max_ticks=1)
+            self.assertEqual(outcome.action, "LEASE_LOST")
+            service._qa_repair.requeue_one.assert_called_once()
+
     def test_no_second_headless_writer(self):
         with self.make(FakeWorker()) as primary:
             primary.start()
