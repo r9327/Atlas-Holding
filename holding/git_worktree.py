@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -35,15 +36,33 @@ class GitWorktrees:
             raise GitSafetyError('Workspace must be isolated from the canonical checkout')
 
     def _git(self, *args: str, cwd: Path | None = None, timeout: int = 30) -> str:
-        try:
-            result = subprocess.run(['git', '-C', str(cwd or self.root), *args],
-                                    capture_output=True, text=True, timeout=timeout, check=False,
-                                    stdin=subprocess.DEVNULL)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise GitSafetyError('Git unavailable or timed out') from exc
+        # Git config can be injected through GIT_* environment variables,
+        # including executable diff drivers, remote helpers and hook paths.
+        # Only the trusted checkout/config decides Git behavior.
+        environment = {key: value for key, value in os.environ.items()
+                       if not key.upper().startswith('GIT_')}
+        environment['GIT_TERMINAL_PROMPT'] = '0'
+        environment['GIT_NO_REPLACE_OBJECTS'] = '1'
+        environment['GIT_PAGER'] = 'cat'
+        # Never capture arbitrarily large Git stdout/stderr in Python RAM.
+        # Large repositories and malicious hooks can produce unbounded logs.
+        with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
+            try:
+                result = subprocess.run(
+                    ['git', '-C', str(cwd or self.root), *args],
+                    stdout=output, stderr=errors, timeout=timeout, check=False,
+                    stdin=subprocess.DEVNULL, env=environment)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise GitSafetyError('Git unavailable or timed out') from exc
+            if os.fstat(output.fileno()).st_size > 4 * 1024 * 1024:
+                raise GitSafetyError('Git output exceeded 4 MiB safety limit')
+            output.seek(0)
+            stdout = output.read(4 * 1024 * 1024 + 1)
+            errors.seek(0)
+            error = errors.read(64 * 1024).decode('utf-8', errors='replace')[-300:]
         if result.returncode:
-            raise GitSafetyError(f'Git {args[0]} failed: {result.stderr[-300:]}')
-        return result.stdout.strip()
+            raise GitSafetyError(f'Git {args[0]} failed: {error}')
+        return stdout.decode('utf-8', errors='surrogateescape').strip()
 
     def inspect_canonical(self) -> None:
         root = Path(self._git('rev-parse', '--show-toplevel')).resolve(strict=True)

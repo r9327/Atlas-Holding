@@ -1,7 +1,9 @@
+import os
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 from holding.git_worktree import GitWorktrees, GitSafetyError
 
 REPO='r9327/Dof-Atlas'
@@ -59,6 +61,18 @@ class GitWorktreeTests(unittest.TestCase):
         sha = self.manager.commit('safehook', ('feature.py',), 'feat: protected commit')
         self.assertEqual(git(tree.path, 'rev-parse', 'HEAD'), sha)
         self.assertFalse(marker.exists(), 'Untrusted pre-commit hook executed')
+
+    def test_git_env_config_injection_is_not_inherited(self):
+        self.assertEqual(self.manager._git('config', '--get', 'user.name'),
+                         'Test Runner')
+        with patch.dict(os.environ, {
+            'GIT_CONFIG_COUNT': '1',
+            'GIT_CONFIG_KEY_0': 'user.name',
+            'GIT_CONFIG_VALUE_0': 'Injected Model',
+            'GIT_TERMINAL_PROMPT': '1',
+        }):
+            self.assertEqual(self.manager._git('config', '--get', 'user.name'),
+                             'Test Runner')
 
     def test_dirty_canonical_denied(self):
         (self.root/'NOTTRACKED').write_text('dirty')
