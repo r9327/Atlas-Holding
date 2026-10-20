@@ -44,6 +44,28 @@ else:
                   'executable_sha256':hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest(),
                   'arguments':[str(self.script)],'argument_sha256':{str(self.script):hashlib.sha256(self.script.read_bytes()).hexdigest()},'timeout_seconds':3}
 
+    def enable_github(self):
+        broker = self.root / 'broker.py'
+        broker.write_text('''import json,sys
+r=json.load(sys.stdin)
+json.dump({'schema_version':1,'request_id':r['request_id'],'status':'OK',
+           'result':{'account_id':'github:r9327'}},sys.stdout)
+''')
+        executable = Path(sys.executable).resolve()
+        self.data['schema'] = 2
+        self.data['github'] = {
+            'account_id': 'github:r9327', 'policy_sha': 'a' * 40,
+            'broker_command': [str(executable), str(broker)],
+            'broker_file_sha256': {
+                str(executable): hashlib.sha256(executable.read_bytes()).hexdigest(),
+                str(self.script): hashlib.sha256(self.script.read_bytes()).hexdigest(),
+                str(broker): hashlib.sha256(broker.read_bytes()).hexdigest(),
+            },
+            'broker_spool_root': str(self.root),
+            'broker_timeout_seconds': 5,
+        }
+        return broker
+
     def save(self):self.config.write_text(json.dumps(self.data))
 
     def test_installed_headless_service_end_to_end(self):
@@ -62,6 +84,42 @@ else:
         self.save()
         self.script.write_text('print(123)')
         with self.assertRaises(BootstrapError):Installation.load(self.config)
+
+    def test_schema_two_wires_pinned_github_health_and_push_role(self):
+        self.enable_github(); self.save()
+        with Installation.load(self.config).build_service() as service:
+            self.assertEqual(
+                service.worker.available_operations(), frozenset({'code', 'push'}))
+            self.assertIsNotNone(service._github_health)
+            now = [100]
+            service._github_health.clock = lambda: now[0]
+            service.start()
+            self.assertEqual(service.run(max_ticks=1).action, 'COMPLETE')
+            self.assertEqual(
+                service.engine.store.service_health('github')['status'], 'PROBING')
+            now[0] += 1
+            self.assertEqual(service.run(max_ticks=1).action, 'COMPLETE')
+            self.assertEqual(
+                service.engine.store.service_health('github')['status'], 'ONLINE')
+
+    def test_changed_schema_two_broker_is_refused_during_load(self):
+        broker = self.enable_github(); self.save()
+        broker.write_text('raise SystemExit(9)')
+        with self.assertRaisesRegex(BootstrapError, 'changed since onboarding'):
+            Installation.load(self.config)
+
+    def test_schema_two_refuses_partially_pinned_python_package(self):
+        self.enable_github()
+        del self.data['github']['broker_file_sha256'][str(self.script)]
+        self.save()
+        with self.assertRaisesRegex(BootstrapError, 'Unsafe privileged broker'):
+            Installation.load(self.config)
+
+    def test_schema_two_requires_exact_github_contract(self):
+        self.data['schema'] = 2
+        self.save()
+        with self.assertRaises(BootstrapError):
+            Installation.load(self.config)
 
     def test_unpinned_inline_code_refused(self):
         self.data['arguments']=['-c','print(123)']

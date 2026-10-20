@@ -11,10 +11,22 @@ from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
+import re
 
 from .git_worktree import GitWorktrees
+from .github_broker_protocol import (
+    BrokerFilePin, BrokerProcessConfig, GitHubBrokerProcessControl,
+)
+from .github_full_evidence import GitHubEvidenceError
 from .process_agent import AgentProgram
 from .service import HoldingService, ServiceSettings, termination_signals
+
+
+_REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_ACCOUNT = re.compile(
+    r"^github:[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
+_SHA = re.compile(r"^[0-9a-f]{40}$")
+_DIGEST = re.compile(r"^[0-9a-f]{64}$")
 
 def _hash_file(path: Path) -> str:
     hasher = hashlib.sha256()
@@ -29,6 +41,13 @@ class BootstrapError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class GitHubInstallation:
+    account_id: str
+    policy_sha: str
+    broker: BrokerProcessConfig
+
+
+@dataclass(frozen=True)
 class Installation:
     database: Path
     repository: str
@@ -40,6 +59,72 @@ class Installation:
     arguments: tuple[str, ...]
     argument_sha256: dict[str, str]
     timeout_seconds: float
+    github: GitHubInstallation | None = None
+
+    @staticmethod
+    def _github_config(info: object) -> GitHubInstallation:
+        expected = {
+            'account_id', 'policy_sha', 'broker_command',
+            'broker_file_sha256', 'broker_spool_root',
+            'broker_timeout_seconds',
+        }
+        if not isinstance(info, dict) or set(info) != expected:
+            raise BootstrapError('Invalid GitHub installation config')
+        if (not isinstance(info['account_id'], str)
+                or not _ACCOUNT.fullmatch(info['account_id'])
+                or not isinstance(info['policy_sha'], str)
+                or not _SHA.fullmatch(info['policy_sha'])):
+            raise BootstrapError('Invalid pinned GitHub identity or policy')
+        raw_command = info['broker_command']
+        if (not isinstance(raw_command, list) or not 1 <= len(raw_command) <= 32
+                or any(not isinstance(item, str) or not item
+                       or len(item) > 4096 or '\x00' in item
+                       for item in raw_command)):
+            raise BootstrapError('Invalid privileged broker command')
+        raw_pins = info['broker_file_sha256']
+        if (not isinstance(raw_pins, dict) or not 1 <= len(raw_pins) <= 128):
+            raise BootstrapError('Invalid privileged broker file pins')
+        pins = []
+        for raw_path, digest in raw_pins.items():
+            if (not isinstance(raw_path, str) or len(raw_path) > 4096
+                    or not isinstance(digest, str)
+                    or not _DIGEST.fullmatch(digest)):
+                raise BootstrapError('Invalid privileged broker file pin')
+            path = Path(raw_path)
+            try:
+                canonical = path.resolve(strict=True)
+            except OSError:
+                raise BootstrapError('Pinned broker file is unavailable') from None
+            try:
+                valid_pin = (
+                    path.is_absolute() and path == canonical
+                    and path.is_file() and not path.is_symlink()
+                    and _hash_file(path) == digest)
+            except OSError:
+                valid_pin = False
+            if not valid_pin:
+                raise BootstrapError('Pinned broker file changed since onboarding')
+            pins.append(BrokerFilePin(path, digest))
+        raw_spool = info['broker_spool_root']
+        if not isinstance(raw_spool, str) or len(raw_spool) > 4096:
+            raise BootstrapError('Invalid privileged broker spool path')
+        spool = Path(raw_spool)
+        if (not spool.is_absolute() or not spool.is_dir() or spool.is_symlink()
+                or '..' in spool.parts):
+            raise BootstrapError('Invalid privileged broker spool directory')
+        timeout = info['broker_timeout_seconds']
+        if type(timeout) is not int or not 1 <= timeout <= 120:
+            raise BootstrapError('Invalid privileged broker timeout')
+        broker = BrokerProcessConfig(
+            tuple(raw_command), tuple(pins), spool, timeout)
+        try:
+            # Constructor validation proves command/code coverage before the
+            # service is built; per-call validation detects later tampering.
+            GitHubBrokerProcessControl(broker)
+        except GitHubEvidenceError as exc:
+            raise BootstrapError('Unsafe privileged broker configuration') from exc
+        return GitHubInstallation(
+            info['account_id'], info['policy_sha'], broker)
 
     @classmethod
     def load(cls, filename: Path) -> 'Installation':
@@ -51,9 +136,12 @@ class Installation:
             info = json.loads(filename.read_text(encoding='utf-8'))
         except (ValueError, UnicodeError, OSError) as exc:
             raise BootstrapError('Invalid installer config') from exc
-        expected = {'schema','database','repository','canonical_root','workspace',
-                    'health_directory','executable','executable_sha256','arguments','argument_sha256','timeout_seconds'}
-        if not isinstance(info, dict) or set(info) != expected or type(info['schema']) is not int or info['schema'] != 1:
+        base = {'schema','database','repository','canonical_root','workspace',
+                'health_directory','executable','executable_sha256','arguments',
+                'argument_sha256','timeout_seconds'}
+        if (not isinstance(info, dict) or type(info.get('schema')) is not int
+                or info['schema'] not in {1, 2}
+                or set(info) != (base if info['schema'] == 1 else base | {'github'})):
             raise BootstrapError('Unknown installer schema or keys')
         locations = {}
         for field in ('database','canonical_root','workspace','health_directory','executable'):
@@ -64,7 +152,9 @@ class Installation:
             if not value.is_absolute() or value.is_symlink() or '..' in value.parts:
                 raise BootstrapError('Expected absolute, non-symlinked trusted paths')
             locations[field] = value
-        if not isinstance(info['repository'],str) or '/' not in info['repository']:
+        if (not isinstance(info['repository'], str)
+                or not _REPOSITORY.fullmatch(info['repository'])
+                or any(part in {'.', '..'} for part in info['repository'].split('/'))):
             raise BootstrapError('Invalid repository')
         checksum = info['executable_sha256']
         if not isinstance(checksum,str) or len(checksum) != 64 or any(c not in '0123456789abcdef' for c in checksum):
@@ -92,9 +182,10 @@ class Installation:
         digest = _hash_file(exe)
         if digest != checksum:
             raise BootstrapError('Agent executable changed since onboarding')
+        github = cls._github_config(info['github']) if info['schema'] == 2 else None
         return cls(locations['database'],info['repository'],locations['canonical_root'],
                    locations['workspace'],locations['health_directory'],exe,checksum,
-                   tuple(args),pins,float(info['timeout_seconds']))
+                   tuple(args),pins,float(info['timeout_seconds']),github)
 
     def build_service(self) -> HoldingService:
         git = GitWorktrees(self.canonical_root,self.workspace,self.repository)
@@ -103,8 +194,16 @@ class Installation:
             timeout_seconds=self.timeout_seconds,
             pinned_executable_sha256=self.executable_sha256,
             pinned_arguments=tuple((arg, self.argument_sha256[arg]) for arg in self.arguments))
-        return HoldingService.from_local_agent(ServiceSettings(self.database), program=program,
-            git=git,health_directory=self.health_directory,online=lambda:False)
+        service = HoldingService.from_local_agent(
+            ServiceSettings(self.database), program=program, git=git,
+            health_directory=self.health_directory, online=lambda: False)
+        if self.github is not None:
+            control = GitHubBrokerProcessControl(self.github.broker)
+            service.enable_git_push(
+                expected_account_id=self.github.account_id,
+                expected_policy_sha=self.github.policy_sha,
+                health_probe=control)
+        return service
 
 
 def main(argv: list[str] | None = None) -> int:

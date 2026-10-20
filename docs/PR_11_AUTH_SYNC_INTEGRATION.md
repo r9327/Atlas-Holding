@@ -31,6 +31,11 @@ Cette PR Draft vérifie ensemble les contrats développés séparément dans :
     contient l'effet distant `SUCCEEDED` au même dépôt, branche, SHA et idempotency key.
     Une attente réseau ne consomme pas le budget, une divergence bloque et une issue
     ambiguë place la mission en récupération sans second push.
+11. Le bootstrap installé accepte toujours le schéma v1 local-only. Son schéma
+    v2 exige en bloc l'identité GitHub, le SHA de policy, la commande du broker,
+    tous ses pins de fichiers, son spool absolu et son timeout. Il refuse les
+    packages Python partiellement épinglés, revérifie les empreintes au chargement
+    puis avant chaque IPC, active le rôle `push` et alimente sa santé via le broker.
 
 ## Limites explicites
 
@@ -50,14 +55,15 @@ Cette PR Draft vérifie ensemble les contrats développés séparément dans :
 - Un statut `SUCCEEDED` atteste l'effet de synchronisation observé, jamais la qualité produit.
 - Un contexte absent (ancienne base), corrompu ou incohérent bloque la récupération.
 - Cette PR ne rend pas les PR #1, #3 ou #7 prêtes à fusionner et ne remplace pas leur certification finale.
-- Le worker `push` existe mais le bootstrap multi-rôle ne l'installe pas encore à
-  côté du worker de code par défaut. Le routeur multi-rôle et le hook de bootstrap
-  trusted `enable_git_push` sont implémentés avec capacités dynamiques : un rôle
-  indisponible n'est pas réclamé et ne bloque pas un autre rôle sain. Le fichier
-  d'installation v1 n'apporte toutefois pas encore l'identité/policy GitHub ni
-  la configuration épinglée du broker à `enable_git_push` ; l'activation dans
-  le daemon installé reste donc incomplète, même si la sonde authentifiée et son
-  hystérésis sont désormais implémentées.
+- Le routeur multi-rôle et le hook trusted `enable_git_push` ont des capacités
+  dynamiques : un rôle indisponible n'est pas réclamé et ne bloque pas un autre
+  rôle sain. Le schéma d'installation v2 les câble au broker épinglé ; le v1
+  demeure volontairement local-only et ne peut pas muter GitHub.
+- Le code ne peut pas prouver à lui seul l'identité Windows qui lance la commande
+  broker. Une installation réelle doit encore exécuter ce broker sous l'identité
+  et les ACL dédiées décrites ci-dessus. De plus, le `git push` borné utilise
+  actuellement Git sous l'identité du daemon : l'isolation d'un credential Git
+  minimal reste un prérequis de déploiement, pas une propriété déjà certifiée.
 
 ## Contrats GitHub vérifiés
 
