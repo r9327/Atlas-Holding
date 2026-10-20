@@ -16,6 +16,7 @@ from .autonomy import Mission, choose_next
 from .roadmap_import import (
     MAX_ROADMAP_BYTES, _document, _parse_missions,
 )
+from .schema import ROADMAP_AMENDMENT_SCHEMA, apply_schema
 from .state_store import StateStore, StoreError
 
 
@@ -189,12 +190,7 @@ class SafeRoadmapReplanner:
                                  ",".join(plan.blocked[:20]))
             if plan.version:
                 return plan
-            self.store.db.execute("""CREATE TABLE IF NOT EXISTS roadmap_amendments (
-                seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                version INTEGER NOT NULL REFERENCES roadmap_versions(version),
-                changed_ids_json TEXT NOT NULL,
-                recorded_epoch INTEGER NOT NULL
-            )""")
+            apply_schema(self.store.db, ROADMAP_AMENDMENT_SCHEMA)
             now = int(time.time())
             self.store.db.execute(
                 "INSERT INTO roadmap_versions(repo,digest,source,imported_epoch) "

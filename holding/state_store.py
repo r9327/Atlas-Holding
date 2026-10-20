@@ -16,6 +16,7 @@ import time
 from typing import Iterable, Iterator
 
 from .autonomy import Decision, KNOWN_OPERATIONS, Mission, StandingGrant, choose_next
+from .schema import CORE_SCHEMA, apply_schema
 
 SHA_RE = re.compile(r"^[a-fA-F0-9]{40}$")
 
@@ -40,41 +41,8 @@ class StateStore:
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA foreign_keys=ON")
         self.db.execute("PRAGMA synchronous=FULL")
-        self.db.executescript("""
-            CREATE TABLE IF NOT EXISTS missions (
-                id TEXT PRIMARY KEY,
-                repo TEXT NOT NULL,
-                operation TEXT NOT NULL,
-                dependencies TEXT NOT NULL,
-                priority INTEGER NOT NULL,
-                state TEXT NOT NULL,
-                candidate_sha TEXT NOT NULL DEFAULT '',
-                evidence_sha TEXT NOT NULL DEFAULT '',
-                external_required INTEGER NOT NULL DEFAULT 0,
-                product_decision_required INTEGER NOT NULL DEFAULT 0,
-                failures_without_progress INTEGER NOT NULL DEFAULT 0,
-                updated_at INTEGER NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS grants (
-                repo TEXT NOT NULL,
-                operation TEXT NOT NULL,
-                expires_epoch INTEGER NOT NULL,
-                enabled INTEGER NOT NULL DEFAULT 1,
-                PRIMARY KEY(repo, operation)
-            );
-            CREATE TABLE IF NOT EXISTS events (
-                seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                ts INTEGER NOT NULL,
-                mission_id TEXT,
-                event TEXT NOT NULL,
-                detail TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            );
-            INSERT OR IGNORE INTO settings(key, value) VALUES ('paused', '0');
-        """)
+        apply_schema(self.db, CORE_SCHEMA)
+        self.db.execute("INSERT OR IGNORE INTO settings(key, value) VALUES ('paused', '0')")
 
     def close(self) -> None:
         self.db.close()

@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Callable
 import re
 
+from .schema import SIGNED_PROOF_SCHEMA, apply_schema
+
 SHA = re.compile(r"^[a-f0-9]{40}$")
 NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,119}$")
 
@@ -143,25 +145,9 @@ class ProofVerifier:
             ).fetchone()
             if current is None or current["candidate_sha"] != proof.sha:
                 raise StoreError("QA candidate changed during proof verification")
-            store.db.execute("""CREATE TABLE IF NOT EXISTS signed_proofs (
-                mission_id TEXT PRIMARY KEY REFERENCES missions(id),
-                candidate_sha TEXT NOT NULL,
-                verdict TEXT NOT NULL,
-                artifact TEXT NOT NULL,
-                receipt_digest TEXT NOT NULL
-            )""")
             # Keep every SHA's independent verdict. A later repaired commit
             # may replace the latest pointer, never the append-only history.
-            store.db.execute("""CREATE TABLE IF NOT EXISTS signed_proof_history (
-                seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                mission_id TEXT NOT NULL REFERENCES missions(id),
-                candidate_sha TEXT NOT NULL,
-                verdict TEXT NOT NULL,
-                artifact TEXT NOT NULL,
-                receipt_digest TEXT NOT NULL,
-                recorded_epoch INTEGER NOT NULL,
-                UNIQUE(mission_id,candidate_sha)
-            )""")
+            apply_schema(store.db, SIGNED_PROOF_SCHEMA)
             replay = store.db.execute(
                 "SELECT 1 FROM signed_proof_history WHERE mission_id=? AND candidate_sha=?",
                 (mission_id, proof.sha)).fetchone()

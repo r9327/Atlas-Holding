@@ -13,6 +13,7 @@ import unittest
 from holding.autonomy import Mission, StandingGrant
 from holding.daemon_lease import DaemonLease
 from holding.qa_repair import QaRepairCoordinator
+from holding.schema import SIGNED_PROOF_SCHEMA, apply_schema
 from holding.state_store import StateStore
 
 REPO = "r9327/Dof-Atlas"
@@ -55,10 +56,7 @@ class RepairEligibilityTests(unittest.TestCase):
 
     def verified_failure_fixture(self):
         with self.store._transaction():
-            self.store.db.execute("""CREATE TABLE signed_proofs (
-                mission_id TEXT PRIMARY KEY,
-                candidate_sha TEXT NOT NULL, verdict TEXT NOT NULL,
-                artifact TEXT NOT NULL, receipt_digest TEXT NOT NULL)""")
+            apply_schema(self.store.db, SIGNED_PROOF_SCHEMA)
             self.store.db.execute(
                 "INSERT INTO signed_proofs VALUES(?,?,?,?,?)",
                 ("repair", SHA, "FAIL", "fixture.json", "b" * 64))

@@ -12,9 +12,10 @@ import secrets
 import time
 
 from .sqlite_backup import create_snapshot, Snapshot
+from .schema import MODEL_SCHEMA_V1, RUNTIME_SCHEMA_V2, apply_schema
 from .state_store import StateStore, StoreError
 
-CURRENT_SCHEMA = 1
+CURRENT_SCHEMA = 2
 SHA256 = re.compile(r'^[0-9a-f]{64}$')
 
 
@@ -37,8 +38,6 @@ class SchemaMigrator:
             raise StoreError('Refusing database created by newer Holding version')
         if version == CURRENT_SCHEMA:
             return Upgrade(version, version, None)
-        if version != 0:
-            raise StoreError('Unsupported database migration path')
         self.backup_dir.mkdir(parents=True, exist_ok=True)
         path = self.backup_dir / (
             f'{self.store.path.name}.before-v{CURRENT_SCHEMA}.{int(time.time())}.{secrets.token_hex(6)}.sqlite'
@@ -46,30 +45,18 @@ class SchemaMigrator:
         snapshot = create_snapshot(self.store.db, path)
         with self.store._transaction():
             self.store._assert_daemon_fence(lease_owner)
-            if int(self.store.db.execute('PRAGMA user_version').fetchone()[0]) != 0:
+            if int(self.store.db.execute('PRAGMA user_version').fetchone()[0]) != version:
                 raise StoreError('Concurrent schema version change')
-            self.store.db.execute('''CREATE TABLE IF NOT EXISTS model_profiles (
-                digest_sha256 TEXT PRIMARY KEY,
-                model_name TEXT NOT NULL,
-                provider TEXT NOT NULL,
-                quantization TEXT NOT NULL,
-                context_measured INTEGER NOT NULL CHECK(context_measured>0),
-                ram_peak_bytes INTEGER NOT NULL CHECK(ram_peak_bytes>=0),
-                vram_peak_bytes INTEGER NOT NULL CHECK(vram_peak_bytes>=0),
-                benchmark_digest TEXT NOT NULL,
-                observed_at INTEGER NOT NULL
-            )''')
-            self.store.db.execute('''CREATE TABLE IF NOT EXISTS mission_model_usage (
-                seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                mission_id TEXT NOT NULL REFERENCES missions(id),
-                role TEXT NOT NULL,
-                model_digest_sha256 TEXT NOT NULL REFERENCES model_profiles(digest_sha256),
-                candidate_sha TEXT NOT NULL,
-                observed_at INTEGER NOT NULL
-            )''')
-            self.store.db.execute('PRAGMA user_version=1')
-            self.store._event(None, 'SCHEMA_MIGRATION', f'0->1 backup_sha256:{snapshot.digest}')
-        return Upgrade(0, CURRENT_SCHEMA, snapshot)
+            if version < 1:
+                apply_schema(self.store.db, MODEL_SCHEMA_V1)
+            if version < 2:
+                apply_schema(self.store.db, RUNTIME_SCHEMA_V2)
+            self.store.db.execute(f'PRAGMA user_version={CURRENT_SCHEMA}')
+            self.store._event(
+                None, 'SCHEMA_MIGRATION',
+                f'{version}->{CURRENT_SCHEMA} backup_sha256:{snapshot.digest}',
+            )
+        return Upgrade(version, CURRENT_SCHEMA, snapshot)
 
     def register_model(self, *, lease_owner: str, digest_sha256: str, name: str,
                        provider: str, quantization: str, context_measured: int,

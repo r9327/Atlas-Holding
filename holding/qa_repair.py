@@ -12,6 +12,7 @@ import time
 
 from .daemon_lease import DaemonLease
 from .git_worktree import GitWorktrees, GitSafetyError
+from .schema import QA_REPAIR_SCHEMA, apply_schema
 from .state_store import StateStore, StoreError
 
 _SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -33,12 +34,7 @@ class QaRepairCoordinator:
         self.git = git
         self.lease = lease
         self.max_rounds = max_rounds
-        store.db.execute("""CREATE TABLE IF NOT EXISTS qa_repair_attempts (
-            mission_id TEXT NOT NULL REFERENCES missions(id),
-            failed_sha TEXT NOT NULL,
-            requeued_epoch INTEGER NOT NULL,
-            PRIMARY KEY(mission_id, failed_sha)
-        )""")
+        apply_schema(store.db, QA_REPAIR_SCHEMA)
 
     def requeue_one(self) -> RepairDecision:
         self.lease.assert_owned()

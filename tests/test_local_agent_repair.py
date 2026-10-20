@@ -15,6 +15,7 @@ from holding.autonomy import StandingGrant
 from holding.git_worktree import GitWorktrees
 from holding.process_agent import AgentProgram
 from holding.roadmap_import import RoadmapImporter
+from holding.schema import SIGNED_PROOF_SCHEMA, apply_schema
 from holding.service import HoldingService, ServiceSettings
 from holding.state_store import StateStore
 
@@ -82,10 +83,7 @@ else:
                                  "result=1\n")
                 with StateStore(db) as state:
                     with state._transaction():
-                        state.db.execute("""CREATE TABLE signed_proofs (
-                            mission_id TEXT PRIMARY KEY,
-                            candidate_sha TEXT NOT NULL, verdict TEXT NOT NULL,
-                            artifact TEXT NOT NULL, receipt_digest TEXT NOT NULL)""")
+                        apply_schema(state.db, SIGNED_PROOF_SCHEMA)
                         state.db.execute(
                             "INSERT INTO signed_proofs VALUES(?,?,?,?,?)",
                             ("task", first_sha, "FAIL", "qa-fixture", "c" * 64))

@@ -14,6 +14,7 @@ from typing import Any
 
 from .autonomy import Mission, KNOWN_OPERATIONS, choose_next
 from .state_store import StateStore, StoreError
+from .schema import ROADMAP_SCHEMA, apply_schema
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -105,26 +106,7 @@ class RoadmapImporter:
 
     def __init__(self, store: StateStore):
         self.store = store
-        self.store.db.executescript('''
-            CREATE TABLE IF NOT EXISTS roadmap_versions (
-                version INTEGER PRIMARY KEY AUTOINCREMENT,
-                repo TEXT NOT NULL,
-                digest TEXT NOT NULL UNIQUE,
-                source TEXT NOT NULL,
-                imported_epoch INTEGER NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS mission_specs (
-                id TEXT PRIMARY KEY REFERENCES missions(id),
-                spec_json TEXT NOT NULL,
-                version INTEGER NOT NULL REFERENCES roadmap_versions(version)
-            );
-            CREATE TABLE IF NOT EXISTS roadmap_amendments (
-                seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                version INTEGER NOT NULL REFERENCES roadmap_versions(version),
-                changed_ids_json TEXT NOT NULL,
-                recorded_epoch INTEGER NOT NULL
-            );
-        ''')
+        apply_schema(self.store.db, ROADMAP_SCHEMA)
 
     def import_text(self, raw: str, *, source: str) -> ImportResult:
         if not isinstance(source, str) or not source.strip() or len(source) > 500:

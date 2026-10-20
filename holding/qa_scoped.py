@@ -18,6 +18,7 @@ import tempfile
 import time
 
 from .process_agent import LocalProcessAgent
+from .schema import SCOPED_QA_SCHEMA, apply_schema
 
 from .doctor_plan import DoctorPlanner, DoctorPlanError
 from .git_worktree import GitWorktrees, GitSafetyError
@@ -233,14 +234,7 @@ class ScopedDoctorRunner:
                 "AND state='QA_PENDING'", (mission_id, self.git.repository)).fetchone()
             if current is None or current["candidate_sha"] != result.candidate_sha:
                 raise StoreError("QA result became stale during execution")
-            store.db.execute("""CREATE TABLE IF NOT EXISTS scoped_qa_advisories (
-                mission_id TEXT PRIMARY KEY REFERENCES missions(id),
-                candidate_sha TEXT NOT NULL,
-                status TEXT NOT NULL,
-                base_sha TEXT NOT NULL,
-                report_sha256 TEXT NOT NULL,
-                checked_epoch INTEGER NOT NULL
-            )""")
+            apply_schema(store.db, SCOPED_QA_SCHEMA[:1])
             store.db.execute("""INSERT INTO scoped_qa_advisories
                 (mission_id,candidate_sha,status,base_sha,report_sha256,checked_epoch)
                 VALUES(?,?,?,?,?,strftime('%s','now'))

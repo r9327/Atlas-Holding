@@ -12,6 +12,7 @@ import time
 
 from .qa_scoped import ScopedDoctorRunner, ScopedQaError
 from .git_worktree import GitSafetyError
+from .schema import SCOPED_QA_SCHEMA, apply_schema
 from .state_store import StateStore, StoreError
 
 _SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -32,18 +33,7 @@ class ScopedQaDispatcher:
         self.store = store
         self.runner = runner
         self.max_attempts = max_attempts
-        store.db.execute("""CREATE TABLE IF NOT EXISTS scoped_qa_advisories (
-            mission_id TEXT PRIMARY KEY REFERENCES missions(id),
-            candidate_sha TEXT NOT NULL, status TEXT NOT NULL,
-            base_sha TEXT NOT NULL, report_sha256 TEXT NOT NULL,
-            checked_epoch INTEGER NOT NULL
-        )""")
-        store.db.execute("""CREATE TABLE IF NOT EXISTS scoped_qa_retries (
-            mission_id TEXT PRIMARY KEY REFERENCES missions(id),
-            candidate_sha TEXT NOT NULL,
-            attempts INTEGER NOT NULL,
-            next_epoch INTEGER NOT NULL
-        )""")
+        apply_schema(store.db, SCOPED_QA_SCHEMA)
 
     def tick(self, *, now_epoch: int | None = None) -> QaDispatch:
         now = int(time.time()) if now_epoch is None else now_epoch

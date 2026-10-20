@@ -6,7 +6,8 @@ import unittest
 
 from holding.autonomy import Mission
 from holding.daemon_lease import DaemonLease
-from holding.migrations import SchemaMigrator
+from holding.migrations import CURRENT_SCHEMA, SchemaMigrator
+from holding.schema import MODEL_SCHEMA_V1
 from holding.sqlite_backup import restore_snapshot
 from holding.state_store import StateStore, StoreError
 
@@ -22,9 +23,9 @@ class MigrationTests(unittest.TestCase):
     def test_migrates_with_verified_restorable_backup(self):
         self.store.add_missions([Mission('one','r9327/Dof-Atlas')])
         upgrade=self.migrator.ensure(lease_owner=self.lease.owner)
-        self.assertEqual((upgrade.from_version,upgrade.to_version),(0,1))
+        self.assertEqual((upgrade.from_version,upgrade.to_version),(0,CURRENT_SCHEMA))
         self.assertIsNotNone(upgrade.backup)
-        self.assertEqual(self.store.db.execute('PRAGMA user_version').fetchone()[0],1)
+        self.assertEqual(self.store.db.execute('PRAGMA user_version').fetchone()[0],CURRENT_SCHEMA)
         restore=restore_snapshot(upgrade.backup.database,self.root/'restored.sqlite')
         with closing(sqlite3.connect(restore)) as db:
             self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0],0)
@@ -35,6 +36,22 @@ class MigrationTests(unittest.TestCase):
         second=self.migrator.ensure(lease_owner=self.lease.owner)
         self.assertEqual(second.backup,None)
         self.assertEqual(len(list((self.root/'backups').iterdir())),2)
+
+    def test_v1_database_upgrades_to_complete_runtime_schema(self):
+        for statement in MODEL_SCHEMA_V1:
+            self.store.db.execute(statement)
+        self.store.db.execute('PRAGMA user_version=1')
+
+        upgrade=self.migrator.ensure(lease_owner=self.lease.owner)
+
+        self.assertEqual((upgrade.from_version,upgrade.to_version),(1,CURRENT_SCHEMA))
+        tables={row[0] for row in self.store.db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        self.assertTrue({
+            'daemon_lease','git_operations','signed_proofs','signed_proof_history',
+            'scoped_qa_advisories','scoped_qa_retries','qa_repair_attempts',
+            'roadmap_versions','mission_specs','roadmap_amendments',
+        }.issubset(tables))
 
     def test_newer_schema_refused_without_downgrade(self):
         self.store.db.execute('PRAGMA user_version=99')

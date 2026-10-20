@@ -13,6 +13,8 @@ import threading
 import time
 from pathlib import Path
 
+from .schema import DAEMON_LEASE_SCHEMA, apply_schema
+
 
 class LeaseError(RuntimeError):
     pass
@@ -37,11 +39,7 @@ class DaemonLease:
         conn = sqlite3.connect(str(self.path), timeout=8, isolation_level=None)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=8000")
-        conn.execute("""CREATE TABLE IF NOT EXISTS daemon_lease (
-            singleton INTEGER PRIMARY KEY CHECK(singleton=1),
-            owner TEXT NOT NULL,
-            expires_epoch INTEGER NOT NULL
-        )""")
+        apply_schema(conn, DAEMON_LEASE_SCHEMA)
         try:
             yield conn
             if conn.in_transaction:

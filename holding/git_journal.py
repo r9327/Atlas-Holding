@@ -12,6 +12,7 @@ import re
 import time
 
 from .git_worktree import GitWorktrees, GitSafetyError
+from .schema import GIT_JOURNAL_SCHEMA, apply_schema
 from .state_store import StateStore, StoreError
 
 _KEY = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$')
@@ -37,18 +38,7 @@ class GitJournal:
         self.store = store
         self.git = git
         self.lease_owner = lease_owner
-        store.db.execute("""CREATE TABLE IF NOT EXISTS git_operations (
-            mission_id TEXT NOT NULL REFERENCES missions(id),
-            operation_key TEXT NOT NULL,
-            kind TEXT NOT NULL CHECK (kind IN ('CREATE', 'COMMIT')),
-            intent_digest TEXT NOT NULL,
-            intent_json TEXT NOT NULL,
-            base_sha TEXT NOT NULL,
-            state TEXT NOT NULL CHECK (state IN ('PREPARED', 'APPLIED', 'INSPECT_REQUIRED')),
-            result_sha TEXT NOT NULL DEFAULT '',
-            updated_epoch INTEGER NOT NULL,
-            PRIMARY KEY (mission_id, operation_key)
-        )""")
+        apply_schema(store.db, GIT_JOURNAL_SCHEMA)
 
     @staticmethod
     def digest(intent: object) -> str:
