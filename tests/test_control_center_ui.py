@@ -1,0 +1,69 @@
+import os
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+import json
+import unittest
+
+from PySide6.QtWidgets import QApplication, QAbstractItemView, QProgressBar
+
+from holding.control_center_state import consume_dashboard_snapshot
+from holding.control_center_ui import ControlCenterUiError, ControlCenterWindow
+from test_control_center_state import NOW, snapshot
+
+
+class ControlCenterUiTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def state(self, *, sequence=42):
+        payload = snapshot()
+        payload["sequence"] = sequence
+        payload["log_page"]["items"][0]["sequence"] = sequence - 1
+        return consume_dashboard_snapshot(
+            json.dumps(payload).encode("utf-8"),
+            trusted_engine_id="engine-1",
+            expected_sequence=sequence,
+            now_epoch=NOW,
+        )
+
+    def test_validated_state_renders_without_fabricated_percentage(self):
+        window = ControlCenterWindow(trusted_engine_id="engine-1")
+        self.assertTrue(window.render_state(self.state()))
+        self.assertEqual(window.tasks.rowCount(), 1)
+        self.assertEqual(window.tasks.item(0, 0).text(), "Verify candidate")
+        self.assertEqual(window.tasks.item(0, 3).text(), "COMPLETED")
+        self.assertEqual(window.tasks.item(0, 5).text(), "CI FULL")
+        self.assertIn("CI_PENDING", window.status.text())
+        self.assertEqual(window.findChildren(QProgressBar), [])
+        self.assertEqual(
+            window.tasks.editTriggers(),
+            QAbstractItemView.EditTrigger.NoEditTriggers,
+        )
+        window.close()
+
+    def test_replayed_or_older_state_cannot_replace_display(self):
+        window = ControlCenterWindow(trusted_engine_id="engine-1")
+        self.assertTrue(window.render_state(self.state(sequence=43)))
+        self.assertFalse(window.render_state(self.state(sequence=43)))
+        self.assertFalse(window.render_state(self.state(sequence=42)))
+        self.assertEqual(window.displayed_sequence, 43)
+        window.close()
+
+    def test_wrong_engine_or_unvalidated_object_is_refused(self):
+        window = ControlCenterWindow(trusted_engine_id="other-engine")
+        with self.assertRaisesRegex(ControlCenterUiError, "another engine"):
+            window.render_state(self.state())
+        with self.assertRaisesRegex(ControlCenterUiError, "DashboardState"):
+            window.render_state({})
+        window.close()
+
+    def test_close_does_not_expose_or_trigger_engine_control(self):
+        window = ControlCenterWindow(trusted_engine_id="engine-1")
+        window.render_state(self.state())
+        self.assertFalse(hasattr(window, "engine"))
+        self.assertTrue(window.close())
+
+
+if __name__ == "__main__":
+    unittest.main()
