@@ -32,15 +32,16 @@ class ReplanResult:
 
 class SafeRoadmapReplanner:
     def __init__(self, store: StateStore):
+        # Preview is genuinely read-only: no auto-migration, DDL, or events.
+        # The initial roadmap must first enter through RoadmapImporter.
         self.store = store
-        # Migration is schema-compatible with the canonical roadmap importer.
-        RoadmapImporter(store)
-        store.db.execute("""CREATE TABLE IF NOT EXISTS roadmap_amendments (
-            seq INTEGER PRIMARY KEY AUTOINCREMENT,
-            version INTEGER NOT NULL REFERENCES roadmap_versions(version),
-            changed_ids_json TEXT NOT NULL,
-            recorded_epoch INTEGER NOT NULL
-        )""")
+
+    def _require_existing_roadmap(self):
+        names = {row[0] for row in self.store.db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name IN ('roadmap_versions','mission_specs')")}
+        if names != {'roadmap_versions', 'mission_specs'}:
+            raise StoreError("Import an initial roadmap before using replan")
 
     @staticmethod
     def _parse(raw: str, *, incremental: bool = False):
@@ -135,6 +136,7 @@ class SafeRoadmapReplanner:
                             tuple(preserved), tuple(sorted(set(blocked))), False)
 
     def preview(self, raw: str) -> ReplanResult:
+        self._require_existing_roadmap()
         doc, jobs, specs, digest = self._parse(raw)
         return self._classify(doc, jobs, specs, digest)
 
@@ -175,11 +177,18 @@ class SafeRoadmapReplanner:
         return self.apply(expanded, source=provenance)
 
     def apply(self, raw: str, *, source: str) -> ReplanResult:
+        self._require_existing_roadmap()
         if not isinstance(source, str) or not source.strip() or len(source) > 500:
             raise StoreError("Auditable roadmap revision provenance is required")
         doc, jobs, specs, digest = self._parse(raw)
         with self.store._transaction():
             plan = self._classify(doc, jobs, specs, digest)
+            self.store.db.execute("""CREATE TABLE IF NOT EXISTS roadmap_amendments (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                version INTEGER NOT NULL REFERENCES roadmap_versions(version),
+                changed_ids_json TEXT NOT NULL,
+                recorded_epoch INTEGER NOT NULL
+            )""")
             if plan.blocked:
                 raise StoreError("Roadmap amendment conflicts: " +
                                  ",".join(plan.blocked[:20]))
