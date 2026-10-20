@@ -48,6 +48,11 @@ An incremental direction must declare explicit task identities and acceptance
 criteria; converting unstructured prose into them remains CEO/planning-agent
 work (#4). No roadmap text may change Git grants or certification policy.
 
+**Suspended reboot:** headless service can acquire its lease and quarantine
+interrupted tasks under durable Pause/STOP without starting a health/model
+subprocess. Automatic recovery is deferred until the operator resumes.
+Requires a real suspended Windows reboot smoke before PASS.
+
 **Certification state on 20 October 2026:** implementation changes exist on
 GitHub, but the repository test suite and Windows process-tree/RAM experiments
 have not been executed in this session. All checks are pending, not PASS.

@@ -165,17 +165,26 @@ class HoldingService:
     def start(self) -> tuple[str, ...]:
         if self._started:
             raise RuntimeError("Service has already started")
-        if not self.worker.ready():
+        # Persisted Pause/STOP must survive reboot without launching even
+        # a health subprocess. The supervisor may boot suspended so its
+        # Control Center can later issue Resume without requiring model access.
+        suspended = self.engine.store.background_suspended()
+        if not suspended and not self.worker.ready():
             raise AgentUnavailable("Coding agent unavailable; refusing to claim tasks")
         quarantined = self.engine.start()
         self._started = True
         # Onboarding provides the exact canonical Git checkout; without it,
         # recovery remains quarantined rather than making assumptions.
-        if self._recovery_git is not None:
+        if self._recovery_git is not None and not suspended:
             self.last_recovery = RecoveryCoordinator(
                 self.engine.store, self._recovery_git, self.engine.lease
             ).recover_all()
             self._recovery_seen = self._recovery_generations()
+        elif suspended:
+            # Keep interrupted jobs quarantined until the operator resumes.
+            # The first healthy run tick will inspect them, not blindly replay.
+            self.last_recovery = ()
+            self._recovery_seen = {}
         return quarantined
 
     def request_shutdown(self) -> None:

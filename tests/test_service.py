@@ -105,6 +105,35 @@ class ServiceTests(unittest.TestCase):
                 "UPDATE settings SET value='0' WHERE key='stop_requested'")
             self.assertEqual(state.claim_next(online=False).mission_id, "a")
 
+    def test_boot_paused_skips_agent_probes_until_resume(self):
+        with StateStore(self.db) as state:
+            state.add_missions([Mission("a", REPO)])
+            state.set_paused(True)
+        worker = FakeWorker()
+        with self.make(worker) as service:
+            with patch.object(worker, "ready",
+                              side_effect=AssertionError("Startup probed a paused model")) as probe:
+                self.assertEqual(service.start(), ())
+                self.assertEqual(service.run(max_ticks=1).action, "WAIT")
+                probe.assert_not_called()
+            with StateStore(self.db) as state:
+                state.set_paused(False)
+            self.assertEqual(service.run(max_ticks=1).action, "QA_PENDING")
+            self.assertEqual(worker.calls, ["a"])
+
+    def test_boot_stopped_does_not_require_running_model(self):
+        with StateStore(self.db) as state:
+            state.add_missions([Mission("a", REPO)])
+            state.db.execute(
+                "INSERT INTO settings(key,value) VALUES('stop_requested','1')")
+        worker = FakeWorker(False)
+        with self.make(worker) as service:
+            self.assertEqual(service.start(), ())
+            self.assertEqual(service.run(max_ticks=1).action, "STOPPED")
+            self.assertEqual(worker.calls, [])
+        with StateStore(self.db) as state:
+            self.assertEqual(state.missions()[0].state, "READY")
+
     def test_health_loss_prevents_new_dispatch(self):
         with StateStore(self.db) as state:
             state.add_missions([Mission("a", REPO)])
