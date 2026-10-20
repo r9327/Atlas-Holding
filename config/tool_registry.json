@@ -1,0 +1,149 @@
+{
+  "schema_version": 1,
+  "allow_paid_services": false,
+  "default_network": "offline",
+  "max_concurrent_heavy_models": 1,
+  "tools": [
+    {
+      "id": "ai_context",
+      "capabilities": [
+        "context.route",
+        "context.rules"
+      ],
+      "transport": "local",
+      "network": false,
+      "required": true,
+      "risk": "read_only",
+      "automatic": true,
+      "prefer_local": true
+    },
+    {
+      "id": "graphify",
+      "capabilities": [
+        "architecture.graph",
+        "architecture.impact"
+      ],
+      "transport": "local",
+      "network": false,
+      "required_for": [
+        "structural"
+      ],
+      "risk": "artifact_output",
+      "automatic": "if_exact_sha_verified",
+      "prefer_local": true
+    },
+    {
+      "id": "doctor",
+      "capabilities": [
+        "quality.plan",
+        "quality.check",
+        "quality.validate"
+      ],
+      "transport": "local",
+      "network": false,
+      "required": true,
+      "risk": "read_only_or_test_execution",
+      "automatic": "via_project_contract",
+      "prefer_local": true
+    },
+    {
+      "id": "ollama",
+      "capabilities": [
+        "llm.generate"
+      ],
+      "transport": "local",
+      "network": false,
+      "required": true,
+      "risk": "local_compute",
+      "automatic": true
+    },
+    {
+      "id": "opencode",
+      "capabilities": [
+        "code.edit"
+      ],
+      "transport": "local",
+      "network": false,
+      "required": true,
+      "risk": "repo_mutation_explicit",
+      "automatic": false
+    },
+    {
+      "id": "git",
+      "capabilities": [
+        "repo.inspect",
+        "repo.commit"
+      ],
+      "transport": "local",
+      "network": false,
+      "required": true,
+      "risk": "repo_mutation_explicit",
+      "automatic": "controlled_executor_only"
+    },
+    {
+      "id": "context7",
+      "capabilities": [
+        "docs.lookup"
+      ],
+      "transport": "local_mcp_client_remote_catalogue",
+      "network": true,
+      "required": false,
+      "risk": "external_read",
+      "automatic": "quota_and_network_guard",
+      "offline_mode": "versioned_cached_docs_only",
+      "installed_locally": false
+    },
+    {
+      "id": "firecrawl",
+      "capabilities": [
+        "web.search",
+        "web.scrape",
+        "web.map",
+        "web.crawl"
+      ],
+      "transport": "local_mcp_client_or_optional_self_host",
+      "network": true,
+      "required": false,
+      "risk": "external_read_metered",
+      "automatic": "approved_domains_and_budget_only",
+      "offline_mode": "previously_cached_pages_only",
+      "self_host_optional": true,
+      "local_resource_budget_required": true,
+      "installed_locally": false
+    },
+    {
+      "id": "github",
+      "capabilities": [
+        "repo.sync",
+        "ci.trigger",
+        "ci.read"
+      ],
+      "transport": "api_or_cli",
+      "network": true,
+      "required": false,
+      "risk": "external_mutation_explicit",
+      "automatic": "ci_on_final_ready_only"
+    },
+    {
+      "id": "doctor_ui",
+      "capabilities": [
+        "ui.verify"
+      ],
+      "transport": "local",
+      "network": false,
+      "required_for": [
+        "ui"
+      ],
+      "risk": "test_execution",
+      "automatic": "if_environment_supported"
+    }
+  ],
+  "plugin_selection_policy": "capability_local_verified_first_then_cached_then_authorized_remote_then_native_fallback",
+  "local_mcp_hub": {
+    "implemented": false,
+    "transport": "stdio",
+    "network_default": "offline",
+    "discovery": "per_task",
+    "permissions": "default_read_only"
+  }
+}

@@ -1,1 +1,1 @@
-"""Atlas Holding online adapters (independent from code-writing privileges)."""
+"""Atlas Holding policy contracts and separately privileged online adapters."""
