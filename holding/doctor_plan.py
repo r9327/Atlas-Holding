@@ -61,7 +61,7 @@ class DoctorPlanner:
         if not _SHA.fullmatch(main_sha):
             raise DoctorPlanError('Invalid main comparison SHA')
         # Fixed arguments: no --run-tests, no --install, no external calls.
-        cmd = [str(self.interpreter), '-m', 'tools.atlas_doctor',
+        cmd = [str(self.interpreter), '-B', '-m', 'tools.atlas_doctor',
                'certify', '--base-ref', main_sha,
                '--expected-sha', candidate_sha, '--json']
         with tempfile.TemporaryFile() as output:
@@ -85,7 +85,7 @@ class DoctorPlanner:
             raise DoctorPlanError('Doctor report must be a JSON object')
         if payload.get('candidate_sha') != candidate_sha:
             raise DoctorPlanError('Doctor report references a different SHA')
-        if payload.get('execution', {}).get('status') not in ('NOT_RUN', 'FULL_REQUIRED_NOT_DISPATCHED'):
+        if not isinstance(payload.get('execution'), dict) or payload['execution'].get('status') not in ('NOT_RUN', 'FULL_REQUIRED_NOT_DISPATCHED'):
             raise DoctorPlanError('Doctor unexpectedly ran tests or claimed execution')
         if any(payload.get(name) is True for name in (
                 'certified', 'phase_certified', 'release_certified',
