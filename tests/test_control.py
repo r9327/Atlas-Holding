@@ -78,6 +78,22 @@ class ControlTests(unittest.TestCase):
             self.assertEqual(control.snapshot().scoped_qa_counts, {})
             self.assertEqual(control.scoped_qa_missions(), [])
 
+    def test_qa_repair_numbers_are_from_persisted_attempts(self):
+        with ControlPlane(self.path) as control:
+            self.assertEqual(control.snapshot().repair_counts, {})
+            control.store.db.execute("""CREATE TABLE qa_repair_attempts(
+                mission_id TEXT NOT NULL, failed_sha TEXT NOT NULL,
+                requeued_epoch INTEGER NOT NULL,
+                PRIMARY KEY(mission_id,failed_sha))""")
+            control.store.db.execute(
+                "INSERT INTO qa_repair_attempts VALUES(?,?,?)",
+                ("a", "c" * 40, 123))
+            control.store.db.execute(
+                "UPDATE missions SET state='BLOCKED' WHERE id='a'")
+            counts = control.snapshot().repair_counts
+            self.assertEqual(counts, {
+                "attempts": 1, "missions": 1, "blocked": 1})
+
     def test_live_lease_is_reported_as_lease_only(self):
         with HoldingEngine(self.path, lambda m: SHA, online=lambda: False) as engine:
             engine.start()
