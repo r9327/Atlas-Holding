@@ -84,26 +84,29 @@ class LocalProcessAgent:
         }}
         environment['GIT_TERMINAL_PROMPT'] = '0'
         flags = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0) if os.name == 'nt' else 0
-        with tempfile.TemporaryFile() as stdout:
+        # A large write to Popen(stdin=PIPE) can block forever if the child
+        # never reads stdin: the timeout below has not started yet. Instead,
+        # prepare bounded input in a regular temporary file BEFORE launching.
+        # Passing its handle also works on Windows (no pipe backpressure).
+        with tempfile.TemporaryFile() as input_file, tempfile.TemporaryFile() as stdout:
+            input_file.write(request)
+            input_file.seek(0)
             proc = None
             job = None
             try:
                 if os.name == 'nt':
                     from .windows_job import WindowsJob
                     job = WindowsJob()
+                started = time.monotonic()
                 proc = subprocess.Popen([str(self.config.executable), *self.config.arguments],
-                                        stdin=subprocess.PIPE, stdout=stdout,
+                                        stdin=input_file, stdout=stdout,
                                         stderr=subprocess.DEVNULL, cwd=cwd,
                                         env=environment, shell=False,
                                         start_new_session=(os.name != 'nt'), creationflags=flags)
-                # Child receives no request until Windows Job attachment works.
-                # Failure to attach is fatal, never a fallback to an untracked tree.
+                # The input is available only after a successful Windows
+                # Job attachment. This is not a full filesystem sandbox.
                 if job is not None:
                     job.attach(proc)
-                assert proc.stdin is not None
-                proc.stdin.write(request)
-                proc.stdin.close()
-                started = time.monotonic()
                 while proc.poll() is None:
                     if self.should_stop():
                         raise AgentProcessError('Agent interrupted by controller')
