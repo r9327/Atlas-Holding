@@ -44,12 +44,10 @@ class QaRepairCoordinator:
         self.lease.assert_owned()
         # UI pause and durable STOP also gate recovery: do not silently
         # requeue work while the operator has suspended Holding.
-        if self.store._paused() or self.store.db.execute(
-                "SELECT value FROM settings WHERE key='stop_requested'").fetchone():
-            stop = self.store.db.execute(
-                "SELECT value FROM settings WHERE key='stop_requested'").fetchone()
-            if self.store._paused() or (stop is not None and stop[0] == "1"):
-                return RepairDecision("PAUSED", None, "Holding paused or stopped")
+        stop = self.store.db.execute(
+            "SELECT value FROM settings WHERE key='stop_requested'").fetchone()
+        if self.store._paused() or (stop is not None and stop[0] == "1"):
+            return RepairDecision("PAUSED", None, "Holding paused or stopped")
         # Only signed independent FAILs from the trusted verifier are eligible.
         # Bounded scan does not load the entire roadmap or proof history.
         exists = self.store.db.execute(
