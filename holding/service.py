@@ -21,6 +21,7 @@ from .recovery import RecoveryCoordinator, RecoveryOutcome
 from .resource_guard import ResourceGuard
 from .daemon_lease import LeaseError
 from .state_store import StoreError
+from .worker_router import OperationWorkerRouter
 
 
 class AgentUnavailable(RuntimeError):
@@ -74,6 +75,7 @@ class HoldingService:
         self.last_recovery: tuple[RecoveryOutcome, ...] = ()
         self._recovery_seen: dict[str, int] = {}
         self._qa_repair = None
+        self._git = recovery_git
 
     @classmethod
     def from_local_agent(cls, settings: ServiceSettings, *, program,
@@ -120,8 +122,9 @@ class HoldingService:
 
         adapter = LocalProcessAgent(program, should_stop=should_stop_agent)
         worker = LocalCodeWorker(authenticated_git, adapter, health_directory=health_directory)
-        service.worker = worker
-        service.engine.worker = worker
+        router = OperationWorkerRouter({'code': worker})
+        service.worker = router
+        service.engine.worker = router
         # The currently implemented local adapter edits code only. Other
         # roadmap operations await separately authenticated role adapters.
         service.engine.supported_operations = frozenset({'code'})
@@ -129,6 +132,36 @@ class HoldingService:
         service._qa_repair = QaRepairCoordinator(
             service.engine.store, git, service.engine.lease)
         return service
+
+    def enable_git_push(
+        self, *, expected_account_id: str, expected_policy_sha: str,
+        control_factory=None,
+    ) -> None:
+        """Trusted bootstrap hook; never callable from roadmap/model content."""
+        if self._started or self._git is None:
+            raise RuntimeError("Git push role must be configured before service start")
+        from .sync_worker import GitPushMissionWorker
+
+        if not isinstance(self.worker, OperationWorkerRouter):
+            raise RuntimeError("Service worker router is unavailable")
+        adapter = GitPushMissionWorker(
+            self.engine.store, self._git, self.engine.lease,
+            expected_account_id=expected_account_id,
+            expected_policy_sha=expected_policy_sha,
+            control_factory=control_factory)
+        self.worker.add('push', adapter)
+        self.engine.supported_operations = frozenset({'code', 'push'})
+
+    def _available_operations(self) -> frozenset[str] | None:
+        provider = getattr(self.worker, 'available_operations', None)
+        if not callable(provider):
+            return self.engine.supported_operations
+        return provider()
+
+    def _worker_ready(self, available: frozenset[str] | None) -> bool:
+        if callable(getattr(self.worker, 'available_operations', None)):
+            return bool(available)
+        return self.worker.ready()
 
     def _recovery_generations(self) -> dict[str, int]:
         """A quarantined task is inspected once per interruption/operator request."""
@@ -169,7 +202,10 @@ class HoldingService:
         # a health subprocess. The supervisor may boot suspended so its
         # Control Center can later issue Resume without requiring model access.
         suspended = self.engine.store.background_suspended()
-        if not suspended and not self.worker.ready():
+        available = self._available_operations()
+        if not suspended and (
+                available is not None and not available
+                or not self._worker_ready(available)):
             raise AgentUnavailable("Coding agent unavailable; refusing to claim tasks")
         quarantined = self.engine.start()
         self._started = True
@@ -210,24 +246,30 @@ class HoldingService:
                 resources = self.resource_guard.check()
                 if not resources.safe:
                     result = Tick("RESOURCE_PRESSURE", None, resources.reason)
-                elif self.worker.ready():
-                    if self._recovery_git is not None:
-                        try:
-                            self._recover_new_interruptions()
-                        except LeaseError:
-                            return Tick('LEASE_LOST', None, 'Lease lost during recovery')
-                    # Signed QA FAIL may safely requeue the SAME mission on
-                    # a clean exact-SHA branch. Independent missions continue.
-                    if self._qa_repair is not None:
-                        try:
-                            self._qa_repair.requeue_one()
-                        except (LeaseError, StoreError) as failure:
-                            if isinstance(failure, StoreError) and str(failure) != 'DAEMON_LEASE_LOST':
-                                raise
-                            return Tick('LEASE_LOST', None, 'Lease lost during QA repair')
-                    result = self.engine.tick()
                 else:
-                    result = Tick("AGENT_UNAVAILABLE", None, "Coding agent unavailable")
+                    available = self._available_operations()
+                    if available is not None:
+                        self.engine.supported_operations = available
+                    if ((available is None or available)
+                            and self._worker_ready(available)):
+                        if self._recovery_git is not None:
+                            try:
+                                self._recover_new_interruptions()
+                            except LeaseError:
+                                return Tick('LEASE_LOST', None, 'Lease lost during recovery')
+                        # Signed QA FAIL may safely requeue the SAME mission on
+                        # a clean exact-SHA branch. Independent missions continue.
+                        if self._qa_repair is not None:
+                            try:
+                                self._qa_repair.requeue_one()
+                            except (LeaseError, StoreError) as failure:
+                                if isinstance(failure, StoreError) and str(failure) != 'DAEMON_LEASE_LOST':
+                                    raise
+                                return Tick('LEASE_LOST', None, 'Lease lost during QA repair')
+                        result = self.engine.tick()
+                    else:
+                        result = Tick("AGENT_UNAVAILABLE", None,
+                                      "No trusted role adapter is ready")
             iterations += 1
             if result.action in {"STOPPED", "LEASE_LOST"}:
                 return result

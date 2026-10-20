@@ -52,7 +52,6 @@ class GitPushMissionWorker:
     def ready(self) -> bool:
         try:
             self.git.inspect_canonical()
-            self.lease.assert_owned()
             return True
         except Exception:
             return False

@@ -47,7 +47,11 @@ Cette PR Draft vérifie ensemble les contrats développés séparément dans :
 - Un contexte absent (ancienne base), corrompu ou incohérent bloque la récupération.
 - Cette PR ne rend pas les PR #1, #3 ou #7 prêtes à fusionner et ne remplace pas leur certification finale.
 - Le worker `push` existe mais le bootstrap multi-rôle ne l'installe pas encore à
-  côté du worker de code ; cette activation reste un lot séparé.
+  côté du worker de code par défaut. Le routeur multi-rôle et le hook de bootstrap
+  trusted `enable_git_push` sont implémentés avec capacités dynamiques : un rôle
+  indisponible n'est pas réclamé et ne bloque pas un autre rôle sain. Le fichier
+  d'installation v1 n'apporte toutefois pas encore l'identité/policy GitHub ni
+  une sonde réseau authentifiée ; l'activation installée reste donc incomplète.
 
 ## Contrats GitHub vérifiés
 
