@@ -101,7 +101,7 @@ class OllamaServiceTests(unittest.TestCase):
                 with Installation.load(install).build_service() as service:
                     self.assertEqual(service.start(), ())
                     result = service.run(max_ticks=1)
-                    self.assertEqual(result.action, 'QA_PENDING')
+                    self.assertEqual(result.action, 'QA_PENDING', result)
                     mission = service.engine.store.missions()[0]
                     self.assertEqual(mission.state, 'QA_PENDING')
                     self.assertEqual(mission.evidence_sha, '')
