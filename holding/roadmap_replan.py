@@ -142,6 +142,7 @@ class SafeRoadmapReplanner:
 
     def _expand_direction(self, raw: str) -> tuple[str, str]:
         """Merge explicit incremental requirements with all stored prior work."""
+        self._require_existing_roadmap()
         doc, _jobs, specifications, delta_digest = self._parse(raw, incremental=True)
         merged: dict[str, dict] = {}
         for row in self.store.db.execute(
