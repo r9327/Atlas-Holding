@@ -44,7 +44,10 @@ def main(argv: list[str] | None = None) -> int:
         source = args.source if args.source is not None else f"file:{path.resolve()}"
         try:
             with ControlPlane(args.db) as control:
-                imported = asdict(control.import_roadmap(raw, source=source))
+                if args.action == "import":
+                    imported = asdict(control.import_roadmap(raw, source=source))
+                else:
+                    imported = asdict(control.amend_roadmap(raw, source=source))
         except StoreError as exc:
             parser.error(f"roadmap rejected: {exc}")
         print(json.dumps(imported, sort_keys=True, separators=(",", ":")))
