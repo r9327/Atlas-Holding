@@ -1,1 +1,1 @@
-"""Atlas Holding bootstrap, offline core, agents, MCP, and privileged adapters."""
+"""Atlas Holding bootstrap, core, agents, MCP, adapters, and UI contracts."""
