@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 from io import BytesIO
+import os
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -11,6 +13,21 @@ from holding import inventory as inv
 
 
 class InventoryTests(unittest.TestCase):
+    def test_program_probe_does_not_inherit_session_secrets(self):
+        before = os.environ.get("GITHUB_TOKEN")
+        os.environ["GITHUB_TOKEN"] = "must-not-reach-probe"
+        try:
+            code, output = inv._command(
+                sys.executable,
+                ("-c", "import os; print(os.getenv('GITHUB_TOKEN'))"),
+            )
+        finally:
+            if before is None:
+                os.environ.pop("GITHUB_TOKEN", None)
+            else:
+                os.environ["GITHUB_TOKEN"] = before
+        self.assertEqual((code, output), (0, "None"))
+
     def test_program_not_found_is_never_called(self):
         with patch.object(inv.shutil, "which", return_value=None):
             with patch.object(inv, "_command") as run:

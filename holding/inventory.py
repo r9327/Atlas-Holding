@@ -17,6 +17,11 @@ import sys
 from typing import Callable
 from urllib import request
 
+_PROBE_ENVIRONMENT = {
+    "PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "TMPDIR",
+    "LANG", "LC_ALL", "PYTHONUTF8", "PYTHONIOENCODING",
+}
+
 
 class _NoRedirect(request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -63,9 +68,19 @@ class Inventory:
 
 
 def _command(executable: str, args: tuple[str, ...], *, timeout: float = 2.0) -> tuple[int, str]:
+    environment = {
+        key: value for key, value in os.environ.items()
+        if key.upper() in _PROBE_ENVIRONMENT
+    }
+    environment.update(
+        GIT_TERMINAL_PROMPT="0",
+        PYTHONNOUSERSITE="1",
+        NO_PROXY="127.0.0.1,localhost",
+    )
     try:
         completed = subprocess.run([executable, *args], capture_output=True, text=True,
-                                   stdin=subprocess.DEVNULL, timeout=timeout, check=False)
+                                   stdin=subprocess.DEVNULL, timeout=timeout, check=False,
+                                   env=environment)
     except (OSError, subprocess.TimeoutExpired):
         return -1, ""
     return completed.returncode, (completed.stdout or completed.stderr)[:8192].strip()
