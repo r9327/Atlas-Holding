@@ -56,7 +56,7 @@ class MigrationTests(unittest.TestCase):
             'scoped_qa_advisories','scoped_qa_retries','qa_repair_attempts',
             'roadmap_versions','mission_specs','roadmap_amendments',
             'external_service_health','github_sync_attempts',
-            'github_sync_context',
+            'github_sync_context','github_authorization_grants',
         }.issubset(tables))
 
     def test_reopened_v1_database_preserves_legacy_rows(self):
@@ -117,6 +117,23 @@ class MigrationTests(unittest.TestCase):
         self.assertIsNotNone(self.store.db.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' "
             "AND name='github_sync_context'"
+        ).fetchone())
+
+    def test_v4_database_upgrades_github_grant_storage_with_backup(self):
+        from holding.schema import RUNTIME_SCHEMA_V4
+
+        apply_schema(
+            self.store.db,
+            MODEL_SCHEMA_V1 + RUNTIME_SCHEMA_V2 + RUNTIME_SCHEMA_V3
+            + RUNTIME_SCHEMA_V4,
+        )
+        self.store.db.execute('PRAGMA user_version=4')
+        result = self.migrator.ensure(lease_owner=self.lease.owner)
+        self.assertEqual((result.from_version, result.to_version), (4, CURRENT_SCHEMA))
+        self.assertIsNotNone(result.backup)
+        self.assertIsNotNone(self.store.db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='github_authorization_grants'"
         ).fetchone())
 
     def test_invalid_source_integrity_refuses_backup_and_mutation(self):

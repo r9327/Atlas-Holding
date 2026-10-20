@@ -209,6 +209,19 @@ SYNC_RECOVERY_SCHEMA = (
     )""",
 )
 RUNTIME_SCHEMA_V4 = SYNC_RECOVERY_SCHEMA
+GITHUB_GRANT_SCHEMA = (
+    """CREATE TABLE IF NOT EXISTS github_authorization_grants (
+        repo TEXT PRIMARY KEY,
+        raw_grant BLOB NOT NULL,
+        grant_sha256 TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        policy_sha TEXT NOT NULL,
+        expires_epoch INTEGER NOT NULL,
+        enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+        updated_epoch INTEGER NOT NULL
+    )""",
+)
+RUNTIME_SCHEMA_V5 = GITHUB_GRANT_SCHEMA
 
 
 def apply_schema(db: sqlite3.Connection, statements: Iterable[str]) -> None:

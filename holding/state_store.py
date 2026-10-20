@@ -18,6 +18,10 @@ from typing import Iterable, Iterator
 
 from .autonomy import Decision, KNOWN_OPERATIONS, Mission, StandingGrant, choose_next
 from .schema import CORE_SCHEMA, apply_schema
+from .standing_grant import (
+    StandingGrantError, authorize_operation, serialize_github_authorization,
+    validate_standing_grant_record,
+)
 
 SHA_RE = re.compile(r"^[a-fA-F0-9]{40}$")
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -191,7 +195,85 @@ class StateStore:
             raise StoreError("Invalid exact repository")
         with self._transaction():
             self.db.execute("UPDATE grants SET enabled=0 WHERE repo=?", (repo,))
+            if self.db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' "
+                    "AND name='github_authorization_grants'").fetchone():
+                self.db.execute(
+                    "UPDATE github_authorization_grants SET enabled=0 WHERE repo=?",
+                    (repo,))
             self._event(None, "GRANT_REVOKED", repo)
+
+    def install_github_grant_for_onboarding(
+        self, raw_grant: bytes, *, expected_record_sha256: str,
+        observed_account_id: str, expected_policy_sha: str,
+        repository: str, now_epoch: int, lease_owner: str,
+    ) -> None:
+        """Persist authenticated consent metadata; never stores a GitHub token."""
+        try:
+            record = validate_standing_grant_record(
+                raw_grant, expected_record_sha256=expected_record_sha256,
+                expected_policy_sha=expected_policy_sha,
+                observed_account_id=observed_account_id,
+                repository=repository, now_epoch=now_epoch)
+        except StandingGrantError as exc:
+            raise StoreError("Invalid GitHub onboarding grant") from exc
+        with self._transaction():
+            self._assert_daemon_fence(lease_owner)
+            try:
+                self.db.execute(
+                    """INSERT INTO github_authorization_grants(
+                       repo,raw_grant,grant_sha256,account_id,policy_sha,
+                       expires_epoch,enabled,updated_epoch)
+                       VALUES(?,?,?,?,?,?,1,?)
+                       ON CONFLICT(repo) DO UPDATE SET
+                       raw_grant=excluded.raw_grant,
+                       grant_sha256=excluded.grant_sha256,
+                       account_id=excluded.account_id,
+                       policy_sha=excluded.policy_sha,
+                       expires_epoch=excluded.expires_epoch,
+                       enabled=1,updated_epoch=excluded.updated_epoch""",
+                    (repository, raw_grant, record.grant_sha256,
+                     record.account_id, record.policy_sha,
+                     record.expires_at, now_epoch))
+            except sqlite3.OperationalError as exc:
+                raise StoreError("GitHub grant schema is not installed") from exc
+            self._event(None, "GITHUB_GRANT_INSTALLED",
+                        f"{repository}:{record.grant_id}:{record.grant_sha256}")
+
+    def github_authorization_receipt(
+        self, *, repository: str, operation: str, branch: str,
+        candidate_sha: str, expected_account_id: str,
+        expected_policy_sha: str, now_epoch: int,
+    ) -> tuple[bytes, str]:
+        """Revalidate persisted consent and bind a fresh exact-SHA receipt."""
+        try:
+            row = self.db.execute(
+                "SELECT * FROM github_authorization_grants WHERE repo=?",
+                (repository,)).fetchone()
+        except sqlite3.OperationalError as exc:
+            raise StoreError("GitHub grant schema is not installed") from exc
+        if row is None or not bool(row["enabled"]):
+            raise StoreError("No active GitHub authorization grant")
+        if (row["account_id"] != expected_account_id
+                or row["policy_sha"] != expected_policy_sha
+                or type(row["raw_grant"]) is not bytes
+                or type(row["expires_epoch"]) is not int
+                or type(row["enabled"]) is not int
+                or row["expires_epoch"] <= now_epoch):
+            raise StoreError("GitHub authorization metadata is stale")
+        try:
+            decision = authorize_operation(
+                row["raw_grant"],
+                expected_record_sha256=row["grant_sha256"],
+                expected_policy_sha=expected_policy_sha,
+                observed_account_id=expected_account_id,
+                repository=repository, operation=operation,
+                now_epoch=now_epoch, branch=branch,
+                candidate_sha=candidate_sha)
+            receipt = serialize_github_authorization(decision)
+        except StandingGrantError as exc:
+            raise StoreError("GitHub authorization revalidation failed") from exc
+        return receipt, hashlib.sha256(receipt).hexdigest()
 
     def set_paused(self, paused: bool) -> None:
         with self._transaction():

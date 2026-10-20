@@ -12,6 +12,9 @@ Cette PR Draft vérifie ensemble les contrats développés séparément dans :
 2. La santé GitHub doit être `ONLINE`, récente et persistée sous le lease courant.
 3. L'état actuel de la PR est observé et lié au dépôt, numéro, branche et SHA exacts.
 4. Le gate produit une intention bornée par le reçu, le compte et la policy attendue.
+   Le grant GitHub complet est conservé comme BLOB avec son empreinte dans le
+   schéma SQLite v5 ; il est réauthentifié à chaque reçu exact-SHA et une
+   révocation désactive atomiquement les scopes locaux et GitHub.
 5. Le journal SQLite écrit `PENDING` avant l'appel privilégié.
 6. L'opération est réobservée après mutation avant de devenir `SUCCEEDED`.
 7. Une issue réseau ambiguë reste `PENDING` et impose une inspection ; elle n'est jamais rejouée.
