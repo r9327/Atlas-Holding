@@ -36,6 +36,8 @@ elif action=="observe_full":
     result={"repository":payload["repository"],"pr_number":payload["pr_number"],
       "candidate_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","run_id":77,
       "job_id":88,"status":"FULL_VERIFIED_BY_GITHUB"}
+elif action=="observe_account":
+    result={"account_id":"github:r9327"}
 else:
     result={}
 json.dump({"schema_version":1,"request_id":request["request_id"],
@@ -66,6 +68,7 @@ class GitHubBrokerProtocolTests(unittest.TestCase):
         self.control = GitHubBrokerProcessControl(self.config)
 
     def test_real_broker_roundtrip_returns_strict_pr_and_full_records(self):
+        self.assertEqual(self.control.observe_account(), "github:r9327")
         state = self.control.observe_pr(REPO, 42)
         full = self.control.observe_full(REPO, 42)
         self.assertEqual((state.head_sha, state.ci_run_id), (SHA, 10))

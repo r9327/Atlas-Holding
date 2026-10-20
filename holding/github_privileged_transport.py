@@ -27,6 +27,7 @@ _BRANCH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _NODE_ID = re.compile(r"^[A-Za-z0-9_+=:/.-]{1,512}$")
+_LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
 _MUTATING_OPERATIONS = frozenset({
     "github.pr_draft", "github.pr_ready", "github.ci_trigger", "github.merge",
 })
@@ -35,6 +36,10 @@ _MUTATING_OPERATIONS = frozenset({
 class _NoRedirect(request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
+
+
+class GitHubCredentialRejected(GitHubEvidenceError):
+    """The authenticated account probe was explicitly rejected by GitHub."""
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -113,6 +118,16 @@ class GitHubPrivilegedTransport:
         except error.HTTPError as exc:
             if mutation:
                 raise self._mutation_http_failure(exc) from None
+            remaining = (
+                exc.headers.get("X-RateLimit-Remaining")
+                if exc.headers else None)
+            retry_after = exc.headers.get("Retry-After") if exc.headers else None
+            rate_limited = (
+                exc.code == 429
+                or (exc.code == 403 and (remaining == "0" or retry_after)))
+            if exc.code in {401, 403} and not rate_limited:
+                raise GitHubCredentialRejected(
+                    "GitHub credential rejected") from None
             raise GitHubEvidenceError("GitHub observation rejected") from None
         except (OSError, ValueError, error.URLError):
             if mutation:
@@ -159,6 +174,14 @@ class GitHubPrivilegedTransport:
         if not isinstance(value, dict):
             raise GitHubEvidenceError("Missing GitHub PR observation")
         return value
+
+    def observe_account(self) -> str:
+        """Authenticate the broker credential and return only a stable account id."""
+        value = self._request("GET", "https://api.github.com/user")
+        login = value.get("login") if isinstance(value, dict) else None
+        if not isinstance(login, str) or not _LOGIN.fullmatch(login):
+            raise GitHubEvidenceError("Malformed GitHub account observation")
+        return "github:" + login
 
     def _state(
         self, pull: dict[str, Any], pr_number: int, *, include_ci: bool,

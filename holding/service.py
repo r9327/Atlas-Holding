@@ -76,6 +76,7 @@ class HoldingService:
         self._recovery_seen: dict[str, int] = {}
         self._qa_repair = None
         self._git = recovery_git
+        self._github_health = None
 
     @classmethod
     def from_local_agent(cls, settings: ServiceSettings, *, program,
@@ -135,7 +136,7 @@ class HoldingService:
 
     def enable_git_push(
         self, *, expected_account_id: str, expected_policy_sha: str,
-        control_factory=None,
+        control_factory=None, health_probe=None,
     ) -> None:
         """Trusted bootstrap hook; never callable from roadmap/model content."""
         if self._started or self._git is None:
@@ -151,6 +152,12 @@ class HoldingService:
             control_factory=control_factory)
         self.worker.add('push', adapter)
         self.engine.supported_operations = frozenset({'code', 'push'})
+        if health_probe is not None:
+            from .github_health import GitHubHealthMonitor
+            self._github_health = GitHubHealthMonitor(
+                self.engine.store, self.engine.lease, health_probe,
+                expected_account_id=expected_account_id)
+            self.engine.online = self._github_health.online
 
     def _available_operations(self) -> frozenset[str] | None:
         provider = getattr(self.worker, 'available_operations', None)
@@ -243,6 +250,16 @@ class HoldingService:
                 # Do not even start health probes or models during Pause.
                 result = Tick("WAIT", None, "Holding paused")
             else:
+                if self._github_health is not None:
+                    try:
+                        self._github_health.refresh()
+                    except (LeaseError, StoreError) as failure:
+                        if (isinstance(failure, StoreError)
+                                and str(failure) != 'DAEMON_LEASE_LOST'):
+                            raise
+                        return Tick(
+                            'LEASE_LOST', None,
+                            'Lease lost during GitHub health probe')
                 resources = self.resource_guard.check()
                 if not resources.safe:
                     result = Tick("RESOURCE_PRESSURE", None, resources.reason)

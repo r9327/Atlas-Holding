@@ -5,7 +5,9 @@ from urllib import error
 
 from holding.github_full_evidence import FullEvidence, GitHubEvidenceError
 from holding.github_mutation_gate import GitHubMutationIntent
-from holding.github_privileged_transport import GitHubPrivilegedTransport
+from holding.github_privileged_transport import (
+    GitHubCredentialRejected, GitHubPrivilegedTransport,
+)
 from holding.sync_coordinator import MutationFailure
 
 
@@ -80,6 +82,30 @@ class GitHubPrivilegedTransportTests(unittest.TestCase):
             "2026-03-10",
         )
         self.assertNotIn(TOKEN, repr(state))
+
+    def test_account_probe_uses_fixed_user_endpoint_and_returns_no_token(self):
+        opener = FakeOpener(Reply({"login": "r9327", "private": "ignored"}))
+        account = self.transport(opener).observe_account()
+        self.assertEqual(account, "github:r9327")
+        self.assertEqual(opener.requests[0].full_url, "https://api.github.com/user")
+        self.assertEqual(
+            opener.requests[0].get_header("Authorization"), "Bearer " + TOKEN)
+        self.assertNotIn(TOKEN, account)
+
+    def test_account_probe_distinguishes_explicit_credential_rejection(self):
+        denied = error.HTTPError(
+            "https://api.github.com/user", 401, "private detail", {}, None)
+        with self.assertRaises(GitHubCredentialRejected) as raised:
+            self.transport(FakeOpener(denied)).observe_account()
+        self.assertNotIn(TOKEN, str(raised.exception))
+
+    def test_account_probe_does_not_treat_rate_limit_as_bad_credentials(self):
+        limited = error.HTTPError(
+            "https://api.github.com/user", 403, "private detail",
+            {"X-RateLimit-Remaining": "0"}, None)
+        with self.assertRaises(GitHubEvidenceError) as raised:
+            self.transport(FakeOpener(limited)).observe_account()
+        self.assertNotIsInstance(raised.exception, GitHubCredentialRejected)
 
     def test_cross_repository_pull_is_rejected(self):
         bad = pull()

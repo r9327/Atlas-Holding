@@ -165,6 +165,18 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(outcome.action, "LEASE_LOST")
             service._qa_repair.requeue_one.assert_called_once()
 
+    def test_lost_lease_during_github_probe_stops_without_dispatch(self):
+        from holding.daemon_lease import LeaseError
+        from unittest.mock import Mock
+        worker = FakeWorker()
+        with self.make(worker) as service:
+            service.start()
+            service._github_health = Mock()
+            service._github_health.refresh.side_effect = LeaseError("lost")
+            outcome = service.run(max_ticks=1)
+            self.assertEqual(outcome.action, "LEASE_LOST")
+            self.assertEqual(worker.calls, [])
+
     def test_no_second_headless_writer(self):
         with self.make(FakeWorker()) as primary:
             primary.start()

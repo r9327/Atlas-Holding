@@ -19,7 +19,19 @@ from .sync_coordinator import LiveGitHubState, MutationFailure
 SCHEMA_VERSION = 1
 MAX_MESSAGE_BYTES = 64 * 1024
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
-_REQUEST_ACTIONS = frozenset({"observe_pr", "observe_full", "mutate"})
+_REQUEST_ACTIONS = frozenset({
+    "observe_account", "observe_pr", "observe_full", "mutate",
+})
+_ACCOUNT = re.compile(
+    r"^github:[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
+
+
+class GitHubAccountProbeError(RuntimeError):
+    def __init__(self, code: str):
+        if code not in {"TRANSIENT_UNAVAILABLE", "RATE_LIMITED", "REJECTED"}:
+            raise ValueError("Invalid account probe failure")
+        super().__init__(code)
+        self.code = code
 
 
 @dataclass(frozen=True)
@@ -231,6 +243,12 @@ class GitHubBrokerProcessControl:
                     or type(response["outcome_known"]) is not bool):
                 raise GitHubEvidenceError("Invalid privileged broker error")
             if not mutation:
+                if action == "observe_account":
+                    try:
+                        raise GitHubAccountProbeError(response["code"])
+                    except (TypeError, ValueError):
+                        raise GitHubAccountProbeError(
+                            "TRANSIENT_UNAVAILABLE") from None
                 raise GitHubEvidenceError("Privileged GitHub observation failed")
             try:
                 raise MutationFailure(
@@ -274,6 +292,14 @@ class GitHubBrokerProcessControl:
                     and not isinstance(result["ci_head_sha"], str))):
             raise GitHubEvidenceError("Invalid privileged PR observation") from None
         return LiveGitHubState(**result)
+
+    def observe_account(self) -> str:
+        result = self._invoke("observe_account", {}, mutation=False)
+        if (set(result) != {"account_id"}
+                or not isinstance(result["account_id"], str)
+                or not _ACCOUNT.fullmatch(result["account_id"])):
+            raise GitHubEvidenceError("Invalid privileged account observation")
+        return result["account_id"]
 
     def observe_full(self, repository: str, pr_number: int) -> FullEvidence:
         result = self._invoke(

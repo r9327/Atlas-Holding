@@ -10,6 +10,10 @@ Cette PR Draft vérifie ensemble les contrats développés séparément dans :
 
 1. Une décision issue du standing grant est sérialisée en reçu canonique.
 2. La santé GitHub doit être `ONLINE`, récente et persistée sous le lease courant.
+   Une sonde authentifiée fermée interroge uniquement `/user` dans le broker,
+   ne restitue que `github:<login>` et exige deux observations concordantes.
+   Une identité inattendue ou un rejet explicite bloque ; les erreurs réseau et
+   limitations temporaires suivent le backoff SQLite borné sans fabriquer `ONLINE`.
 3. L'état actuel de la PR est observé et lié au dépôt, numéro, branche et SHA exacts.
 4. Le gate produit une intention bornée par le reçu, le compte et la policy attendue.
    Le grant GitHub complet est conservé comme BLOB avec son empreinte dans le
@@ -51,7 +55,9 @@ Cette PR Draft vérifie ensemble les contrats développés séparément dans :
   trusted `enable_git_push` sont implémentés avec capacités dynamiques : un rôle
   indisponible n'est pas réclamé et ne bloque pas un autre rôle sain. Le fichier
   d'installation v1 n'apporte toutefois pas encore l'identité/policy GitHub ni
-  une sonde réseau authentifiée ; l'activation installée reste donc incomplète.
+  la configuration épinglée du broker à `enable_git_push` ; l'activation dans
+  le daemon installé reste donc incomplète, même si la sonde authentifiée et son
+  hystérésis sont désormais implémentées.
 
 ## Contrats GitHub vérifiés
 

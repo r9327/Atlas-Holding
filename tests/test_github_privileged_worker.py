@@ -6,6 +6,7 @@ from holding.github_broker_protocol import SCHEMA_VERSION
 from holding.github_full_evidence import FullEvidence
 from holding.github_mutation_gate import GitHubMutationIntent
 from holding.github_privileged_worker import handle_request
+from holding.github_privileged_transport import GitHubCredentialRejected
 from holding.sync_coordinator import LiveGitHubState, MutationFailure
 
 
@@ -35,6 +36,12 @@ class FakeTransport:
             REPO, 42, BRANCH, SHA, "open", True, True,
             ci_run_id=10, ci_head_sha=SHA)
 
+    def observe_account(self):
+        self.calls.append(("observe_account",))
+        if self.failure:
+            raise self.failure
+        return "github:r9327"
+
     def observe_full(self, repository, pr_number):
         self.calls.append(("observe_full", repository, pr_number))
         return FullEvidence(REPO, 42, SHA, 77, 88)
@@ -46,6 +53,22 @@ class FakeTransport:
 
 
 class PrivilegedWorkerTests(unittest.TestCase):
+    def test_account_probe_returns_only_stable_identity(self):
+        transport = FakeTransport()
+        response = json.loads(handle_request(
+            request("observe_account", {}), transport))
+        self.assertEqual(response["result"], {"account_id": "github:r9327"})
+        self.assertEqual(transport.calls, [("observe_account",)])
+
+    def test_account_probe_credential_rejection_is_stable_and_nonretryable(self):
+        transport = FakeTransport(GitHubCredentialRejected("private-token-detail"))
+        response = json.loads(handle_request(
+            request("observe_account", {}), transport))
+        self.assertEqual(response["status"], "ERROR")
+        self.assertEqual(response["code"], "REJECTED")
+        self.assertFalse(response["retryable"])
+        self.assertNotIn("private-token-detail", json.dumps(response))
+
     def test_observation_roundtrip_is_canonical_and_secret_free(self):
         transport = FakeTransport()
         raw = request("observe_pr", {"repository": REPO, "pr_number": 42})

@@ -20,14 +20,18 @@ if __package__ in {None, ""}:
     from holding.github_evidence_cli import read_token_file
     from holding.github_full_evidence import GitHubEvidenceError
     from holding.github_mutation_gate import GitHubMutationIntent
-    from holding.github_privileged_transport import GitHubPrivilegedTransport
+    from holding.github_privileged_transport import (
+        GitHubCredentialRejected, GitHubPrivilegedTransport,
+    )
     from holding.sync_coordinator import MutationFailure
 else:
     from .github_broker_protocol import MAX_MESSAGE_BYTES, SCHEMA_VERSION
     from .github_evidence_cli import read_token_file
     from .github_full_evidence import GitHubEvidenceError
     from .github_mutation_gate import GitHubMutationIntent
-    from .github_privileged_transport import GitHubPrivilegedTransport
+    from .github_privileged_transport import (
+        GitHubCredentialRejected, GitHubPrivilegedTransport,
+    )
     from .sync_coordinator import MutationFailure
 
 
@@ -74,7 +78,8 @@ def handle_request(raw: bytes, transport: GitHubPrivilegedTransport) -> bytes:
         if (value["schema_version"] != SCHEMA_VERSION
                 or not isinstance(request_id, str) or len(request_id) != 64
                 or any(character not in "0123456789abcdef" for character in request_id)
-                or action not in {"observe_pr", "observe_full", "mutate"}
+                or action not in {
+                    "observe_account", "observe_pr", "observe_full", "mutate"}
                 or not isinstance(payload, dict)):
             raise ValueError("invalid request")
         expected_id = hashlib.sha256(_canonical({
@@ -84,7 +89,15 @@ def handle_request(raw: bytes, transport: GitHubPrivilegedTransport) -> bytes:
         })).hexdigest()
         if request_id != expected_id:
             raise ValueError("request integrity")
-        if action in {"observe_pr", "observe_full"}:
+        if action == "observe_account":
+            if payload:
+                raise ValueError("invalid account observation")
+            response = {
+                "schema_version": SCHEMA_VERSION, "request_id": request_id,
+                "status": "OK",
+                "result": {"account_id": transport.observe_account()},
+            }
+        elif action in {"observe_pr", "observe_full"}:
             if set(payload) != {"repository", "pr_number"}:
                 raise ValueError("invalid observation")
             result = (
@@ -117,6 +130,9 @@ def handle_request(raw: bytes, transport: GitHubPrivilegedTransport) -> bytes:
         return encoded
     except MutationFailure as exc:
         return _error(request_id, exc)
+    except GitHubCredentialRejected:
+        return _error(request_id, MutationFailure(
+            "REJECTED", retryable=False, outcome_known=True))
     except GitHubEvidenceError:
         return _error(request_id, MutationFailure(
             "TRANSIENT_UNAVAILABLE", retryable=True, outcome_known=True))
