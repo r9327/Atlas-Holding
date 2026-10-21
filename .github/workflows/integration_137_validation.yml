@@ -57,7 +57,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: |
           $output = Join-Path $env:RUNNER_TEMP "atlas-control-center-candidate-$env:GITHUB_RUN_ID"
-          python -B -m holding.windows_control_center_build --kind both --output-dir "$output"
+          python -B -m holding.windows_control_center_build --kind all --output-dir "$output"
           if ($LASTEXITCODE -ne 0) { throw "Native Control Center packaging failed" }
           $exe = Join-Path $output "AtlasHoldingControlCenter.exe"
           if (!(Test-Path $exe) -or (Get-Item $exe).Length -lt 1000000) {
@@ -79,6 +79,15 @@ jobs:
           python -B -X utf8 tests/native_windows_runtime_smoke.py --viewer "$exe" --engine "$engine"
           if ($LASTEXITCODE -ne 0) { throw "Frozen GUI-to-engine native private-pipe smoke failed" }
           Write-Output "NONRELEASE_ENGINE_SQLITE_SMOKE_PASS"
+          $agent = Join-Path $output "AtlasHoldingAgent.exe"
+          if (!(Test-Path $agent) -or (Get-Item $agent).Length -lt 1000000) {
+            throw "Frozen local agent executable is missing or incomplete"
+          }
+          python -B -X utf8 tests/native_windows_agent_smoke.py --agent "$agent"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Frozen local agent failed native Ollama protocol v1"
+          }
+          Write-Output "Agent SHA256: $((Get-FileHash -Algorithm SHA256 $agent).Hash.ToLowerInvariant())"
           Write-Output "Viewer SHA256: $((Get-FileHash -Algorithm SHA256 $exe).Hash.ToLowerInvariant())"
           Write-Output "Engine SHA256: $((Get-FileHash -Algorithm SHA256 $engine).Hash.ToLowerInvariant())"
           Remove-Item -Force -Recurse "$output"
