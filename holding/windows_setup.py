@@ -37,8 +37,8 @@ from .windows_runtime_payload import (
 )
 from .windows_engine_enrollment import (
     EngineEnrollmentError, EngineEnrollmentRequest,
-    prepare_protected_engine_roots, enroll_pinned_engine,
-    launch_enrolled_engine,
+    protect_approved_install_root, prepare_protected_engine_roots,
+    enroll_pinned_engine, launch_enrolled_engine,
 )
 from .windows_runtime_acl import validate_runtime_acl, secure_runtime_acl
 
@@ -375,9 +375,10 @@ def configure_and_launch_engine(
     digest = hashlib.sha256(agent.read_bytes()).hexdigest()
     if digest != adapter_sha256:
         raise EngineEnrollmentError("Installed agent does not match trusted release pin")
-    # All of the installed code, including the local adapter, must be protected
-    # *before* creating any configuration or launching a subprocess.
-    for path in (install_root, agent_folder, agent):
+    # Root ACL modifications are separately approved in the first-run dialog.
+    # They are never attempted against a drive or user profile root.
+    protect_approved_install_root(install_root, approved=True)
+    for path in (agent_folder, agent):
         validate_runtime_acl(path)
     # Unrelated user data is never silently ACL-repaired. Data roots may be
     # added only under the already-protected approved installation root.
@@ -781,8 +782,10 @@ def main(argv: list[str] | None = None) -> int:
         if not messagebox.askyesno(
             "Configuration du moteur",
             "Configurer le moteur local avec l'adaptateur fourni et vérifié ? "
-            "Le dépôt Atlas doit être un vrai clone Git. Les dossiers de "
-            "configuration seront protégés, sans fusion GitHub automatique.",
+            "Les permissions du dossier d'installation sélectionné seront "
+            "restreintes à votre compte, SYSTEM et Administrateurs. "
+            "N'utilisez pas un dossier contenant des fichiers partagés. "
+            "Le dépôt Atlas doit être un vrai clone Git. Aucune fusion GitHub.",
         ):
             return
         run_it = messagebox.askyesno(
