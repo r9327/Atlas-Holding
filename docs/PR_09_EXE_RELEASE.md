@@ -113,3 +113,9 @@ Voir `docs/USER_AUTONOMY_PROFILE.md` en PR #1. Gates non implémentés.
 - [ ] Redémarrer l'EXE après clôture ne rejoue pas les anciennes PR ; nouvelle roadmap ou modification déclenche uniquement le différentiel nécessaire.
 
 Se référer à `ROADMAP.md` de la PR #1 ; le test porte sur un vrai exécutable Windows, pas sur une maquette.
+
+## Répétition native multi-PR des vrais EXE (21 octobre 2026)
+
+Le workflow `.github/workflows/native_packaging_rehearsal.yml` assemble, sur un runner Windows et **sans fusionner les branches**, les commits exacts de la PR #2 (setup) et de la PR #11 (moteur et Control Center). Il compile les deux vrais exécutables, mesure leurs SHA-256, les embarque dans `AtlasHoldingSetup.exe` puis lance le self-test natif du setup et celui des deux composants. Les branches d'entrée sont épinglées à des SHA immuables, leurs checkouts vérifiés et aucun artefact n'est publié comme release.
+
+Le label `ci:package-native` déclenche ce test séparé. Cette épreuve vérifie le **câblage d'emballage et l'extraction réelle**, mais **pas** l'installation complète sur un PC vierge, l'ACL native, le lancement des agents ou une roadmap autonome. La PR reste Draft et les gates de sortie demeurent obligatoires.
