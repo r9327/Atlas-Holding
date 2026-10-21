@@ -1,8 +1,10 @@
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import gc
 import json
 import unittest
+import weakref
 
 from PySide6.QtWidgets import QApplication, QAbstractItemView, QProgressBar
 
@@ -87,6 +89,16 @@ class ControlCenterUiTests(unittest.TestCase):
         self.assertEqual(original.toolTip(), "Updated from engine")
         self.assertEqual(window.tasks.currentRow(), 0)
         window.close()
+
+    def test_journal_filter_connections_do_not_keep_closed_window_alive(self):
+        window = ControlCenterWindow(trusted_engine_id="engine-1")
+        window.render_state(self.state())
+        window.log_search.setText("exact")
+        reference = weakref.ref(window)
+        window.close()
+        del window
+        gc.collect()
+        self.assertIsNone(reference(), "Qt filter signals retained a closed window")
 
     def test_journal_filters_are_local_and_persist_across_snapshots(self):
         window = ControlCenterWindow(trusted_engine_id="engine-1")
