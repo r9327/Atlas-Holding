@@ -72,6 +72,15 @@ if os.name == "nt":
         ctypes.c_void_p, ctypes.POINTER(wintypes.LPWSTR),
     )
     _advapi.ConvertSidToStringSidW.restype = wintypes.BOOL
+    _advapi.ConvertStringSidToSidW.argtypes = (
+        wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_void_p),
+    )
+    _advapi.ConvertStringSidToSidW.restype = wintypes.BOOL
+    _advapi.CheckTokenMembership.argtypes = (
+        wintypes.HANDLE, ctypes.c_void_p,
+        ctypes.POINTER(wintypes.BOOL),
+    )
+    _advapi.CheckTokenMembership.restype = wintypes.BOOL
     _advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = (
         wintypes.LPCWSTR, wintypes.DWORD,
         ctypes.POINTER(ctypes.c_void_p),
@@ -145,6 +154,23 @@ def _current_sid() -> str:
         _kernel.CloseHandle(handle)
 
 
+def _is_elevated_administrator() -> bool:
+    """Check actual enabled group membership, not a name or claim."""
+    sid = ctypes.c_void_p()
+    if not _advapi.ConvertStringSidToSidW(
+            _ADMIN_SID, ctypes.byref(sid)):
+        raise RuntimeAclError("Cannot resolve native Administrators SID")
+    try:
+        allowed = wintypes.BOOL()
+        if not _advapi.CheckTokenMembership(
+                None, sid, ctypes.byref(allowed)):
+            raise RuntimeAclError("Cannot verify elevated Windows membership")
+        return bool(allowed.value)
+    finally:
+        if sid.value:
+            _kernel.LocalFree(sid)
+
+
 def _validate_target(path: Path) -> None:
     if (not isinstance(path, Path) or not path.is_absolute()
             or ".." in path.parts or path.is_symlink()
@@ -174,7 +200,16 @@ def validate_runtime_acl(path: Path) -> None:
         raise RuntimeAclError("Cannot read runtime Windows DACL")
     try:
         account = _current_sid()
-        if not owner.value or _sid_text(owner) != account:
+        if not owner.value:
+            raise RuntimeAclError("Runtime owner unavailable")
+        actual_owner = _sid_text(owner)
+        # Elevated Windows processes may create objects owned by the local
+        # Administrators group. Accept this ONLY when membership is enabled
+        # in the effective token (never a UAC deny-only group). Ordinary users
+        # must own their objects under their exact account SID.
+        if (actual_owner != account
+                and not (actual_owner == _ADMIN_SID
+                         and _is_elevated_administrator())):
             raise RuntimeAclError("Runtime owner is not installer identity")
         if not dacl.value:
             raise RuntimeAclError("Runtime DACL cannot be null")
