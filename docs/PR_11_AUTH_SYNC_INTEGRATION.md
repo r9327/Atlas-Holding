@@ -100,6 +100,26 @@ Il s'agit uniquement du **GUI compilé non-release**. La publication `AtlasHoldi
 - `tests/native_windows_runtime_smoke.py` lance les deux binaires Windows compilés, connecte la GUI à une vraie base SQLite sur loopback avec clé HMAC reçue par pipe, vérifie l'échec d'une fausse clé et teste l'EXE moteur hors ligne. La CI finale doit afficher `NONRELEASE_AUTHENTICATED_GUI_ENGINE_RUNTIME_PASS` en plus de l'autotest Qt.
 - Il s'agit d'une **paire de binaires non-release**. Le setup final, sa signature ou l'avertissement SmartScreen, le compte/ACL Windows sécurisé, l'installation, la reprise et le vrai cycle de développement d'Atlas restent à intégrer et certifier sur machine propre.
 
+## Test Windows : deux vrais processus EXE sur IPC signé
+
+Le test Windows `tests/native_windows_runtime_smoke.py` n'utilise plus de
+serveur IPC Python dans le processus des tests. Il lance maintenant directement
+**`AtlasHoldingEngine.exe --native-ipc-smoke`**, qui initialise une vraie
+base SQLite temporaire et héberge le serveur loopback signé dans le processus
+EXE compilé. La clé HMAC est transmise au moteur par pipe stdin anonyme,
+puis `AtlasHoldingControlCenter.exe --probe` est exécuté avec une clé
+volontairement erronée (refus exigé), suivie de la clé valide
+(snapshot réellement décodé exigé). Le moteur ne rend un résultat positif
+qu'après émission complète d'une réponse signée ; aucun simple numéro de port,
+nonce reçu ou binaire seulement lancé ne satisfait le test. Les deux
+exécutables doivent quitter correctement, sans Python ou serveur externe.
+
+Ce mode diagnostic est local, éphémère, **lecture seule**, interdit avec
+`--config` et avec `--self-test`, n'utilise ni dépôt ni configuration
+installée, et retourne un échec hors Windows. Il constitue une preuve
+d'interopérabilité native, pas une certification du moteur IA en activité ni
+d'une installation avec ACL.
+
 ## Limites explicites
 
 - Aucun token n'est fourni au coordinateur ou stocké dans SQLite.
