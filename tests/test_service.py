@@ -177,6 +177,39 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(outcome.action, "LEASE_LOST")
             self.assertEqual(worker.calls, [])
 
+    def test_broken_gui_teardown_cannot_strand_engine_lease(self):
+        from unittest.mock import Mock
+        first = self.make(FakeWorker())
+        first.start()
+        viewer = Mock()
+        viewer.close.side_effect = OSError("viewer teardown failed")
+        listener = Mock()
+        first._dashboard_session = viewer
+        first._dashboard_ipc = listener
+        with self.assertRaisesRegex(OSError, "viewer teardown"):
+            first.close()
+        listener.close.assert_called_once()
+        self.assertIsNone(first._dashboard_session)
+        self.assertIsNone(first._dashboard_ipc)
+        self.assertFalse(first._started)
+        # Another daemon must be able to acquire the now-released lease.
+        with self.make(FakeWorker()) as successor:
+            successor.start()
+
+    def test_broken_dashboard_listener_cannot_strand_engine_lease(self):
+        from unittest.mock import Mock
+        first = self.make(FakeWorker())
+        first.start()
+        listener = Mock()
+        listener.close.side_effect = OSError("listener teardown failed")
+        first._dashboard_ipc = listener
+        with self.assertRaisesRegex(OSError, "listener teardown"):
+            first.close()
+        listener.close.assert_called_once()
+        self.assertFalse(first._started)
+        with self.make(FakeWorker()) as successor:
+            successor.start()
+
     def test_no_second_headless_writer(self):
         with self.make(FakeWorker()) as primary:
             primary.start()
