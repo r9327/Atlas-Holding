@@ -210,6 +210,12 @@ json.dump({'schema_version':1,'request_id':r['request_id'],'status':'OK',
         self.assertIsNotNone(installation.github)
         self.assertIsNotNone(installation.dashboard)
 
+    def test_engine_frozen_selftest_checks_real_durable_storage_offline(self):
+        from holding.daemon_entry import main
+        self.assertEqual(main(['--self-test']), 0)
+        # Selftest must not be an alternative way to run untrusted config.
+        self.assertEqual(main(['--self-test', '--config', str(self.config)]), 2)
+
     def test_unpinned_inline_code_refused(self):
         self.data['arguments']=['-c','print(123)']
         self.data['argument_sha256']={}
