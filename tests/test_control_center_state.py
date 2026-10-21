@@ -110,6 +110,18 @@ class ControlCenterStateTests(unittest.TestCase):
         with self.assertRaisesRegex(ControlCenterStateError, "Non-DONE"):
             consume(payload)
 
+    def test_done_requires_final_ci_full_not_scoped_or_local_doctor(self):
+        for kind, scope in (("TEST", "SCOPED"), ("DOCTOR", "FULL"),
+                            ("CI", "SCOPED")):
+            payload = snapshot()
+            payload["tasks"][0]["completion_evidence"].update({
+                "kind": kind, "scope": scope,
+            })
+            with self.subTest(kind=kind, scope=scope):
+                with self.assertRaisesRegex(
+                        ControlCenterStateError, "final CI FULL"):
+                    consume(payload)
+
     def test_evidence_must_match_candidate_sha(self):
         payload = snapshot()
         payload["tasks"][0]["completion_evidence"]["sha"] = "c" * 40
