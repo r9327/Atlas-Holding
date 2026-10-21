@@ -45,6 +45,22 @@ class ControlCenterProjectionTests(unittest.TestCase):
         self.assertEqual(task.elapsed_seconds, 9)
         self.assertEqual(payload["network"], "UNKNOWN")
 
+    def test_durable_pause_stop_are_projected_atomically(self):
+        payload, state = self.project()
+        self.assertEqual(payload["schema_version"], 2)
+        self.assertIs(state.paused, False)
+        self.assertIs(state.stop_requested, False)
+        with ControlPlane(self.path) as control:
+            control.pause()
+        payload, state = self.project()
+        self.assertIs(state.paused, True)
+        self.assertIs(state.stop_requested, False)
+        with ControlPlane(self.path) as control:
+            control.request_stop()
+        payload, state = self.project()
+        self.assertIs(state.paused, True)
+        self.assertIs(state.stop_requested, True)
+
     def test_unproved_durable_done_is_visibly_not_verified(self):
         with StateStore(self.path) as store:
             store.db.execute(
