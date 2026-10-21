@@ -114,9 +114,13 @@ def _validate(request: EngineEnrollmentRequest) -> None:
         raise EngineEnrollmentError("Installed runtime pair does not match pins") from exc
 
 
-def _native_security(paths: tuple[Path, ...]) -> None:
+def _require_native_windows() -> None:
     if os.name != "nt":
         raise EngineEnrollmentError("Native Windows ACL enrollment is required")
+
+
+def _native_security(paths: tuple[Path, ...]) -> None:
+    _require_native_windows()
     from .windows_runtime_acl import (
         validate_runtime_acl, secure_runtime_acl,
     )
@@ -137,8 +141,7 @@ def prepare_protected_engine_roots(
     if approved is not True:
         raise EngineEnrollmentError("Installer approval required for config roots")
     _canonical(install_root, directory=True)
-    if os.name != "nt":
-        raise EngineEnrollmentError("Native Windows config protection required")
+    _require_native_windows()
     from .windows_runtime_acl import secure_runtime_acl, validate_runtime_acl
     data = install_root / "data"
     config = install_root / "config"
