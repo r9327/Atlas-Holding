@@ -69,6 +69,8 @@ def stage_required_dependencies(
 
     needed = [action for action in plan.actions
               if action.action in {"INSTALL", "REPAIR"}]
+    service_actions = [action for action in plan.actions
+                       if action.action == "START_SERVICE"]
     missing = [action.name for action in needed if action.name not in manifest]
     if missing:
         return ProvisionExecution(
@@ -80,9 +82,9 @@ def stage_required_dependencies(
         ProvisionStep(action.name, action.action, "REUSED_HEALTHY")
         for action in plan.actions if action.action == "REUSE"
     ]
-    if needed and not authorized:
+    if (needed or service_actions) and not authorized:
         steps.extend(ProvisionStep(action.name, action.action, "AWAITING_APPROVAL")
-                     for action in needed)
+                     for action in needed + service_actions)
         return ProvisionExecution("AUTH_REQUIRED", tuple(steps), ())
 
     for action in needed:
@@ -146,6 +148,9 @@ def stage_required_dependencies(
             status = "STAGED_NATIVE_PROBED"
         steps.append(ProvisionStep(action.name, action.action, status))
 
-    # No native PATH registration, service health, model test or release gate
-    # has been satisfied. Even the all-REUSE case must benchmark its model.
+    steps.extend(ProvisionStep(action.name, action.action,
+                               "SERVICE_START_PENDING")
+                 for action in service_actions)
+    # This executor never starts a service; the consented Windows host does.
+    # No model test or release gate has been satisfied.
     return ProvisionExecution("PAYLOADS_STAGED_NOT_VALIDATED", tuple(steps), ())
