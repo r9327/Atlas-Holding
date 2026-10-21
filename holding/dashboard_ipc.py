@@ -7,6 +7,7 @@ or secure provisioning of the secret; installer ACL enforcement is a release gat
 """
 from __future__ import annotations
 
+from collections import OrderedDict
 import hashlib
 import hmac
 import json
@@ -60,6 +61,8 @@ class _DashboardTCP(socketserver.ThreadingMixIn, socketserver.TCPServer):
         self.key = key
         self.supplier = supplier
         self.slots = threading.BoundedSemaphore(_MAX_CLIENTS)
+        self.nonces: OrderedDict[bytes, None] = OrderedDict()
+        self.nonce_lock = threading.Lock()
         super().__init__(("127.0.0.1", 0), _DashboardHandler)
 
     def process_request(self, request, client_address):
@@ -89,6 +92,13 @@ class _DashboardHandler(socketserver.BaseRequestHandler):
             expected = hmac.new(self.server.key, b"request" + nonce, hashlib.sha256).digest()
             if magic != _MAGIC or not hmac.compare_digest(signature, expected):
                 return
+            # Captured local frames must not become reusable read capabilities.
+            with self.server.nonce_lock:
+                if nonce in self.server.nonces:
+                    return
+                self.server.nonces[nonce] = None
+                if len(self.server.nonces) > 512:
+                    self.server.nonces.popitem(last=False)
             raw = self.server.supplier()
             if type(raw) is not bytes or not 1 <= len(raw) <= MAX_SNAPSHOT_BYTES:
                 return
