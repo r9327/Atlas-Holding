@@ -11,9 +11,12 @@ from dataclasses import dataclass
 import hashlib
 import hmac
 import json
+import os
 from pathlib import Path
 import re
+import sys
 
+from .dashboard_session import DashboardSessionError, ViewerProgram
 from .git_worktree import GitWorktrees
 from .github_broker_protocol import (
     BrokerFilePin, BrokerGitPushControl, BrokerProcessConfig,
@@ -50,6 +53,12 @@ class GitHubInstallation:
 
 
 @dataclass(frozen=True)
+class DashboardInstallation:
+    program: ViewerProgram
+    readonly: bool
+
+
+@dataclass(frozen=True)
 class Installation:
     database: Path
     repository: str
@@ -62,6 +71,7 @@ class Installation:
     argument_sha256: dict[str, str]
     timeout_seconds: float
     github: GitHubInstallation | None = None
+    dashboard: "DashboardInstallation | None" = None
 
     @staticmethod
     def _github_config(info: object) -> GitHubInstallation:
@@ -141,6 +151,42 @@ class Installation:
         return GitHubInstallation(
             info['account_id'], info['policy_sha'], broker)
 
+    @staticmethod
+    def _dashboard_config(info: object) -> DashboardInstallation:
+        expected = {
+            'executable', 'executable_sha256',
+            'script', 'script_sha256', 'readonly',
+        }
+        if not isinstance(info, dict) or set(info) != expected:
+            raise BootstrapError('Invalid installed dashboard contract')
+        if type(info['readonly']) is not bool:
+            raise BootstrapError('Invalid dashboard read permission')
+        executable = info['executable']
+        script = info['script']
+        if (not isinstance(executable, str) or len(executable) > 4096
+                or not executable or '\\x00' in executable
+                or script is not None and (
+                    not isinstance(script, str) or not script
+                    or len(script) > 4096 or '\\x00' in script)):
+            raise BootstrapError('Invalid dashboard executable path')
+        if (not isinstance(info['executable_sha256'], str)
+                or not _DIGEST.fullmatch(info['executable_sha256'])
+                or script is None and info['script_sha256'] is not None
+                or script is not None and (
+                    not isinstance(info['script_sha256'], str)
+                    or not _DIGEST.fullmatch(info['script_sha256']))):
+            raise BootstrapError('Invalid dashboard executable pin')
+        viewer = ViewerProgram(
+            Path(executable), info['executable_sha256'],
+            Path(script) if script is not None else None,
+            info['script_sha256'],
+        )
+        try:
+            viewer.verify()
+        except DashboardSessionError as exc:
+            raise BootstrapError('Installed dashboard binary is not verified') from exc
+        return DashboardInstallation(viewer, info['readonly'])
+
     @classmethod
     def load(cls, filename: Path) -> 'Installation':
         if not filename.is_absolute() or not filename.is_file() or filename.is_symlink():
@@ -155,8 +201,10 @@ class Installation:
                 'health_directory','executable','executable_sha256','arguments',
                 'argument_sha256','timeout_seconds'}
         if (not isinstance(info, dict) or type(info.get('schema')) is not int
-                or info['schema'] not in {1, 2}
-                or set(info) != (base if info['schema'] == 1 else base | {'github'})):
+                or info['schema'] not in {1, 2, 3}
+                or set(info) != (base if info['schema'] == 1 else
+                    base | {'github'} if info['schema'] == 2 else
+                    base | {'github', 'dashboard'})):
             raise BootstrapError('Unknown installer schema or keys')
         locations = {}
         for field in ('database','canonical_root','workspace','health_directory','executable'):
@@ -197,10 +245,19 @@ class Installation:
         digest = _hash_file(exe)
         if digest != checksum:
             raise BootstrapError('Agent executable changed since onboarding')
-        github = cls._github_config(info['github']) if info['schema'] == 2 else None
+        github = (
+            cls._github_config(info['github'])
+            if info['schema'] in {2, 3} and info['github'] is not None else None
+        )
+        # Schema v2 is GitHub-enabled only; schema v3 permits a local-only
+        # viewer when no account is configured, without inventing authority.
+        if info['schema'] == 2 and github is None:
+            raise BootstrapError('GitHub schema requires configured broker')
+        dashboard = (cls._dashboard_config(info['dashboard'])
+                     if info['schema'] == 3 else None)
         return cls(locations['database'],info['repository'],locations['canonical_root'],
                    locations['workspace'],locations['health_directory'],exe,checksum,
-                   tuple(args),pins,float(info['timeout_seconds']),github)
+                   tuple(args),pins,float(info['timeout_seconds']),github,dashboard)
 
     def build_service(self) -> HoldingService:
         git = GitWorktrees(self.canonical_root,self.workspace,self.repository)
@@ -223,6 +280,21 @@ class Installation:
         return service
 
 
+def _is_interactive_windows_session() -> bool:
+    """Reject Windows service Session 0 and unknown process session contexts."""
+    if os.name != 'nt':
+        return True
+    try:
+        import ctypes
+        session = ctypes.c_ulong()
+        query = ctypes.windll.kernel32.ProcessIdToSessionId
+        query.argtypes = (ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong))
+        query.restype = ctypes.c_int
+        return bool(query(os.getpid(), ctypes.byref(session))) and session.value != 0
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog='atlas-holding-daemon')
     parser.add_argument('--config',required=True,type=Path)
@@ -231,6 +303,14 @@ def main(argv: list[str] | None = None) -> int:
     with config.build_service() as service:
         with termination_signals(service):
             service.start()
+            if config.dashboard is not None:
+                # Windows Session 0 cannot host an interactive Qt desktop.
+                # Installer must invoke this under the selected signed-in user.
+                if os.name == 'nt' and not _is_interactive_windows_session():
+                    raise BootstrapError('Dashboard needs a trusted interactive Windows session')
+                service.launch_dashboard(
+                    config.dashboard.program, readonly=config.dashboard.readonly,
+                )
             result=service.run()
             return 0 if result.action == 'STOPPED' else 2
 
