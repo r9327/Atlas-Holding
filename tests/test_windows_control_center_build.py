@@ -1,0 +1,80 @@
+"""Tests for nonrelease Windows Qt packaging contract without a build on Linux."""
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+
+from holding.windows_control_center_build import build_windows_control_center
+
+
+class ViewerBuildTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name).resolve()
+        self.holding = self.root / "holding"
+        self.holding.mkdir()
+        for name in ("control_center_entry.py", "control_center_live.py"):
+            (self.holding / name).write_text("# test source\n", encoding="utf-8")
+        self.output = self.root / "artifact"
+
+    def fake_packager(self, command, **options):
+        self.assertFalse(options["shell"])
+        self.assertTrue(options["check"])
+        self.assertEqual(options["cwd"], self.root)
+        self.assertIn("--onefile", command)
+        self.assertIn("--windowed", command)
+        self.assertIn("--noupx", command)
+        self.assertEqual(command[command.index("--name") + 1],
+                         "AtlasHoldingControlCenter")
+        dist = Path(command[command.index("--distpath") + 1])
+        dist.mkdir()
+        (dist / "AtlasHoldingControlCenter.exe").write_bytes(b"Z" * 1_000_001)
+
+    def test_build_is_native_windows_only(self):
+        if __import__("sys").platform == "win32":
+            self.skipTest("Native build covered in Windows smoke CI")
+        with self.assertRaises(RuntimeError):
+            build_windows_control_center(
+                output_dir=self.output, project_root=self.root)
+
+    def test_exact_windows_bundle_size_sha_and_no_release_claim(self):
+        with patch("holding.windows_control_center_build.sys.platform", "win32"), \
+             patch("holding.windows_control_center_build.subprocess.run",
+                   side_effect=self.fake_packager) as pack:
+            result = build_windows_control_center(
+                output_dir=self.output, project_root=self.root)
+        artifact = self.output / "AtlasHoldingControlCenter.exe"
+        self.assertEqual(result.artifact, str(artifact))
+        self.assertEqual(result.bytes, 1_000_001)
+        self.assertEqual(result.sha256, hashlib.sha256(
+            b"Z" * 1_000_001).hexdigest())
+        self.assertFalse(result.release_ready)
+        self.assertTrue(artifact.is_file())
+        pack.assert_called_once()
+
+    def test_never_overwrite_or_package_missing_or_relative_sources(self):
+        self.output.mkdir()
+        artifact = self.output / "AtlasHoldingControlCenter.exe"
+        artifact.write_bytes(b"important existing viewer")
+        with patch("holding.windows_control_center_build.sys.platform", "win32"), \
+             patch("holding.windows_control_center_build.subprocess.run") as pack:
+            with self.assertRaises(FileExistsError):
+                build_windows_control_center(
+                    output_dir=self.output, project_root=self.root)
+            self.assertEqual(artifact.read_bytes(), b"important existing viewer")
+            with self.assertRaises(ValueError):
+                build_windows_control_center(
+                    output_dir=Path("relative"), project_root=self.root)
+            (self.holding / "control_center_live.py").unlink()
+            with self.assertRaises(ValueError):
+                build_windows_control_center(
+                    output_dir=self.root / "other", project_root=self.root)
+            pack.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()
