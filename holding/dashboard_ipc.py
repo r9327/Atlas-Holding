@@ -121,7 +121,7 @@ class DashboardIpcServer:
 
     @classmethod
     def for_database(cls, database: Path, *, engine_id: str, secret: bytes):
-        if (type(database) is not Path or not database.is_absolute()
+        if (not isinstance(database, Path) or not database.is_absolute()
                 or not database.is_file() or database.is_symlink()):
             raise DashboardIpcError("Existing trusted database required")
         if not isinstance(engine_id, str) or not engine_id:
