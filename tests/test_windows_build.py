@@ -72,6 +72,8 @@ class WindowsBuildTests(unittest.TestCase):
             shim = Path(command[-1]).read_text(encoding="utf-8")
             self.assertIn(self.digest, shim)
             self.assertIn("--self-test", shim)
+            self.assertIn("--resume-ollama", shim)
+            self.assertIn("resume_ollama_at_logon", shim)
             self.assertIn("holding.windows_setup", shim)
             parsed = ast.parse(shim, filename="atlas_windows_entry.py")
             self.assertTrue(parsed.body)
