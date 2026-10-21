@@ -88,6 +88,28 @@ class ControlCenterUiTests(unittest.TestCase):
         self.assertEqual(window.tasks.currentRow(), 0)
         window.close()
 
+    def test_journal_filters_are_local_and_persist_across_snapshots(self):
+        window = ControlCenterWindow(trusted_engine_id="engine-1")
+        window.render_state(self.state(sequence=42))
+        self.assertEqual(window.logs.rowCount(), 1)
+        self.assertFalse(window.logs.isRowHidden(0))
+        window.log_category.setCurrentText("QA")
+        self.assertTrue(window.logs.isRowHidden(0))
+        window.log_category.setCurrentText("CI")
+        self.assertFalse(window.logs.isRowHidden(0))
+        window.log_search.setText("unknown")
+        self.assertTrue(window.logs.isRowHidden(0))
+        window.log_search.setText("exact")
+        self.assertFalse(window.logs.isRowHidden(0))
+        # Refresh does not clear the operator's filters or make network calls.
+        self.assertTrue(window.render_state(self.state(sequence=43)))
+        self.assertEqual(window.log_category.currentText(), "CI")
+        self.assertEqual(window.log_search.text(), "exact")
+        self.assertFalse(window.logs.isRowHidden(0))
+        window.log_category.setCurrentText("TASK")
+        self.assertTrue(window.logs.isRowHidden(0))
+        window.close()
+
     def test_pre_candidate_task_displays_no_fake_sha_or_evidence(self):
         payload = snapshot()
         payload["tasks"][0].update({
