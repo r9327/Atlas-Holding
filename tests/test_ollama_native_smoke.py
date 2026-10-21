@@ -11,6 +11,7 @@ from unittest.mock import patch
 from holding.inventory import Component
 from holding.ollama_native_smoke import _runner_gate, verify_real_ollama
 from holding.ollama_service import OllamaLaunch
+from holding.windows_ollama_environment import UserModelEnvironment
 from holding.windows_package_manager import WingetResult
 from holding.winget_binary import WingetBinary
 from test_provision_plan import sample
@@ -41,6 +42,18 @@ class NativeOllamaSmokeTests(unittest.TestCase):
         self.environment = {
             "GITHUB_ACTIONS": "true", "RUNNER_TEMP": str(self.root),
         }
+        environment_patcher = patch(
+            "holding.ollama_native_smoke.configure_user_models",
+            return_value=UserModelEnvironment("USER_MODELS_CREATED"),
+        )
+        self.configure_mock = environment_patcher.start()
+        self.addCleanup(environment_patcher.stop)
+        undo_patcher = patch(
+            "holding.ollama_native_smoke.undo_created_user_models",
+            return_value="USER_MODELS_ROLLED_BACK",
+        )
+        self.undo_mock = undo_patcher.start()
+        self.addCleanup(undo_patcher.stop)
 
     def test_disposable_runner_gate_blocks_regular_computers(self):
         with patch("holding.ollama_native_smoke.platform.system",
@@ -68,6 +81,27 @@ class NativeOllamaSmokeTests(unittest.TestCase):
                     with patch("holding.ollama_native_smoke.install_pinned_winget") as install:
                         with self.assertRaisesRegex(RuntimeError, "Pre-existing"):
                             verify_real_ollama()
+        install.assert_not_called()
+
+    def test_existing_user_models_setting_conflict_blocks_install(self):
+        from holding.windows_ollama_environment import UserModelEnvironment
+        self.configure_mock.return_value = UserModelEnvironment(
+            "USER_MODELS_CONFLICT",
+        )
+        baseline = sample(ollama=Component("NOT_FOUND"), models=())
+        with patch("holding.ollama_native_smoke._runner_gate"):
+            with patch("holding.ollama_native_smoke.scan",
+                       return_value=baseline):
+                with patch("holding.ollama_native_smoke._local_api_alive",
+                           return_value=False):
+                    with patch("holding.ollama_native_smoke.discover_winget_binary",
+                               return_value=WingetBinary(
+                                   "NO_PINNED_BINARY_FOUND",
+                               )):
+                        with patch("holding.ollama_native_smoke.install_pinned_winget") as install:
+                            with self.assertRaisesRegex(
+                                    RuntimeError, "USER_MODELS_CONFLICT"):
+                                verify_real_ollama()
         install.assert_not_called()
 
     def test_installation_failure_never_claims_api(self):
