@@ -87,6 +87,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "Frozen local agent failed native Ollama protocol v1"
           }
+          python -B -X utf8 tests/native_windows_installer_enrollment_smoke.py --frozen-directory "$output"
+          if ($LASTEXITCODE -ne 0) { throw "Native pinned installation ACL or engine v3 smoke failed" }
           $manifest = Join-Path $PWD "tests/fixtures/bootstrap_smoke_assets.json"
           $manifestSha = (Get-FileHash -Algorithm SHA256 "$manifest").Hash.ToLowerInvariant()
           $viewerSha = (Get-FileHash -Algorithm SHA256 "$exe").Hash.ToLowerInvariant()
