@@ -14,7 +14,8 @@ import re
 from typing import Any
 
 from .downloads import DownloadError, _validate_url
-from .staged_install import InstallError, PinnedZip, install_versioned_zip
+from .staged_install import (InstallError, PinnedZip, install_versioned_zip,
+                             inspect_versioned_zip)
 
 
 MAX_MANIFEST_BYTES = 128 * 1024
@@ -96,10 +97,18 @@ def main(argv: list[str] | None = None) -> int:
         results = []
         if not args.approve_install:
             for spec in assets:
+                inspection = inspect_versioned_zip(
+                    spec, install_root=args.install_root,
+                )
                 results.append({
                     "component": spec.component, "version": spec.version,
                     "status": "AWAITING_APPROVAL",
-                    "download_bytes": spec.download_bytes,
+                    "installation_state": inspection.status,
+                    "file_count": inspection.file_count,
+                    "download_bytes": (
+                        0 if inspection.status == "VERIFIED_PAYLOAD"
+                        else spec.download_bytes
+                    ),
                     "unpacked_bytes": spec.unpacked_bytes,
                 })
             print(json.dumps({"state": "PREVIEW_ONLY", "assets": results},
