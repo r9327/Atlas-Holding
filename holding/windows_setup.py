@@ -131,7 +131,14 @@ def assess_post_install(
             continue
         spec = pinned.get(name)
         if name in mutating and spec is not None:
-            version_pattern = r"(?<![0-9A-Za-z._-])" + re.escape(spec.version) + r"(?![0-9A-Za-z._-])"
+            # Git for Windows appends a build marker such as
+            # 2.55.0.windows.1. Permit only this known vendor suffix; an
+            # unrelated 2.55.01 or 2.55.0-alpha must not satisfy the pin.
+            vendor_suffix = r"(?:[.]windows[.][0-9]+)?" if name == "git" else ""
+            version_pattern = (
+                r"(?<![0-9A-Za-z._-])" + re.escape(spec.version)
+                + vendor_suffix + r"(?![0-9A-Za-z._-])"
+            )
             if not re.search(version_pattern, component.version):
                 steps.append(ProvisionStep(name, "POST_INSTALL_HEALTH", "VERSION_MISMATCH"))
                 blockers.append("Post-install version mismatch: " + name)
