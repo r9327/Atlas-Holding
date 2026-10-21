@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from holding.inventory import Component
 from holding.ollama_service import OllamaLaunch
+from holding.ollama_storage import StoredModelDirectory
 from holding.ollama_setup import ensure_selected_model_volume
 from holding.provision_runtime import ProvisionExecution, ProvisionStep
 from test_provision_plan import sample
@@ -51,12 +52,20 @@ class OllamaSetupTests(unittest.TestCase):
                                    process=object())
         with patch("holding.ollama_setup.start_local_ollama",
                    return_value=fake_launch) as launch:
-            with patch("holding.ollama_setup.scan", return_value=after) as scan:
-                result, inventory = ensure_selected_model_volume(
-                    self.result, before, install_root=self.root,
-                    model_root=self.models, pins=(),
-                )
-        self.assertEqual(result.steps[-1].result, "OWNED_API_HEALTHY")
+            with patch("holding.ollama_setup.store_model_directory",
+                       return_value=StoredModelDirectory(
+                           "STORED_PREFERENCE_NOT_RUNTIME_ATTESTED",
+                           self.models,
+                       )) as store:
+                with patch("holding.ollama_setup.scan", return_value=after) as scan:
+                    result, inventory = ensure_selected_model_volume(
+                        self.result, before, install_root=self.root,
+                        model_root=self.models, pins=(),
+                    )
+        self.assertTrue(store.call_args.kwargs["authorized"])
+        self.assertEqual(result.steps[-2].result, "OWNED_API_HEALTHY")
+        self.assertEqual(result.steps[-1].result,
+                         "STORED_PREFERENCE_NOT_RUNTIME_ATTESTED")
         self.assertEqual(inventory.ollama.status, "FOUND_VALID")
         scan.assert_called_once_with(self.root)
         self.assertTrue(launch.call_args.kwargs["authorized"])
