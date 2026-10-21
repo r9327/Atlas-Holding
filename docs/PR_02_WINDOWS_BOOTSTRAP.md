@@ -353,3 +353,14 @@ effectif de la configuration moteur et de la sélection du compte Windows.
 Le wizard ne produit pas encore cette configuration ni ne l'active
 automatiquement, et la version définitive de l'installateur reste bloquée
 par la PR #9. Tests : `tests/test_windows_runtime_launch.py`.
+
+### Refus explicite des sessions Windows non interactives
+
+Le lancement contrôlé ci-dessus vérifie maintenant l'appartenance du processus
+à une session utilisateur Windows interactive via `ProcessIdToSessionId`.
+Les services Windows en session 0 et les contextes dont la session ne peut
+pas être déterminée ne peuvent pas démarrer un moteur censé posséder une
+fenêtre Qt. Le refus intervient **avant** toute création de processus et
+avant le chargement d'une configuration active. Les tests de régression
+couvrent cette règle séparément des ACL et des signatures SHA-256.
+
