@@ -8,7 +8,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from holding.native_candidate_stage import stage_native_candidate
+from holding.native_candidate_stage import (
+    stage_native_candidate, verify_native_candidate,
+)
 from holding.release_evidence import (
     ReleaseEvidenceError, observe_native_release_files,
 )
@@ -121,6 +123,55 @@ class NativeCandidateStagingTests(unittest.TestCase):
         with self.assertRaises(ReleaseEvidenceError):
             stage_native_candidate(
                 link, self.dest, source_sha=SHA, upstream_shas=UPSTREAM)
+
+    def test_staged_candidate_can_be_reverified_by_trusted_installer(self):
+        staged = self.stage()
+        observed = verify_native_candidate(
+            staged.directory, expected_source_sha=SHA,
+            expected_upstream_shas=UPSTREAM,
+        )
+        self.assertEqual(observed, staged)
+        (self.dest / "AtlasHoldingEngine.exe").write_bytes(b"tampered")
+        with self.assertRaisesRegex(ReleaseEvidenceError, "changed"):
+            verify_native_candidate(
+                staged.directory, expected_source_sha=SHA,
+                expected_upstream_shas=UPSTREAM,
+            )
+
+    def test_forged_index_or_stale_upstream_cannot_be_adopted(self):
+        staged = self.stage()
+        index_file = staged.directory / "candidate-index.json"
+        values = json.loads(index_file.read_bytes())
+        values["release_ready"] = True
+        index_file.write_text(json.dumps(values), encoding="utf-8")
+        with self.assertRaisesRegex(ReleaseEvidenceError, "falsely certified"):
+            verify_native_candidate(
+                staged.directory, expected_source_sha=SHA,
+                expected_upstream_shas=UPSTREAM,
+            )
+        values["release_ready"] = False
+        index_file.write_text(json.dumps(values), encoding="utf-8")
+        with self.assertRaisesRegex(ReleaseEvidenceError, "stale"):
+            verify_native_candidate(
+                staged.directory, expected_source_sha="0" * 40,
+                expected_upstream_shas=UPSTREAM,
+            )
+        with self.assertRaisesRegex(ReleaseEvidenceError, "stale"):
+            verify_native_candidate(
+                staged.directory, expected_source_sha=SHA,
+                expected_upstream_shas={**UPSTREAM, "pr11": "e" * 40},
+            )
+
+    def test_index_duplicate_json_keys_and_missing_engine_fail_closed(self):
+        staged = self.stage()
+        idx = staged.directory / "candidate-index.json"
+        idx.write_bytes(b'{"schema_version":1,"schema_version":1}')
+        with self.assertRaises(ReleaseEvidenceError):
+            verify_native_candidate(
+                staged.directory, expected_source_sha=SHA,
+                expected_upstream_shas=UPSTREAM,
+            )
+        self.assertFalse((self.root / ".candidate.staging-lock").exists())
 
     def test_does_not_confuse_self_signed_index_with_release_manifest(self):
         result = self.stage()
