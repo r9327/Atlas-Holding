@@ -195,8 +195,13 @@ json.dump({'schema_version':1,'request_id':r['request_id'],'status':'OK',
             Installation.load(self.config)
 
     def test_schema_three_supports_optional_pinned_github(self):
-        self._enable_dashboard()
+        script = self._enable_dashboard()
         self.enable_github()
+        # The trusted broker also rejects unpinned Python code in its parent
+        # package. The viewer harness must be pinned independently in BOTH
+        # trust manifests; otherwise the broker correctly fails closed.
+        self.data['github']['broker_file_sha256'][str(script)] = (
+            hashlib.sha256(script.read_bytes()).hexdigest())
         self.data['schema'] = 3
         self.save()
         installation = Installation.load(self.config)
