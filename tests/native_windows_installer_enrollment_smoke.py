@@ -13,8 +13,13 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import threading
+
+# A directly executed CI script must import only the checked-out candidate,
+# never another installed Holding package or arbitrary PYTHONPATH entry.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from holding.windows_engine_enrollment import protect_approved_install_root
 from holding.windows_runtime_payload import (
