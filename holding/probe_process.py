@@ -8,6 +8,8 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import threading
+import time
 
 
 CREATE_SUSPENDED = 0x00000004
@@ -157,16 +159,59 @@ class _WindowsJob:
 
 
 def run_probe(argv: list[str], *, environment: dict[str, str],
-              timeout: float) -> subprocess.CompletedProcess[str]:
-    """Run one probe and leave no surviving process from its process tree."""
+              timeout: float, max_output_bytes: int = 32 * 1024
+              ) -> subprocess.CompletedProcess[str]:
+    """Execute a disposable probe with bounded time, output and descendants.
+
+    Both pipes are drained concurrently: communicate() alone may consume
+    unbounded RAM even when its timeout is short. No temp file can fill a disk.
+    """
+    if not isinstance(argv, list) or not argv or timeout <= 0:
+        raise ValueError("Invalid probe configuration")
+    if type(max_output_bytes) is not int or not 1024 <= max_output_bytes <= 1024 * 1024:
+        raise ValueError("Invalid maximum probe output")
     job = _WindowsJob() if os.name == "nt" else None
-    process: subprocess.Popen[str] | None = None
+    process: subprocess.Popen[bytes] | None = None
+    readers: list[threading.Thread] = []
+    output = [bytearray(), bytearray()]
+    overflow = threading.Event()
+    read_failure = threading.Event()
+    tree_killed = False
+
+    def dispose_tree() -> None:
+        nonlocal tree_killed
+        if tree_killed or process is None:
+            return
+        tree_killed = True
+        if job is not None:
+            job.terminate()
+        else:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    def drain(stream, buffer: bytearray) -> None:
+        try:
+            while True:
+                chunk = stream.read(4096)
+                if not chunk:
+                    return
+                left = max_output_bytes - len(buffer)
+                if len(chunk) > left:
+                    buffer.extend(chunk[:left])
+                    overflow.set()
+                    return
+                buffer.extend(chunk)
+        except (OSError, ValueError):
+            read_failure.set()
+
     try:
         process = subprocess.Popen(
             argv,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            text=False,
             stdin=subprocess.DEVNULL,
             env=environment,
             shell=False,
@@ -178,26 +223,46 @@ def run_probe(argv: list[str], *, environment: dict[str, str],
         )
         if job is not None:
             job.attach_and_resume(process)
-        try:
-            stdout, stderr = process.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            if job is not None:
-                job.terminate()
-            else:
-                os.killpg(process.pid, signal.SIGKILL)
-            process.communicate()
-            raise
-        return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
+        assert process.stdout is not None and process.stderr is not None
+        for stream, bucket in zip((process.stdout, process.stderr), output):
+            reader = threading.Thread(target=drain, args=(stream, bucket),
+                                      daemon=True)
+            reader.start()
+            readers.append(reader)
+        deadline = time.monotonic() + timeout
+        while process.poll() is None:
+            if overflow.is_set():
+                raise ProbeProcessError("Probe exceeded bounded output budget")
+            if read_failure.is_set():
+                raise ProbeProcessError("Probe output channel failed")
+            if time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(argv, timeout)
+            time.sleep(min(0.02, max(0, deadline - time.monotonic())))
+        returncode = process.returncode
+        # The direct process may exit while a descendant still owns stdout.
+        # Close the containment tree before waiting for both reader threads.
+        dispose_tree()
+        for reader in readers:
+            reader.join(timeout=1)
+        if any(reader.is_alive() for reader in readers):
+            raise ProbeProcessError("Probe descendant kept an output pipe open")
+        if overflow.is_set() or read_failure.is_set():
+            raise ProbeProcessError("Probe output exceeded limit or failed")
+        return subprocess.CompletedProcess(
+            argv, returncode, output[0].decode("utf-8", errors="replace"),
+            output[1].decode("utf-8", errors="replace"),
+        )
     finally:
+        dispose_tree()
+        if process is not None:
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+            if process.stdout is not None:
+                process.stdout.close()
+            if process.stderr is not None:
+                process.stderr.close()
+        for reader in readers:
+            reader.join(timeout=1)
         if job is not None:
             job.close()
-        elif process is not None:
-            # A successful direct child may still have launched a background
-            # helper. Dispose of the whole probe group before returning.
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        if process is not None and process.poll() is None:
-            process.kill()
-            process.wait()
