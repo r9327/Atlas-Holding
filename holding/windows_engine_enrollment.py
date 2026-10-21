@@ -321,3 +321,20 @@ def prepare_installed_engine_launch(
     except (RuntimeLaunchError, ValueError, OSError) as exc:
         raise EngineEnrollmentError("Native installed launch preflight failed") from exc
     return spec
+
+
+def launch_enrolled_engine(
+    request: EngineEnrollmentRequest,
+    enrollment: EngineEnrollment, *, approved: bool,
+):
+    """Launch a freshly revalidated local engine, with separate user consent.
+
+    Returns the real launcher's health-pending result, never a readiness claim.
+    The frozen engine itself authenticates and opens the pinned GUI.
+    """
+    from .windows_runtime_launch import launch_installed_engine
+    if type(approved) is not bool or not approved:
+        raise EngineEnrollmentError("Separate engine launch approval required")
+    return launch_installed_engine(
+        prepare_installed_engine_launch(request, enrollment), approved=True,
+    )
