@@ -12,6 +12,7 @@ from pathlib import Path
 import subprocess
 
 from .probe_process import ProbeProcessError, run_probe
+from .version_evidence import matches_component_version
 from .staged_install import (PinnedZip, inspect_versioned_zip,
                              _no_linked_ancestors)
 
@@ -61,8 +62,11 @@ def check_staged_binary(
         )
     except (ProbeProcessError, OSError, subprocess.TimeoutExpired):
         return NativeHealth(spec.component, "BINARY_PROBE_FAILED")
-    if result.returncode != 0 or spec.expected_version not in (
-            result.stdout + "\n" + result.stderr):
+    if (result.returncode != 0
+            or not matches_component_version(
+                spec.component, spec.expected_version,
+                result.stdout + "\n" + result.stderr,
+            )):
         return NativeHealth(spec.component, "BINARY_VERSION_MISMATCH")
     after = inspect_versioned_zip(spec, install_root=install_root)
     if after.status != "VERIFIED_PAYLOAD":
