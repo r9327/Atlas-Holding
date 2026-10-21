@@ -174,6 +174,77 @@ class WindowsSetupTests(unittest.TestCase):
                 invalid = assess_post_install(result, wrong, (pin,))
                 self.assertEqual(invalid.state, "POST_INSTALL_RECHECK_REQUIRED")
 
+    def test_verified_managed_zip_executable_works_without_windows_path(self):
+        from holding.managed_toolchain import ManagedTool
+        managed_pin = PinnedZip(
+            "opencode", "1.0", self.pin.url, self.pin.sha256,
+            self.pin.download_bytes, self.pin.unpacked_bytes,
+            "bin/opencode.exe", "1.0",
+        )
+        result = ProvisionExecution(
+            "PAYLOADS_STAGED_NOT_VALIDATED",
+            (ProvisionStep("opencode", "INSTALL", "STAGED_NATIVE_PROBED"),), (),
+        )
+        # System PATH remains unchanged: the user has not registered an app
+        # executable globally but Atlas can still bind to its checked copy.
+        self.assertEqual(self.snapshot.opencode.status, "NOT_FOUND")
+        with patch("holding.windows_setup.resolve_managed_tool",
+                   return_value=ManagedTool(
+                       "opencode", "VERIFIED_EXECUTABLE",
+                       str(self.install_root / "components" / "opencode.exe"), "1.0",
+                   )):
+            outcome = assess_post_install(
+                result, self.snapshot, (managed_pin,),
+                install_root=self.install_root,
+            )
+        self.assertEqual(outcome.state,
+                         "TOOLCHAIN_HEALTHY_MODEL_BENCHMARK_PENDING")
+        self.assertTrue(any(step.action == "MANAGED_BINDING" and
+                            step.result == "VERIFIED_EXECUTABLE"
+                            for step in outcome.steps))
+
+    def test_unverified_managed_zip_remains_blocked_if_path_missing(self):
+        from holding.managed_toolchain import ManagedTool
+        managed_pin = PinnedZip(
+            "opencode", "1.0", self.pin.url, self.pin.sha256,
+            self.pin.download_bytes, self.pin.unpacked_bytes,
+            "opencode.exe", "1.0",
+        )
+        result = ProvisionExecution(
+            "PAYLOADS_STAGED_NOT_VALIDATED",
+            (ProvisionStep("opencode", "INSTALL", "STAGED_NATIVE_PROBED"),), (),
+        )
+        with patch("holding.windows_setup.resolve_managed_tool",
+                   return_value=ManagedTool(
+                       "opencode", "BINARY_VERSION_MISMATCH",
+                   )):
+            outcome = assess_post_install(
+                result, self.snapshot, (managed_pin,),
+                install_root=self.install_root,
+            )
+        self.assertEqual(outcome.state, "POST_INSTALL_RECHECK_REQUIRED")
+        self.assertIn("opencode", " ".join(outcome.blockers))
+
+    def test_ollama_binary_without_running_api_is_not_healthy(self):
+        from holding.managed_toolchain import ManagedTool
+        model_pin = PinnedZip(
+            "ollama", "0.12", self.pin.url, self.pin.sha256,
+            self.pin.download_bytes, self.pin.unpacked_bytes,
+            "ollama.exe", "0.12",
+        )
+        result = ProvisionExecution(
+            "PAYLOADS_STAGED_NOT_VALIDATED",
+            (ProvisionStep("ollama", "INSTALL", "STAGED_NATIVE_PROBED"),), (),
+        )
+        snapshot = sample(ollama=Component("NOT_FOUND"))
+        with patch("holding.windows_setup.resolve_managed_tool") as resolver:
+            outcome = assess_post_install(
+                result, snapshot, (model_pin,),
+                install_root=self.install_root,
+            )
+        self.assertEqual(outcome.state, "POST_INSTALL_RECHECK_REQUIRED")
+        resolver.assert_not_called()
+
     def test_healthy_reused_tool_need_not_match_new_manifest_release_version(self):
         result = ProvisionExecution(
             "PAYLOADS_STAGED_NOT_VALIDATED",
