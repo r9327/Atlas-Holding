@@ -55,9 +55,9 @@ class WindowsInstalledEngineLaunchTests(unittest.TestCase):
         return patch("holding.windows_runtime_acl.validate_runtime_acl")
 
     def test_native_preflight_and_process_launch_never_claims_ready(self):
-        with self.native(), self.acl(), \
+        with self.native(), self.acl() as acl, \
              patch("holding.windows_runtime_launch._interactive_user_session",
-                   return_value=True) as acl, \
+                   return_value=True), \
              patch("holding.windows_runtime_launch.subprocess.Popen") as spawn:
             process = Mock()
             process.poll.return_value = None
@@ -102,9 +102,9 @@ class WindowsInstalledEngineLaunchTests(unittest.TestCase):
             spawn.assert_not_called()
 
     def test_native_acl_denial_and_modified_engine_block_execution(self):
-        with self.native(), self.acl(), \
+        with self.native(), self.acl() as acl, \
              patch("holding.windows_runtime_launch._interactive_user_session",
-                   return_value=True) as acl, \
+                   return_value=True), \
              patch("holding.windows_runtime_launch.subprocess.Popen") as spawn:
             acl.side_effect = ValueError("untrusted DACL")
             with self.assertRaisesRegex(RuntimeLaunchError, "not trusted"):
