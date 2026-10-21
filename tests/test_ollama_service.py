@@ -150,6 +150,37 @@ class OllamaServiceTests(unittest.TestCase):
         self.assertNotIn("OLLAMA_ORIGINS", env)
         self.assertNotIn("GITHUB_TOKEN", env)
 
+    def test_pinned_winget_ollama_starts_without_existing_path(self):
+        from holding.windows_package_manager import WingetPin
+        from holding.winget_binary import WingetBinary
+        from dataclasses import replace
+        missing = replace(self.snapshot, ollama=Component("NOT_FOUND"))
+        pin = WingetPin("ollama", "Ollama.Ollama", "0.32.8")
+        child = DummyProcess()
+        with patch("holding.ollama_service.platform.system",
+                   return_value="Windows"):
+            with patch("holding.ollama_service._local_api_alive",
+                       side_effect=[False, True]):
+                with patch("holding.ollama_service.discover_winget_binary",
+                           return_value=WingetBinary(
+                               "EXACT_BINARY_VERIFIED",
+                               str(self.exe), "ollama 0.32.8",
+                           )) as locate:
+                    with patch("holding.ollama_service.shutil.disk_usage",
+                               return_value=type(
+                                   "Disk", (), {"free": 10 * 1024**3})()):
+                        with patch("holding.ollama_service.subprocess.Popen",
+                                   return_value=child) as popen:
+                            state = start_local_ollama(
+                                missing, install_root=self.install,
+                                model_root=self.models,
+                                pins=(pin,), authorized=True,
+                            )
+        self.assertEqual(state.state, "OWNED_API_HEALTHY")
+        locate.assert_called_once_with(pin)
+        self.assertEqual(popen.call_args.args[0],
+                         [str(self.exe), "serve"])
+
     def test_invalid_relative_model_path_rejected(self):
         with self.assertRaises(ValueError):
             start_local_ollama(
