@@ -1,6 +1,7 @@
 """Staging of the actual bundled frozen binaries; security is still pending."""
 from __future__ import annotations
 
+from contextlib import ExitStack
 import hashlib
 import os
 from pathlib import Path
@@ -38,29 +39,26 @@ class EmbeddedRuntimeTests(unittest.TestCase):
         adapter.write_bytes(b"trusted fixture adapter")
         pin = hashlib.sha256(adapter.read_bytes()).hexdigest()
         self.assertEqual(verify_pinned_adapter(adapter, pin), pin)
-        # Native DACL enforcement has a dedicated Windows-only test below.
-        # This contract test isolates the copy/reuse logic across platforms.
-        with patch("holding.windows_runtime_acl.validate_runtime_acl") if os.name == "nt" else patch(
-                "holding.windows_runtime_payload.verify_pinned_adapter",
-                wraps=verify_pinned_adapter,
-        ):
-            with patch("holding.windows_runtime_acl.secure_runtime_acl") if os.name == "nt" else patch(
-                    "holding.windows_runtime_payload.verify_pinned_adapter",
-                    wraps=verify_pinned_adapter,
-            ):
-                staged = install_pinned_adapter(
-                    adapter, self.install_root, pin, approved=True)
-                self.assertEqual(staged, "STAGED_PINNED_ADAPTER_HEALTH_PENDING")
-                target = self.install_root / "agents" / "AtlasHoldingAgent.exe"
-                self.assertEqual(target.read_bytes(), adapter.read_bytes())
-                reused = install_pinned_adapter(
-                    adapter, self.install_root, pin, approved=True)
-                self.assertEqual(reused, "REUSED_PINNED_ADAPTER_HEALTH_PENDING")
-                target.write_bytes(b"modified by another process")
-                with self.assertRaises(RuntimePayloadError):
-                    install_pinned_adapter(adapter, self.install_root, pin,
-                                           approved=True)
-                self.assertEqual(target.read_bytes(), b"modified by another process")
+        # ACL behavior is exercised separately on real Windows below.
+        with ExitStack() as stack:
+            if os.name == "nt":
+                stack.enter_context(patch(
+                    "holding.windows_runtime_acl.validate_runtime_acl"))
+                stack.enter_context(patch(
+                    "holding.windows_runtime_acl.secure_runtime_acl"))
+            staged = install_pinned_adapter(
+                adapter, self.install_root, pin, approved=True)
+            self.assertEqual(staged, "STAGED_PINNED_ADAPTER_HEALTH_PENDING")
+            target = self.install_root / "agents" / "AtlasHoldingAgent.exe"
+            self.assertEqual(target.read_bytes(), adapter.read_bytes())
+            reused = install_pinned_adapter(
+                adapter, self.install_root, pin, approved=True)
+            self.assertEqual(reused, "REUSED_PINNED_ADAPTER_HEALTH_PENDING")
+            target.write_bytes(b"modified by another process")
+            with self.assertRaises(RuntimePayloadError):
+                install_pinned_adapter(adapter, self.install_root, pin,
+                                       approved=True)
+            self.assertEqual(target.read_bytes(), b"modified by another process")
 
     @unittest.skipUnless(os.name == "nt", "Requires native Windows ACLs")
     def test_native_adapter_staging_requires_protected_root(self):
