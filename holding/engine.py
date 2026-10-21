@@ -95,10 +95,18 @@ class HoldingEngine:
         try:
             # A broken network detector must not take down offline coding.
             # Only an actual bool True can authorize external-required work.
-            try:
-                observed_online = self.online()
-            except (OSError, TimeoutError, ValueError):
-                observed_online = False
+            # Offline-only roadmaps must not poll an unrelated network API
+            # on every idle tick. A final SQLite transaction still gates claims.
+            requires_network = self.store.db.execute(
+                "SELECT 1 FROM missions WHERE state='READY' "
+                "AND external_required=1 LIMIT 1"
+            ).fetchone() is not None
+            observed_online = False
+            if requires_network:
+                try:
+                    observed_online = self.online()
+                except (OSError, TimeoutError, ValueError):
+                    observed_online = False
             online = observed_online is True
             choice = self.store.claim_next(online=online, lease_owner=self.lease.owner,
                                            supported_operations=self.supported_operations)
