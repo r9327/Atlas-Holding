@@ -297,6 +297,7 @@ def execute_setup(
         try:
             installed = install_pinned_runtime_pair(
                 runtime_root, install_root, runtime_pins, approved=True,
+                cancelled=cancelled,
             )
             result = ProvisionExecution(
                 "RUNTIME_STAGED_ENGINE_CONFIG_PENDING",
