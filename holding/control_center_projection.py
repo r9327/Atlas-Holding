@@ -52,19 +52,38 @@ def _completion_evidence(control: ControlPlane, mission: Any) -> dict | None:
                 "sha": sha, "digest": row["receipt_digest"],
                 "source": f"signed_proofs:{row['artifact']}",
             }
-    if _table_exists(control, "github_sync_attempts"):
-        row = control.store.db.execute(
-            "SELECT idempotency_key FROM github_sync_attempts "
-            "WHERE repo=? AND candidate_sha=? AND status='SUCCEEDED' "
-            "ORDER BY updated_epoch DESC LIMIT 1", (mission["repo"], sha),
+    sync_operation = {
+        "push": "github.push",
+        "ready_for_review": "github.pr_ready",
+        "merge": "github.merge",
+    }.get(mission["operation"])
+    if sync_operation and _table_exists(control, "github_sync_attempts"):
+        # A successful sync with the same SHA is NOT evidence for any other
+        # mission. Bind the exact idempotency key to the durable transition
+        # event generated in the same transaction as this mission's DONE.
+        transition = control.store.db.execute(
+            "SELECT detail FROM events WHERE mission_id=? "
+            "AND event='RUNNING_TO_DONE' ORDER BY seq DESC LIMIT 1",
+            (mission["id"],),
         ).fetchone()
-        if (row is not None and isinstance(row["idempotency_key"], str)
-                and _DIGEST.fullmatch(row["idempotency_key"])):
-            return {
-                "kind": "SYNC", "outcome": "SUCCESS", "scope": "SCOPED",
-                "sha": sha, "digest": row["idempotency_key"],
-                "source": "github_sync_attempts",
-            }
+        prefix = f"verified sync:{sync_operation}:"
+        detail = transition["detail"] if transition is not None else None
+        if isinstance(detail, str) and detail.startswith(prefix):
+            key = detail[len(prefix):]
+            if _DIGEST.fullmatch(key):
+                row = control.store.db.execute(
+                    "SELECT 1 FROM github_sync_attempts "
+                    "WHERE operation=? AND repo=? AND candidate_sha=? "
+                    "AND idempotency_key=? AND status='SUCCEEDED' LIMIT 1",
+                    (sync_operation, mission["repo"], sha, key),
+                ).fetchone()
+                if row is not None:
+                    # SYNC is an observed remote effect, never a FULL CI pass.
+                    return {
+                        "kind": "SYNC", "outcome": "SUCCESS", "scope": "SCOPED",
+                        "sha": sha, "digest": key,
+                        "source": "github_sync_attempts",
+                    }
     return None
 
 
