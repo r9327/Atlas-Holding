@@ -42,12 +42,12 @@ jobs:
           if ((Get-Item $exe).Length -lt 1000000) { throw "Executable is suspiciously small" }
           Write-Output "Windows PE built from non-installable smoke fixture; NOT A RELEASE."
           Write-Output "SHA256: $((Get-FileHash -Algorithm SHA256 $exe).Hash.ToLowerInvariant())"
-      - name: Check EXE accepts help without launching setup
+      - name: Check EXE verifies embedded manifest without launching setup
         shell: pwsh
         run: |
           $exe = Join-Path $PWD "smoke-output/AtlasHoldingSetup.exe"
-          $child = Start-Process -FilePath $exe -ArgumentList "--help" -PassThru -Wait
-          if ($child.ExitCode -ne 0) { throw "EXE help smoke failed: $($child.ExitCode)" }
+          $child = Start-Process -FilePath $exe -ArgumentList "--self-test" -PassThru -Wait
+          if ($child.ExitCode -ne 0) { throw "EXE manifest self-test failed: $($child.ExitCode)" }
       - name: Check source remains unchanged
         shell: bash
         run: 'test -z "$(git status --porcelain --untracked-files=normal -- . :!smoke-output/)"'
