@@ -119,9 +119,10 @@ class LiveDashboardTests(unittest.TestCase):
                                   return_value=QMessageBox.StandardButton.Yes):
                     window.stop_button.click()
                 self.until(lambda: flags()[1])
-                self.until(lambda: window.stop_button.isEnabled())
-                self.assertTrue(
-                    window.logs.rowCount() > 0)
+                self.until(lambda: not window.stop_button.isEnabled()
+                           and "ARRÊT DEMANDÉ" in window.status.text())
+                self.assertFalse(window.resume_button.isEnabled())
+                self.assertTrue(window.logs.rowCount() > 0)
             finally:
                 window.close()
 
