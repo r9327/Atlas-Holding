@@ -256,3 +256,27 @@ Le Wizard `windows_setup.execute_setup` installe cette préférence **avant** de
 **Certification améliorée** : la CI Windows télécharge les vrais ZIP Git et OpenCode, vérifie leurs SHA-256 éditeurs, les exécute réellement dans le smoke VCS/CLI, puis **dérive le manifeste v3 hybride exact depuis les octets officiels**, avec tailles mesurées plutôt que fabriquées. Elle construit ensuite `AtlasHoldingSetup.exe` de test **avec ce manifeste candidat réel**, et valide son `--self-test` et son refus de relance non configurée. Cette EXE reste jetable et non publiée : aucun benchmark modèle, redémarrage matériel réel, code signing ou validation de release n'est implicite.
 
 Le test natif Ollama doit également prouver la relecture réelle du chemin choisi dans **HKCU Environment** et dans le fichier Holding, tout en maintenant le résultat API/stockage séparé. L'installation via OllamaSetup conserve son automatisme utilisateur ; pas de prise de contrôle forcée du Desktop.
+
+## Bundle GUI + moteur dans l'installateur Windows (candidat, non-release)
+
+Le constructeur `holding/windows_build.py` accepte désormais les deux
+exécutables compilés de la PR #11, chacun avec son empreinte SHA-256 exacte.
+Le build `AtlasHoldingSetup.exe` embarque leurs octets dans sa ressource
+`runtime/`, à l'intérieur du **même EXE** ; aucun deuxième téléchargement
+n'est nécessaire pour ces deux fichiers quand cette option est activée.
+Les originaux et leurs copies de staging sont recontrôlés avant empaquetage,
+puis les binaires extraits sont recontrôlés au démarrage de l'EXE et dans
+`--self-test`. Les liens, tailles impossibles, fichiers absents et empreintes
+divergentes sont refusés avant de construire un installateur.
+
+Le runner de confiance peut fournir :
+`--runtime-directory <dossier> --viewer-sha256 <SHA256> --engine-sha256 <SHA256>`.
+Les versions anciennes du constructeur restent compatibles sans cette option ;
+**ce mode ancien ne contient pas de pair GUI/moteur et ne peut donc pas
+satisfaire le gate de publication de la PR #9**.
+
+**Limite restante** : intégrer l'extraction atomique vers le disque choisi,
+les ACL Windows de l'identité installée, puis le lancement natif du moteur et
+du Control Center depuis ce chemin. Le fait d'embarquer le binaire ne garantit
+pas sa mise en service : ce build demeure non-release et la PR reste Draft.
+
