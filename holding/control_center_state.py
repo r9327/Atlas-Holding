@@ -132,12 +132,17 @@ def _nullable_identifier(value: Any, label: str) -> str | None:
 
 def _evidence(value: Any, candidate_sha: str) -> EvidenceView:
     item = _object(value, {"kind", "outcome", "scope", "sha", "digest", "source"})
-    if item["kind"] not in {"CI", "DOCTOR", "TEST", "SYNC"}:
+    kind, scope, outcome = item["kind"], item["scope"], item["outcome"]
+    if kind == "CI":
+        if scope != "FULL" or outcome not in ("PASS", "SUCCESS"):
+            raise ControlCenterStateError("DONE needs final CI FULL evidence")
+    elif kind == "SYNC":
+        # Successful network mutation is not proof of product quality.
+        if (scope != "SCOPED" or outcome != "SUCCESS"
+                or item["source"] != "github_sync_attempts"):
+            raise ControlCenterStateError("Invalid scoped synchronization evidence")
+    else:
         raise ControlCenterStateError("Unsupported completion evidence kind")
-    if item["outcome"] not in {"PASS", "SUCCESS"}:
-        raise ControlCenterStateError("Completion evidence did not pass")
-    if item["scope"] not in {"SCOPED", "FULL"}:
-        raise ControlCenterStateError("Invalid completion evidence scope")
     if item["sha"] != candidate_sha:
         raise ControlCenterStateError("Completion evidence belongs to another SHA")
     digest = item["digest"]
@@ -186,6 +191,13 @@ def _task(value: Any) -> TaskView:
         if sha is None:
             raise ControlCenterStateError("Completion evidence lacks a candidate SHA")
         evidence = _evidence(item["completion_evidence"], sha)
+    if evidence is not None and evidence.kind == "SYNC":
+        # The trusted projection exposes synchronization ONLY for these
+        # operations, never as a replacement for a code/QA certificate.
+        title = item["title"]
+        if (not isinstance(title, str) or not title.endswith((
+                " · push", " · ready_for_review", " · merge"))):
+            raise ControlCenterStateError("SYNC evidence belongs to another task role")
     if state == "DONE" and evidence is None:
         raise ControlCenterStateError("DONE task lacks exact-SHA evidence")
     if state != "DONE" and evidence is not None:
