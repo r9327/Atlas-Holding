@@ -94,7 +94,7 @@ def preflight_setup(
         dependency_actions.append((action.name, action.action, detail))
     state = "BLOCKED" if blockers else (
         "CONSENT_REQUIRED" if any(
-            item.action in {"INSTALL", "REPAIR"} for item in plan.actions
+            item.action in {"INSTALL", "REPAIR", "START_SERVICE"} for item in plan.actions
         ) else "BENCHMARK_REQUIRED"
     )
     return SetupSummary(
