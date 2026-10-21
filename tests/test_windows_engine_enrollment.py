@@ -35,6 +35,7 @@ class EngineEnrollmentTests(unittest.TestCase):
         self.health = self.root / "health"
         for folder in (self.canonical, self.workspace, self.health):
             folder.mkdir()
+        (self.canonical / ".git").mkdir()
         self.request = EngineEnrollmentRequest(
             install_root=self.root,
             runtime_directory=self.runtime,
@@ -154,6 +155,33 @@ class EngineEnrollmentTests(unittest.TestCase):
                 self.request, runtime_directory=self.canonical,
             ))
         self.assertEqual(list((self.root / "config").iterdir()), [])
+
+    def test_non_checkout_canonical_root_is_rejected_before_config_write(self):
+        self.create_roots()
+        (self.canonical / ".git").rmdir()
+        with self.assertRaisesRegex(EngineEnrollmentError, "Git checkout"):
+            self.enroll()
+        self.assertFalse((self.root / "config" / "engine.json").exists())
+
+    def test_mutable_clone_or_workspace_cannot_supply_trusted_agent(self):
+        self.create_roots()
+        for directory in (self.canonical, self.workspace):
+            agent = directory / "untrusted-writer.exe"
+            agent.write_bytes(b"mutable executable")
+            request = replace(
+                self.request, agent_executable=agent, agent_sha256=self.sha(agent))
+            with self.subTest(directory=directory), self.assertRaisesRegex(
+                    EngineEnrollmentError, "mutable checkout"):
+                self.enroll(request=request)
+            pinned_argument = directory / "entry.py"
+            pinned_argument.write_bytes(b"mutable code")
+            request = replace(
+                self.request, agent_arguments=(pinned_argument,),
+                agent_argument_pins={str(pinned_argument): self.sha(pinned_argument)})
+            with self.subTest(directory=directory), self.assertRaisesRegex(
+                    EngineEnrollmentError, "mutable checkout"):
+                self.enroll(request=request)
+        self.assertFalse((self.root / "config" / "engine.json").exists())
 
     def test_tampered_binary_or_missing_agent_argument_pin_fail_closed(self):
         self.create_roots()
