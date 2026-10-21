@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from holding.windows_control_center_build import build_windows_control_center
+from holding.windows_control_center_build import (build_windows_control_center, build_windows_engine)
 
 
 class ViewerBuildTests(unittest.TestCase):
@@ -55,6 +55,35 @@ class ViewerBuildTests(unittest.TestCase):
         self.assertFalse(result.release_ready)
         self.assertTrue(artifact.is_file())
         pack.assert_called_once()
+
+    def test_engine_and_viewer_share_one_safe_windows_packager(self):
+        for name in ("daemon_entry.py", "service.py", "state_store.py"):
+            (self.holding / name).write_text("# test source\\n", encoding="utf-8")
+        seen = []
+        def package(command, **options):
+            self.assertFalse(options["shell"])
+            self.assertTrue(options["check"])
+            self.assertEqual(options["cwd"], self.root)
+            self.assertIn("--console", command)
+            self.assertNotIn("--windowed", command)
+            self.assertIn("--onefile", command)
+            self.assertEqual(command[command.index("--name") + 1],
+                             "AtlasHoldingEngine")
+            stage = Path(command[command.index("--distpath") + 1])
+            stage.mkdir()
+            (stage / "AtlasHoldingEngine.exe").write_bytes(b"E" * 1_000_101)
+            seen.append(command)
+        with patch("holding.windows_control_center_build.sys.platform", "win32"), \\
+             patch("holding.windows_control_center_build.subprocess.run",
+                   side_effect=package):
+            result = build_windows_engine(
+                output_dir=self.output, project_root=self.root)
+        self.assertEqual(result.bytes, 1_000_101)
+        self.assertEqual(result.sha256, hashlib.sha256(
+            b"E" * 1_000_101).hexdigest())
+        self.assertFalse(result.release_ready)
+        self.assertTrue((self.output / "AtlasHoldingEngine.exe").is_file())
+        self.assertEqual(len(seen), 1)
 
     def test_never_overwrite_or_package_missing_or_relative_sources(self):
         self.output.mkdir()
