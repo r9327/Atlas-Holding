@@ -138,12 +138,35 @@ def verify_installed_engine(spec: InstalledEngineSpec) -> tuple[str, str]:
             str(spec.config_file))
 
 
+def _interactive_user_session() -> bool:
+    """Reject Windows Session 0: Qt must attach to the logged-in user's UI."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.ProcessIdToSessionId.argtypes = (
+            wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
+        )
+        kernel.ProcessIdToSessionId.restype = wintypes.BOOL
+        session = wintypes.DWORD()
+        if not kernel.ProcessIdToSessionId(
+                os.getpid(), ctypes.byref(session)):
+            return False
+        return session.value > 0
+    except (OSError, AttributeError, ValueError):
+        return False
+
+
 def launch_installed_engine(
     spec: InstalledEngineSpec, *, approved: bool,
 ) -> EngineLaunch:
     """Start only a pinned installed engine; it launches GUI itself via IPC."""
     if type(approved) is not bool or not approved:
         raise RuntimeLaunchError("Interactive engine launch not authorized")
+    if not _interactive_user_session():
+        raise RuntimeLaunchError("Engine cannot launch outside interactive Windows session")
     executable, config = verify_installed_engine(spec)
     # Never use shell, inherited stdin, arbitrary environment tokens, or the
     # caller's cwd. Configured roadmap content cannot supply CLI parameters.
