@@ -407,3 +407,16 @@ sur les vrais adaptateurs d'agents validés et réaliser l'E2E interactif sur
 Windows vierge avant toute fusion ou release.
 
 La validation complémentaire `test_real_windows_acl_enrollment_and_cross_module_launch_preflight` s'exécute **uniquement sur le runner Windows natif** : elle crée les DACL protégées des deux fichiers EXE, du dossier `data/` et de `config/`, inscrit réellement `engine.json`, revérifie son ACL puis lui fait passer la vérification intégrale du lanceur. Une configuration et des fichiers réellement protégés sont ainsi testés sans prétendre qu'un cycle IA complet est achevé.
+
+### Passage contrôlé de l'inscription au lanceur natif
+
+`prepare_installed_engine_launch(request, enrollment)` relie maintenant le reçu
+`engine.json` de l'inscription à `InstalledEngineSpec` du véritable lanceur.
+Il revérifie le dépôt/agent approuvé, les deux EXE, les octets exacts du JSON,
+le SHA du reçu et les ACL natives, puis appelle `verify_installed_engine`.
+Un reçu ancien, substitué ou un agent remplacé bloquent **avant** la création
+du processus. Cette fonction **ne lance rien** : `launch_installed_engine` exige
+un consentement distinct et retourne encore `ENGINE_SPAWNED_HEALTH_PENDING`.
+Les scénarios d'acceptation sont ajoutés à `test_windows_engine_enrollment.py`.
+L'exposition dans le wizard, la configuration automatique d'un agent réellement
+fonctionnel, l'observation de santé du moteur et l'E2E Windows restent à réaliser.
