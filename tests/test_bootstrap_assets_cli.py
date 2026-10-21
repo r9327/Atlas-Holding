@@ -169,6 +169,50 @@ class BootstrapAssetsCliTests(unittest.TestCase):
         with self.assertRaises(BootstrapManifestError):
             read_pinned_manifest(self.manifest, expected_sha256=self.pin(raw=raw))
 
+    def test_v3_winget_manifest_is_allowlisted_and_requires_version(self):
+        from holding.windows_package_manager import WingetPin
+        assets = [{
+            "kind": "winget", "component": "git",
+            "package_id": "Git.Git", "version": "2.55.0",
+        }]
+        raw = json.dumps({"version": 3, "assets": assets}).encode()
+        digest = self.pin(raw=raw)
+        pins = read_pinned_manifest(self.manifest, expected_sha256=digest)
+        self.assertEqual(pins, (WingetPin("git", "Git.Git", "2.55.0"),))
+        assets[0]["package_id"] = "Git.Malware"
+        with self.assertRaises(BootstrapManifestError):
+            read_pinned_manifest(self.manifest, expected_sha256=self.pin(
+                raw=json.dumps({"version": 3, "assets": assets}).encode(),
+            ))
+
+    def test_v3_winget_preview_and_approved_install_remain_unverified(self):
+        from holding.windows_package_manager import WingetResult
+        assets = [{
+            "kind": "winget", "component": "git",
+            "package_id": "Git.Git", "version": "2.55.0",
+        }]
+        raw = json.dumps({"version": 3, "assets": assets}).encode()
+        digest = self.pin(raw=raw)
+        output = io.StringIO()
+        with patch("holding.bootstrap_assets_cli.install_pinned_winget") as manager:
+            with redirect_stdout(output):
+                code = main(self.args(digest))
+        self.assertEqual(code, 0)
+        self.assertIsNone(json.loads(output.getvalue())["assets"][0]["download_bytes"])
+        manager.assert_not_called()
+        output = io.StringIO()
+        with patch("holding.bootstrap_assets_cli.install_pinned_winget",
+                   return_value=WingetResult("git", "INSTALLED_NOT_HEALTHCHECKED")) as manager:
+            with redirect_stdout(output):
+                code = main(self.args(digest) + [
+                    "--approve-install", "--online-confirmed",
+                ])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(output.getvalue())["state"],
+                         "PAYLOADS_STAGED_NOT_VALIDATED")
+        self.assertEqual(manager.call_args.kwargs["authorized"], True)
+        self.assertEqual(manager.call_args.kwargs["online"], True)
+
     def test_bad_sizes_and_unknown_keys_fail_closed(self):
         self.assets[0]["unpacked_bytes"] = -1
         with self.assertRaises(BootstrapManifestError):
