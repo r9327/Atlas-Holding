@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
+from pathlib import Path
 import platform
 import re
 import shutil
@@ -52,11 +53,17 @@ class WingetResult:
 def install_pinned_winget(
     pin: WingetPin, *, authorized: bool, online: bool,
     max_seconds: float = 900.0,
+    model_root: Path | None = None,
 ) -> WingetResult:
     """Pin exact package/version, no shell, no admin fallback, no implicit retry."""
     if not isinstance(pin, WingetPin):
         raise WindowsPackageError("Trusted Windows package pin required")
     pin.validate()
+    if model_root is not None and (
+            pin.component != "ollama"
+            or not isinstance(model_root, Path)
+            or not model_root.is_absolute()):
+        raise WindowsPackageError("Model volume can only target Ollama")
     if type(authorized) is not bool or type(online) is not bool:
         raise WindowsPackageError("Invalid package authorization")
     if not 30 <= max_seconds <= 1800:
@@ -83,6 +90,14 @@ def install_pinned_winget(
         "GIT_TERMINAL_PROMPT": "0",
         "PYTHONNOUSERSITE": "1",
     })
+    if model_root is not None:
+        from .model_volume import inspect_model_volume
+        if inspect_model_volume(model_root).status != "VOLUME_AVAILABLE":
+            return WingetResult(pin.component, "MODEL_VOLUME_UNAVAILABLE")
+        # The Windows user environment becomes effective at next sign-in.
+        # The present native installer and daemon inherit this explicit
+        # process-local value immediately, without global PATH edits.
+        environment["OLLAMA_MODELS"] = str(model_root)
     try:
         version = run_probe(
             [executable, "--version"], environment=environment,
