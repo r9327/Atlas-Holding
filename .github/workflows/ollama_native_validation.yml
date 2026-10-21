@@ -13,7 +13,7 @@ jobs:
     if: >-
       github.event.label.name == 'ci:native-ollama' &&
       github.head_ref == 'feat/02-windows-bootstrap'
-    name: Real WinGet Ollama installation and owned API
+    name: Real WinGet Ollama installation and live API (storage status explicit)
     runs-on: windows-2025
     timeout-minutes: 16
     steps:
