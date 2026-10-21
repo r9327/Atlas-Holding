@@ -39,6 +39,66 @@ class OllamaSetupTests(unittest.TestCase):
         self.assertFalse(self.models.exists())
         self.assertEqual(inventory.ollama.status, "FOUND_VALID")
 
+    def test_desktop_autostart_persists_consented_user_volume_not_runtime_ownership(self):
+        from holding.windows_ollama_environment import UserModelEnvironment
+        self.models.mkdir()
+        with patch("holding.ollama_setup.inspect_user_models",
+                   return_value=UserModelEnvironment(
+                       "USER_MODELS_MATCH", str(self.models),
+                   )) as check:
+            with patch("holding.ollama_setup.start_local_ollama") as launch:
+                result, inventory = ensure_selected_model_volume(
+                    self.result, sample(), install_root=self.root,
+                    model_root=self.models, pins=(),
+                )
+        launch.assert_not_called()
+        check.assert_called_once_with(self.models)
+        self.assertEqual(result.state, "PAYLOADS_STAGED_NOT_VALIDATED")
+        self.assertEqual(result.steps[-1].result,
+                         "USER_ENV_CONFIGURED_API_STORAGE_UNATTESTED")
+        self.assertEqual(inventory.ollama.status, "FOUND_VALID")
+        saved_path = self.root / "settings" / "ollama-model-storage.json"
+        self.assertTrue(saved_path.is_file())
+        import json
+        state = json.loads(saved_path.read_text(encoding="utf-8"))
+        self.assertEqual(state["source"], "consented_user_ollama_environment")
+        self.assertEqual(state["directory"], str(self.models))
+
+    def test_desktop_autostart_refuses_conflicting_user_registry(self):
+        from holding.windows_ollama_environment import UserModelEnvironment
+        self.models.mkdir()
+        with patch("holding.ollama_setup.inspect_user_models",
+                   return_value=UserModelEnvironment(
+                       "USER_MODELS_CONFLICT", str(self.models),
+                   )):
+            with patch("holding.ollama_setup.store_model_directory") as save:
+                result, _ = ensure_selected_model_volume(
+                    self.result, sample(), install_root=self.root,
+                    model_root=self.models, pins=(),
+                )
+        self.assertEqual(result.steps[-1].result,
+                         "EXISTING_SERVER_STORAGE_NOT_ATTESTED")
+        self.assertEqual(result.steps[-2].result, "USER_MODELS_CONFLICT")
+        save.assert_not_called()
+
+    def test_existing_saved_model_volume_is_never_replaced_by_autostart(self):
+        from holding.windows_ollama_environment import UserModelEnvironment
+        from holding.ollama_storage import store_model_directory
+        other = self.root / "other-models"
+        other.mkdir()
+        store_model_directory(self.root, other, authorized=True)
+        with patch("holding.ollama_setup.inspect_user_models",
+                   return_value=UserModelEnvironment(
+                       "USER_MODELS_MATCH", str(self.models),
+                   )):
+            result, _ = ensure_selected_model_volume(
+                self.result, sample(), install_root=self.root,
+                model_root=self.models, pins=(),
+            )
+        self.assertEqual(result.state, "PARTIAL_OR_BLOCKED")
+        self.assertEqual(result.steps[-1].result,
+                         "EXISTING_MODEL_VOLUME_CONFLICT")
+
     def test_stopped_service_launch_rechecks_the_actual_daemon(self):
         before = sample(ollama=Component(
             "FOUND_BROKEN", path=str(self.root / "ollama.exe"),
