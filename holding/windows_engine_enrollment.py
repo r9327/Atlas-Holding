@@ -126,6 +126,45 @@ def _native_security(paths: tuple[Path, ...]) -> None:
         validate_runtime_acl(path)
 
 
+def prepare_protected_engine_roots(
+    install_root: Path, *, approved: bool,
+) -> tuple[Path, Path]:
+    """Create data/config dirs on the chosen disk; protect or refuse existing.
+
+    This is a separate privileged installer step. Untrusted model output may
+    not invoke it, and existing unsafe dirs are not silently ACL-repaired.
+    """
+    if approved is not True:
+        raise EngineEnrollmentError("Installer approval required for config roots")
+    _canonical(install_root, directory=True)
+    if os.name != "nt":
+        raise EngineEnrollmentError("Native Windows config protection required")
+    from .windows_runtime_acl import secure_runtime_acl, validate_runtime_acl
+    data = install_root / "data"
+    config = install_root / "config"
+    created = []
+    try:
+        for path in (data, config):
+            if path.exists() or path.is_symlink():
+                _canonical(path, directory=True)
+                validate_runtime_acl(path)
+                continue
+            path.mkdir()
+            created.append(path)
+            secure_runtime_acl(path)
+            validate_runtime_acl(path)
+        return data, config
+    except (OSError, ValueError):
+        # Clean only newly created and still-empty folders; NEVER destroy user
+        # data or a previously established config during a partial failure.
+        for path in reversed(created):
+            try:
+                path.rmdir()
+            except OSError:
+                pass
+        raise
+
+
 def _document(request: EngineEnrollmentRequest) -> bytes:
     # Exact key set matches Installation.load(schema=3) in PR #11.
     config = {
