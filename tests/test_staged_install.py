@@ -11,7 +11,8 @@ import unittest
 from unittest.mock import patch
 import zipfile
 
-from holding.staged_install import InstallError, PinnedZip, install_versioned_zip
+from holding.staged_install import (InstallError, PinnedZip, install_versioned_zip,
+                                    inspect_versioned_zip)
 
 
 def archive_file(entries: list[tuple[str, bytes | None]]) -> bytes:
@@ -63,6 +64,36 @@ class StagedInstallerTests(unittest.TestCase):
                 spec, install_root=self.root, cache_root=self.cache,
                 authorized=authorized, cancelled=cancelled,
             )
+
+    def test_readonly_inspection_does_not_create_install_or_cache(self):
+        inspection = inspect_versioned_zip(self.spec(), install_root=self.root)
+        self.assertEqual(inspection.status, "NOT_INSTALLED")
+        self.assertFalse(self.root.exists())
+        self.assertFalse(self.cache.exists())
+
+    def test_readonly_inspection_verifies_contents_and_refuses_corruption(self):
+        installed = self.install()
+        valid = inspect_versioned_zip(self.spec(), install_root=self.root)
+        self.assertEqual(valid.status, "VERIFIED_PAYLOAD")
+        self.assertEqual(valid.file_count, 2)
+        self.assertEqual(self.calls, 1)
+
+        (installed.directory / "bin/runner.exe").write_bytes(b"tampered")
+        invalid = inspect_versioned_zip(self.spec(), install_root=self.root)
+        self.assertEqual(invalid.status, "BLOCKED_INVALID")
+        self.assertEqual(invalid.file_count, 0)
+        self.assertEqual(self.calls, 1)
+
+    def test_readonly_inspection_refuses_linked_root(self):
+        outside = Path(self.temp.name) / "outside-inventory"
+        outside.mkdir()
+        try:
+            self.root.symlink_to(outside, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("Directory symlinks unavailable on this runner")
+        inspection = inspect_versioned_zip(self.spec(), install_root=self.root)
+        self.assertEqual(inspection.status, "BLOCKED_INVALID")
+        self.assertFalse(list(outside.iterdir()))
 
     def test_installs_then_reuses_verified_bytes(self):
         installed = self.install()
