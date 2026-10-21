@@ -21,6 +21,7 @@ from .inventory import scan
 from .provision_plan import make_plan
 from .provision_runtime import ProvisionExecution, stage_required_dependencies
 from .staged_install import PinnedZip, inspect_versioned_zip
+from .windows_package_manager import WingetPin
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,7 @@ class SetupSummary:
     dependency_actions: tuple[tuple[str, str, str], ...]
     installed_models: int
     blockers: tuple[str, ...]
+    unestimated_package_downloads: int = 0
 
 
 def detect_online(*, timeout: float = 3.0) -> bool:
@@ -55,7 +57,7 @@ def detect_online(*, timeout: float = 3.0) -> bool:
 def preflight_setup(
     *, manifest: Path, manifest_sha256: str,
     install_root: Path, cache_root: Path, online: bool,
-) -> tuple[SetupSummary, tuple[PinnedZip, ...]]:
+) -> tuple[SetupSummary, tuple[PinnedZip | WingetPin, ...]]:
     """Read-only inventory, compatibility checks and conservative download sizes."""
     if not install_root.is_absolute() or not cache_root.is_absolute():
         raise ValueError("Installation folders must be absolute")
@@ -65,6 +67,7 @@ def preflight_setup(
     pin_map = {item.component: item for item in pins}
     dependency_actions = []
     upper_bound = 0
+    winget_unknown = 0
     blockers = list(plan.blockers)
     if plan.state == "INSPECTION_REQUIRED":
         blockers.append("An installed dependency requires manual inspection")
@@ -74,6 +77,9 @@ def preflight_setup(
             spec = pin_map.get(action.name)
             if spec is None:
                 blockers.append("Missing release pin for " + action.name)
+            elif isinstance(spec, WingetPin):
+                detail = "WINGET_VERSION_PINNED"
+                winget_unknown += 1
             else:
                 observed = inspect_versioned_zip(spec, install_root=install_root)
                 detail = observed.status
@@ -92,6 +98,7 @@ def preflight_setup(
         snapshot.gpu, snapshot.ram_total_bytes,
         snapshot.installation_disk_free_bytes, upper_bound,
         tuple(dependency_actions), len(snapshot.models), tuple(blockers),
+        winget_unknown,
     ), pins
 
 
@@ -155,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
     abort = threading.Event()
     busy = False
     last_summary: SetupSummary | None = None
-    last_pins: tuple[PinnedZip, ...] = ()
+    last_pins: tuple[PinnedZip | WingetPin, ...] = ()
 
     outer = ttk.Frame(root, padding=16)
     outer.pack(fill=tk.BOTH, expand=True)
@@ -279,8 +286,12 @@ def main(argv: list[str] | None = None) -> int:
                         f"Plateforme : {last_summary.os_name} {last_summary.architecture}",
                         f"GPU : {last_summary.gpu or 'Non détecté'}",
                         f"Modèles locaux trouvés : {last_summary.installed_models}",
-                        f"Téléchargement maximal estimé : "
+                        f"Archives ZIP à prévoir (maximum) : "
                         f"{last_summary.download_upper_bound_bytes / 1024**2:.1f} Mio",
+                        (
+                            f"Autres téléchargements par winget (taille non estimée) : "
+                            f"{last_summary.unestimated_package_downloads}"
+                        ),
                         "",
                     ]
                     lines += [
