@@ -21,7 +21,7 @@ from .inventory import Component, Inventory, scan
 from .provision_plan import make_plan
 from .provision_runtime import (ProvisionExecution, ProvisionStep,
                                 stage_required_dependencies)
-from .staged_install import PinnedZip, inspect_versioned_zip
+from .staged_install import PinnedZip, inspect_versioned_zip, _no_linked_ancestors
 from .windows_package_manager import WingetPin
 from .managed_toolchain import resolve_managed_tool
 from .version_evidence import matches_component_version
@@ -174,6 +174,10 @@ def execute_setup(
     progress: Callable[[int, int], None] | None = None,
 ) -> tuple[SetupSummary, ProvisionExecution | None]:
     """Recheck every premise before any authorized staging operation."""
+    if model_root is not None:
+        if not isinstance(model_root, Path) or not model_root.is_absolute():
+            raise ValueError("Absolute model-storage destination required")
+        _no_linked_ancestors(model_root)
     report, pins = preflight_setup(
         manifest=manifest, manifest_sha256=manifest_sha256,
         install_root=install_root, cache_root=cache_root, online=online,
