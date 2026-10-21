@@ -102,7 +102,8 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 results.append({
                     "component": spec.component, "version": spec.version,
-                    "status": "AWAITING_APPROVAL",
+                    "status": ("BLOCKED" if inspection.status == "BLOCKED_INVALID"
+                               else "AWAITING_APPROVAL"),
                     "installation_state": inspection.status,
                     "file_count": inspection.file_count,
                     "download_bytes": (
@@ -111,9 +112,12 @@ def main(argv: list[str] | None = None) -> int:
                     ),
                     "unpacked_bytes": spec.unpacked_bytes,
                 })
-            print(json.dumps({"state": "PREVIEW_ONLY", "assets": results},
-                             sort_keys=True))
-            return 0
+            blocked = any(item["status"] == "BLOCKED" for item in results)
+            print(json.dumps({
+                "state": "PREVIEW_BLOCKED" if blocked else "PREVIEW_ONLY",
+                "assets": results,
+            }, sort_keys=True))
+            return 2 if blocked else 0
         for spec in assets:
             try:
                 installed = install_versioned_zip(
