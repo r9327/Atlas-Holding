@@ -381,3 +381,27 @@ Ce contrôle ne vaut pas encore installation terminée : le compte Windows,
 le schéma de configuration moteur, le premier cycle roadmap et les preuves
 d'E2E restent des gates séparés.
 
+
+### Inscription déterministe de la configuration moteur v3
+
+Le nouveau module `holding/windows_engine_enrollment.py` impose un
+consentement initial, des répertoires `data/` et `config/` sur le disque
+choisi avec ACL Windows protégées, les exécutables Control Center/moteur
+déjà vérifiés, un exécutable d'agent épinglé, les arguments de code épinglés
+et un dépôt canonique existant. Il produit une **configuration JSON v3
+entièrement déterministe** compatible avec le chargeur moteur de la PR #11,
+sans autorisation GitHub implicite et sans secret dans le JSON.
+
+La publication du fichier se fait via un temporaire protégé, écriture
+synchronisée puis renommage. La version identique se réutilise ; une
+configuration différente ou abîmée exige une réparation explicite et n'est
+jamais écrasée. Le résultat reste `CONFIGURED_ENGINE_HEALTH_PENDING` :
+l'inscription ne prouve pas que l'agent, son modèle IA, les plugins ou
+l'interface sont réellement opérationnels.
+
+Les tests `tests/test_windows_engine_enrollment.py` vérifient le contenu,
+les SHA, les échecs d'ACL, les chemins, la réutilisation et la compatibilité
+réelle avec `verify_installed_engine()` (ACL simulées uniquement dans les
+tests transplateformes). **Reste indispensable** : brancher cet onboarding
+sur les vrais adaptateurs d'agents validés et réaliser l'E2E interactif sur
+Windows vierge avant toute fusion ou release.
