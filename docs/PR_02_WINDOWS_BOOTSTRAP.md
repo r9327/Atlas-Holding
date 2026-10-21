@@ -37,6 +37,13 @@ L'installateur ne doit **pas** demander « Quel modèle voulez-vous ? » ni impo
 ## Passage sans intervention récurrente
 L'utilisateur fournit ensuite **uniquement les roadmaps**. Les téléchargements et la sélection des modèles se font dans les autorisations initiales ; les permissions de GitHub sont également consenties une fois pour le dépôt exact. Suivre le contrat `docs/USER_AUTONOMY_PROFILE.md` de la PR #1, sans plafond mobile ni choix de modèles par nom. Cette exigence est à tester, pas déjà implémentée.
 
+## Staging natif de la paire EXE Holding (21 octobre 2026)
+
+- `holding/native_runtime_stage.py` prend les **deux fichiers déjà construits** (Control Center et moteur autonome) ainsi que les SHA-256/tailles épinglés par la release. Les deux EXE sont vérifiés intégralement avant toute mutation ; copie vers un répertoire temporaire commun sur le volume de destination, seconde vérification des octets copiés, reçu `STAGED_UNREGISTERED` puis publication du dossier de version par renommage.
+- Source corrompue, second transfert interrompu, changement de taille, symlink/jonction, reçu modifié ou version déjà présente mais altérée : refus explicite sans exécution des binaires, écrasement ni résultat « installé » mensonger. Une version strictement identique est réutilisée sans copie.
+- Le mode **sans autorisation** renvoie `APPROVAL_REQUIRED` et ne crée pas de destination. Les pins sont une entrée *trusted installer* issue d'une release contrôlée, jamais du texte de l'IA. `tests/test_native_runtime_stage.py` couvre l'atomicité, l'idempotence, l'absence d'écrasement, les chemins liés et la panne du second fichier.
+- **Non encore accompli :** ACL réelles Windows, lancement enregistré, choix du dossier dans le setup pour cette paire, récupération après redémarrage, signature/SmartScreen, intégration de ces fichiers dans `AtlasHoldingSetup.exe` et test utilisateur complet sur Windows vierge. Cette primitive prépare uniquement les octets vérifiés.
+
 ## Lot réel : assets ZIP versionnés et manifestes (21 octobre 2026)
 
 - `holding/staged_install.py` : installation sous `components/<nom>/<version>-<SHA>` des **archives ZIP de runtime déjà approuvées**, après téléchargement/reprise SHA-256, vérification de la taille exacte et contrôle strict de chaque entrée ZIP (traversée, symlinks, fichiers spéciaux, doublons insensibles à la casse, noms Windows réservés, collisions fichier/dossier, limite de volume). Répertoire intermédiaire, publication finale par renommage, nettoyage en cas d'échec. Une version déjà installée est intégralement revérifiée avant réutilisation ; une version corrompue est refusée, **jamais écrasée ni réparée implicitement**.
