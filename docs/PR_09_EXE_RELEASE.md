@@ -13,6 +13,27 @@ scénario E2E restent à réaliser. Aucun EXE ni PASS natif n'est revendiqué ic
 
 **Livrable :** utilisateur télécharge un fichier depuis GitHub Releases, double-clique pour installer Atlas Holding, choisit son disque, télécharge/configure les outils nécessaires en une fois, démarre le Control Center puis la roadmap.
 
+## Gate bloquant ajouté : paire runtime native et sécurité Windows
+
+Le contrôle `holding/release_evidence.py` refuse désormais de qualifier une
+release sans **trois artefacts observés indépendamment** (noms, SHA-256, tailles) :
+`AtlasHoldingSetup.exe`, `AtlasHoldingControlCenter.exe` et
+`AtlasHoldingEngine.exe`. Un simple setup PyInstaller ou une fenêtre qui
+s'ouvre sans moteur ne suffisent pas.
+
+La validation exige aussi de véritables preuves externes `PASS` pour les
+gates `windows-clean-install`, `native-runtime-ipc`,
+`windows-acl-isolation`, `offline-after-provisioning` et
+`e2e-roadmap`. La liste imposée ne peut plus omettre les gates IPC/ACL :
+le validateur refuse même un appel lui fournissant moins d'exigences.
+
+**Important :** les tests unitaires du validateur emploient des fichiers et
+empreintes de démonstration uniquement pour vérifier sa logique ; ils ne
+fournissent **aucune** preuve réelle de publication. Le run Windows
+non-release de la PR #11 valide actuellement les exécutables congelés, mais
+ne prouve pas une installation Windows neuve, l'isolation ACL ni une roadmap
+multi-agent autonome. Cette PR demeure en Draft.
+
 ## Implémentation
 - Packaging reproductible sur runner Windows à partir de code versionné, versions figées, bundles/licences vérifiés, ressources Qt et vrais assets ; chemins sans installation Python préalable côté utilisateur.
 - Créer `AtlasHoldingSetup.exe` + manifest/hashes SHA-256 + guide court, dans une Release GitHub. EXE non signé possible -> avertissement SmartScreen explicite, **pas** de fausse signature ; publication testée sur Windows propre.
