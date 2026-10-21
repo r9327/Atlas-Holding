@@ -175,3 +175,13 @@ Sources de vérification documentaire :
 - `https://winget.tulio.org/pkg/Ollama.Ollama/`
 - `https://wingetly.io/apps/sst/opencode`
 - `https://learn.microsoft.com/windows/package-manager/winget/settings`
+
+## Relance de la Holding et validation des manifestes WinGet — lot supplémentaire
+
+`holding/pinned_inventory.py` reconstruit l'inventaire **à chaque lancement** après le scan classique : Git et OpenCode ne sont considérés disponibles qu'après vérification native de la version exacte du ZIP Atlas ou du binaire utilisateur WinGet. Pour Ollama, un exécutable exact n'est pas une API saine ; si le service est arrêté, son état `FOUND_BROKEN` conserve son chemin et conduit à `START_SERVICE`, sans inventer les modèles. Les processus Git, Ollama ou OpenCode valides déjà présents dans le PATH sont réutilisés, sans remplacement. Le Wizard et le CLI utilisent ce même inventaire, ce qui évite de réinstaller ces composants à chaque exécution sur une machine dont le PATH n'a pas été modifié.
+
+`install_pinned_winget` exécute désormais `winget show --id <id> --exact --version <version> --source winget --scope user --architecture x64` **avant** `winget install`, avec une échéance et une sortie bornées. Un paquet absent, une version retirée ou une portée utilisateur non prise en charge bloque l'installation du paquet concerné ; les libellés localisés de WinGet ne sont pas interprétés arbitrairement par des regex fragiles. Comme WinGet reste maître du manifeste qu'il consomme, le post-install exige toujours sa propre preuve native de version, et Ollama exige également une API fonctionnelle.
+
+La source authentique `microsoft/winget-pkgs` a été consultée pour les versions candidates ; les URL upstream et empreintes SHA256 Windows x64 figurent dans `release-candidates/winget-windows-x64-installer-evidence.json`. Le manifeste Git 2.55.0 précise à la fois `Scope: user` et `ElevationRequirement: elevatesSelf` : la possibilité d'une élévation Windows demeure **un bloqueur d'autonomie** à lever au test réel (ou via un ZIP portable équivalent vérifié). Le manifeste Ollama 0.32.8 fournit un programme Inno Setup par utilisateur. OpenCode 1.18.29 fournit un ZIP portable x64. Ces empreintes documentent la revue des versions ; la distribution WinGet conserve sa vérification d'installateur, elles ne prouvent pas qu'une vraie installation de ce lot a été exercée sur un PC Windows vierge.
+
+**Non certifié :** installation WinGet native bout à bout sur un runner Windows vierge, garantie sans UAC de Git, démarrage réel Ollama Desktop versus Atlas, reboot effectif, signatures et manifestes du Setup de production, benchmark qualité modèle #4. PR restant Draft.
