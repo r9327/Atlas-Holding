@@ -346,12 +346,21 @@ class HoldingService:
         return Tick("STOPPED", None, "Shutdown requested")
 
     def close(self) -> None:
-        if self._dashboard_session is not None:
-            self._dashboard_session.close()
+        # Viewer teardown can fail independently of the coding engine.
+        # Always close the IPC and release the durable writer lease, even
+        # when a GUI process refuses to terminate.
+        try:
+            if self._dashboard_session is not None:
+                self._dashboard_session.close()
+        finally:
             self._dashboard_session = None
-        self.disable_dashboard_ipc()
-        self.engine.close()
-        self._started = False
+            try:
+                self.disable_dashboard_ipc()
+            finally:
+                try:
+                    self.engine.close()
+                finally:
+                    self._started = False
 
     def __enter__(self) -> "HoldingService":
         return self
