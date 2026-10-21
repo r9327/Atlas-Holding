@@ -405,3 +405,5 @@ réelle avec `verify_installed_engine()` (ACL simulées uniquement dans les
 tests transplateformes). **Reste indispensable** : brancher cet onboarding
 sur les vrais adaptateurs d'agents validés et réaliser l'E2E interactif sur
 Windows vierge avant toute fusion ou release.
+
+La validation complémentaire `test_real_windows_acl_enrollment_and_cross_module_launch_preflight` s'exécute **uniquement sur le runner Windows natif** : elle crée les DACL protégées des deux fichiers EXE, du dossier `data/` et de `config/`, inscrit réellement `engine.json`, revérifie son ACL puis lui fait passer la vérification intégrale du lanceur. Une configuration et des fichiers réellement protégés sont ainsi testés sans prétendre qu'un cycle IA complet est achevé.
