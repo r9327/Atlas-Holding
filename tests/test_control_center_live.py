@@ -8,12 +8,16 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
-from PySide6.QtWidgets import QApplication, QProgressBar
+from PySide6.QtWidgets import QApplication, QMessageBox, QProgressBar
 
 from holding.autonomy import Mission
 from holding.control_center_live import LiveControlCenterWindow
-from holding.dashboard_ipc import DashboardIpcClient, DashboardIpcServer
+from holding.control import ControlPlane
+from holding.dashboard_ipc import (
+    DashboardControlClient, DashboardIpcClient, DashboardIpcServer,
+)
 from holding.state_store import StateStore
 
 
@@ -82,6 +86,57 @@ class LiveDashboardTests(unittest.TestCase):
         self.until(lambda: window.tasks.rowCount() == 1)
         self.assertTrue(window.close())
         self.assertEqual(self.client.fetch().tasks[0].state, "READY")
+
+    def test_authorized_buttons_pause_resume_stop_and_log(self):
+        write_key = b"z" * 32
+        trusted_host = DashboardIpcServer.for_database(
+            self.db, engine_id=ENGINE, secret=KEY,
+            control_secret=write_key)
+        with trusted_host:
+            read = DashboardIpcClient(
+                port=trusted_host.port, secret=KEY, engine_id=ENGINE)
+            write = DashboardControlClient(
+                port=trusted_host.port, secret=write_key)
+            window = LiveControlCenterWindow(
+                read, control=write, refresh_ms=250)
+            def flags():
+                with ControlPlane(self.db) as controller:
+                    state = controller.snapshot()
+                    return state.paused, state.stop_requested
+            try:
+                self.until(lambda: window.pause_button.isEnabled())
+                window.pause_button.click()
+                self.until(lambda: flags()[0])
+                self.until(lambda: window.resume_button.isEnabled())
+                window.resume_button.click()
+                self.until(lambda: flags() == (False, False))
+                self.until(lambda: window.stop_button.isEnabled())
+                with patch.object(QMessageBox, "question",
+                                  return_value=QMessageBox.StandardButton.No):
+                    window.stop_button.click()
+                self.assertEqual(flags(), (False, False))
+                with patch.object(QMessageBox, "question",
+                                  return_value=QMessageBox.StandardButton.Yes):
+                    window.stop_button.click()
+                self.until(lambda: flags()[1])
+                self.until(lambda: window.stop_button.isEnabled())
+                self.assertTrue(
+                    window.logs.rowCount() > 0)
+            finally:
+                window.close()
+
+    def test_readonly_view_disables_mutating_buttons(self):
+        window = LiveControlCenterWindow(self.client, refresh_ms=250)
+        try:
+            self.until(lambda: window.tasks.rowCount() == 1)
+            self.assertFalse(window.pause_button.isEnabled())
+            self.assertFalse(window.resume_button.isEnabled())
+            self.assertFalse(window.stop_button.isEnabled())
+            window.request_pause()
+            with ControlPlane(self.db) as controller:
+                self.assertFalse(controller.snapshot().paused)
+        finally:
+            window.close()
 
     def test_input_constraints_refuse_invalid_refresh_or_client(self):
         with self.assertRaises(ValueError):
