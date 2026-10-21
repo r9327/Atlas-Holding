@@ -43,23 +43,28 @@ jobs:
       - name: Require clean checkout after tests
         shell: bash
         run: 'test -z "$(git status --porcelain --untracked-files=normal)"'
-      - name: Verify official portable MinGit with real Windows VCS operations
+      - name: Verify official Git and OpenCode portable Windows binaries
         if: matrix.os == 'windows-latest' && (github.event_name == 'push' || github.event.label.name == 'ci:validate')
         shell: pwsh
-        timeout-minutes: 8
+        timeout-minutes: 12
         run: |
-          $url = "https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.2/MinGit-2.56.0.2-64-bit.zip"
-          $expected = "da35e72aa21c005a5a0d298cfbae110bc1609a815730ea0dde84b01a1b3cd3be"
-          $zip = Join-Path $env:RUNNER_TEMP "Atlas-MinGit-official-$expected.zip"
+          $gitUrl = "https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.2/MinGit-2.56.0.2-64-bit.zip"
+          $gitSha = "da35e72aa21c005a5a0d298cfbae110bc1609a815730ea0dde84b01a1b3cd3be"
+          $codeUrl = "https://github.com/anomalyco/opencode/releases/download/v1.18.29/opencode-windows-x64.zip"
+          $codeSha = "b32618aa3d1415f6e4f473aec248edef25759203fb707d7d968359d86d4a35ee"
+          $gitZip = Join-Path $env:RUNNER_TEMP "Atlas-MinGit-$gitSha.zip"
+          $codeZip = Join-Path $env:RUNNER_TEMP "Atlas-OpenCode-$codeSha.zip"
           try {
-            Invoke-WebRequest -Uri $url -OutFile $zip -MaximumRedirection 5 -TimeoutSec 120
-            if (!(Test-Path $zip)) { throw "Publisher archive missing" }
-            $actual = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
-            if ($actual -ne $expected) { throw "Publisher SHA256 mismatch" }
-            python -B -X utf8 -m holding.mingit_smoke --archive "$zip"
+            Invoke-WebRequest -Uri $gitUrl -OutFile $gitZip -MaximumRedirection 5 -TimeoutSec 180
+            if (!(Test-Path $gitZip) -or (Get-FileHash -Algorithm SHA256 $gitZip).Hash.ToLowerInvariant() -ne $gitSha) { throw "Publisher MinGit SHA256 mismatch" }
+            python -B -X utf8 -m holding.mingit_smoke --archive "$gitZip"
             if ($LASTEXITCODE -ne 0) { throw "Real portable MinGit VCS smoke failed" }
+            Invoke-WebRequest -Uri $codeUrl -OutFile $codeZip -MaximumRedirection 5 -TimeoutSec 180
+            if (!(Test-Path $codeZip) -or (Get-FileHash -Algorithm SHA256 $codeZip).Hash.ToLowerInvariant() -ne $codeSha) { throw "Publisher OpenCode SHA256 mismatch" }
+            python -B -X utf8 -m holding.opencode_smoke --git-archive "$gitZip" --opencode-archive "$codeZip"
+            if ($LASTEXITCODE -ne 0) { throw "Real portable OpenCode CLI smoke failed" }
           } finally {
-            Remove-Item -Force -ErrorAction SilentlyContinue $zip
+            Remove-Item -Force -ErrorAction SilentlyContinue $gitZip, $codeZip
           }
       - name: Install pinned Windows build packager
         if: matrix.os == 'windows-latest' && (github.event_name == 'push' || github.event.label.name == 'ci:validate')
