@@ -139,23 +139,16 @@ def verify_installed_engine(spec: InstalledEngineSpec) -> tuple[str, str]:
 
 
 def _interactive_user_session() -> bool:
-    """Reject Windows Session 0: Qt must attach to the logged-in user's UI."""
+    """Prove a logged-in user's *visible* Windows window station, not Session 0."""
     if sys.platform != "win32":
         return False
+    from .windows_user_session import (
+        InteractiveSessionError, require_interactive_windows_session,
+    )
     try:
-        import ctypes
-        from ctypes import wintypes
-        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel.ProcessIdToSessionId.argtypes = (
-            wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
-        )
-        kernel.ProcessIdToSessionId.restype = wintypes.BOOL
-        session = wintypes.DWORD()
-        if not kernel.ProcessIdToSessionId(
-                os.getpid(), ctypes.byref(session)):
-            return False
-        return session.value > 0
-    except (OSError, AttributeError, ValueError):
+        require_interactive_windows_session()
+        return True
+    except (InteractiveSessionError, OSError, AttributeError, ValueError):
         return False
 
 
@@ -168,15 +161,6 @@ def launch_installed_engine(
     if not _interactive_user_session():
         raise RuntimeLaunchError("Engine cannot launch outside interactive Windows session")
     executable, config = verify_installed_engine(spec)
-    # An installed GUI-capable engine must start only from a real signed-in
-    # user desktop, never a Windows service Session 0 or invisible station.
-    from .windows_user_session import (
-        InteractiveSessionError, require_interactive_windows_session,
-    )
-    try:
-        require_interactive_windows_session()
-    except InteractiveSessionError as exc:
-        raise RuntimeLaunchError("Trusted interactive Windows session unavailable") from exc
     # Never use shell, inherited stdin, arbitrary environment tokens, or the
     # caller's cwd. Configured roadmap content cannot supply CLI parameters.
     safe = {
