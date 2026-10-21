@@ -42,6 +42,9 @@ from .windows_engine_enrollment import (
     enroll_pinned_engine, launch_enrolled_engine,
 )
 from .windows_runtime_acl import validate_runtime_acl, secure_runtime_acl
+from .windows_model_enrollment import (
+    discover_local_models, enroll_local_model, LocalModelEnrollmentError,
+)
 
 
 @dataclass(frozen=True)
@@ -356,6 +359,7 @@ def execute_setup(
 def configure_and_launch_engine(
     *, install_root: Path, atlas_root: Path, runtime_pins: dict[str, str],
     adapter_sha256: str, approved: bool, launch_approved: bool,
+    model_name: str | None = None,
 ):
     """Explicit first-run GUI handoff. No model/adapter is silently invented.
 
@@ -419,6 +423,10 @@ def configure_and_launch_engine(
         else:
             folder.mkdir()
             secure_runtime_acl(folder)
+    if not model_name:
+        raise EngineEnrollmentError("An installed Ollama model must be selected")
+    selected = enroll_local_model(
+        install_root, selected_model=model_name, approved=True)
     request = EngineEnrollmentRequest(
         install_root=install_root,
         runtime_directory=runtime,
@@ -430,7 +438,8 @@ def configure_and_launch_engine(
         health_directory=install_root / "health",
         agent_executable=agent,
         agent_sha256=adapter_sha256,
-        agent_argument_pins={},
+        agent_arguments=(selected.path,),
+        agent_argument_pins={str(selected.path): selected.sha256},
     )
     receipt = enroll_pinned_engine(request, approved=True)
     if not launch_approved:
@@ -501,6 +510,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     current_models = tk.StringVar(value=str(initial_models))
     current_atlas = tk.StringVar(value="")
+    current_model = tk.StringVar(value="")
     state_message = tk.StringVar(value="Analyse en attente")
     network_message = tk.StringVar(value="Vérification réseau au démarrage")
     file_progress = tk.StringVar(value="Aucun transfert")
@@ -549,6 +559,14 @@ def main(argv: list[str] | None = None) -> int:
             current_atlas.set(chosen)
     ttk.Button(atlas_row, text="Parcourir", command=select_atlas).pack(
         side=tk.LEFT, padx=(8, 0))
+
+    model_row = ttk.Frame(paths)
+    model_row.pack(fill=tk.X, pady=3)
+    ttk.Label(model_row, text="Modèle Ollama local", width=25).pack(side=tk.LEFT)
+    model_choice = ttk.Combobox(
+        model_row, textvariable=current_model, state="readonly")
+    model_choice.pack(side=tk.LEFT, fill=tk.X, expand=True)
+    model_choice["values"] = ()
 
     ttk.Label(outer, textvariable=network_message).pack(anchor="w", pady=(12, 2))
     ttk.Label(outer, textvariable=state_message).pack(anchor="w", pady=(2, 8))
@@ -632,6 +650,11 @@ def main(argv: list[str] | None = None) -> int:
                 events.put(("result", summary, executed,
                             (current_target, current_storage,
                              model_directory)))
+                try:
+                    models = discover_local_models()
+                except LocalModelEnrollmentError:
+                    models = ()
+                events.put(("models", models))
             except (OSError, ValueError, TypeError, EngineEnrollmentError) as exc:
                 # Never dump exception text: a URL or credential may occur in it.
                 events.put(("error", type(exc).__name__))
@@ -654,6 +677,11 @@ def main(argv: list[str] | None = None) -> int:
                     file_progress.set(f"Transfert vérifié : {count:,} / {size:,} octets")
                 elif event[0] == "pins":
                     last_pins = event[1]
+                elif event[0] == "models":
+                    names = tuple(name for name, _digest in event[1])
+                    model_choice["values"] = names
+                    if current_model.get() not in names:
+                        current_model.set(names[0] if len(names) == 1 else "")
                 elif event[0] == "result":
                     busy = False
                     last_summary = event[1]
@@ -831,6 +859,10 @@ def main(argv: list[str] | None = None) -> int:
             state_message.set("Emplacements modifiés : nouvelle analyse nécessaire")
             return
         chosen = current_atlas.get().strip()
+        chosen_model = current_model.get().strip()
+        if not chosen_model:
+            state_message.set("Choisir un modèle Ollama installé et vérifié")
+            return
         if not chosen:
             state_message.set("Choisir le clone Git de Dof-Atlas")
             return
@@ -840,6 +872,7 @@ def main(argv: list[str] | None = None) -> int:
             "Les permissions du dossier d'installation sélectionné seront "
             "restreintes à votre compte, SYSTEM et Administrateurs. "
             "N'utilisez pas un dossier contenant des fichiers partagés. "
+            "Le modèle local sélectionné est lié à son empreinte SHA. "
             "Le dépôt Atlas doit être un vrai clone Git. Aucune fusion GitHub.",
         ):
             return
@@ -858,6 +891,7 @@ def main(argv: list[str] | None = None) -> int:
                     runtime_pins=bundled_runtime_pins,
                     adapter_sha256=args.adapter_sha256,
                     approved=True, launch_approved=run_it,
+                    model_name=chosen_model,
                 )
                 events.put(("engine_activation", status, pid))
             except (OSError, ValueError, TypeError,
