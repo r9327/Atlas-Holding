@@ -64,6 +64,30 @@ class ControlCenterStateTests(unittest.TestCase):
         with self.assertRaises(AttributeError):
             state.sequence = 43
 
+    def test_v2_operator_flags_are_strict_and_v1_stays_compatible(self):
+        self.assertIsNone(consume(snapshot()).paused)
+        self.assertIsNone(consume(snapshot()).stop_requested)
+        newer = snapshot()
+        newer.update(schema_version=2, paused=True, stop_requested=False)
+        state = consume(newer)
+        self.assertIs(state.paused, True)
+        self.assertIs(state.stop_requested, False)
+        for changes in (
+                {"paused": 1},
+                {"stop_requested": "false"},
+                {"paused": None},
+                {"schema_version": 3},
+                {"surplus": "not allowed"}):
+            invalid = dict(newer)
+            invalid.update(changes)
+            with self.subTest(changes=changes), self.assertRaises(
+                    ControlCenterStateError):
+                consume(invalid)
+        missing = dict(newer)
+        del missing["paused"]
+        with self.assertRaises(ControlCenterStateError):
+            consume(missing)
+
     def test_done_without_evidence_is_impossible(self):
         payload = snapshot()
         payload["tasks"][0]["completion_evidence"] = None
