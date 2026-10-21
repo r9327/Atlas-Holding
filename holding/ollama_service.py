@@ -141,6 +141,7 @@ def start_local_ollama(
     except OSError:
         return OllamaLaunch("START_FAILED", str(target))
     deadline = time.monotonic() + startup_seconds
+    succeeded = False
     try:
         while time.monotonic() < deadline:
             if cancelled is not None and cancelled():
@@ -148,6 +149,7 @@ def start_local_ollama(
             if process.poll() is not None:
                 return OllamaLaunch("PROCESS_EXITED", str(target))
             if _local_api_alive() and process.poll() is None:
+                succeeded = True
                 return OllamaLaunch("OWNED_API_HEALTHY", str(target), process)
             time.sleep(0.2)
         return OllamaLaunch("START_TIMEOUT", str(target))
@@ -156,9 +158,7 @@ def start_local_ollama(
         # A healthy service intentionally remains alive after setup returns.
         if process.poll() is not None:
             process.wait(timeout=2)
-        elif not (_local_api_alive() and (
-                cancelled is None or not cancelled())
-                and time.monotonic() < deadline):
+        elif not succeeded:
             process.terminate()
             try:
                 process.wait(timeout=3)
