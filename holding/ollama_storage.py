@@ -16,6 +16,10 @@ from .staged_install import _no_linked_ancestors
 
 
 _NAME = "ollama-model-storage.json"
+_SOURCES = frozenset({
+    "consented_owned_ollama_service",
+    "consented_user_ollama_environment",
+})
 
 
 @dataclass(frozen=True)
@@ -38,7 +42,7 @@ def read_model_directory(install_root: Path) -> StoredModelDirectory:
         if (not isinstance(raw, dict)
                 or set(raw) != {"schema", "directory", "source"}
                 or type(raw["schema"]) is not int or raw["schema"] != 1
-                or raw["source"] != "consented_owned_ollama_service"
+                or raw["source"] not in _SOURCES
                 or not isinstance(raw["directory"], str)
                 or not 0 < len(raw["directory"]) <= 1024):
             return StoredModelDirectory("BLOCKED_INVALID")
@@ -55,11 +59,14 @@ def read_model_directory(install_root: Path) -> StoredModelDirectory:
 
 def store_model_directory(
     install_root: Path, model_root: Path, *, authorized: bool,
+    source: str = "consented_owned_ollama_service",
 ) -> StoredModelDirectory:
     if (not isinstance(install_root, Path) or not install_root.is_absolute()
             or not isinstance(model_root, Path) or not model_root.is_absolute()
             or type(authorized) is not bool):
         raise ValueError("Invalid model directory preference request")
+    if source not in _SOURCES:
+        raise ValueError("Invalid provenance for stored Ollama volume")
     if not authorized:
         return StoredModelDirectory("AUTH_REQUIRED")
     _no_linked_ancestors(install_root)
@@ -72,11 +79,19 @@ def store_model_directory(
     _no_linked_ancestors(state_dir)
     target = state_dir / _NAME
     _no_linked_ancestors(target)
-    if target.exists() and not target.is_file():
-        return StoredModelDirectory("BLOCKED_INVALID")
+    if target.exists():
+        existing = read_model_directory(install_root)
+        if existing.status != "STORED_PREFERENCE_NOT_RUNTIME_ATTESTED":
+            return StoredModelDirectory("BLOCKED_INVALID")
+        if existing.directory != model_root:
+            return StoredModelDirectory("EXISTING_MODEL_VOLUME_CONFLICT",
+                                        existing.directory)
+        # Already authorized and saved; do not replace evidence or downgrade
+        # the original provenance when a second installer runs.
+        return existing
     payload = {
         "schema": 1, "directory": str(model_root),
-        "source": "consented_owned_ollama_service",
+        "source": source,
     }
     temp_name = None
     try:
