@@ -34,36 +34,41 @@ def _digest(path: Path) -> str:
     return h.hexdigest()
 
 
-def build_windows_control_center(
-    *, output_dir: Path, project_root: Path | None = None,
+def _freeze_entry(
+    *, output_dir: Path, root: Path, executable_name: str,
+    entry_module: str, ui: bool,
 ) -> ViewerBuildEvidence:
-    """Package PySide6 Qt and strict enrollment CLI; never publish a release."""
+    """One constrained Windows packager shared by GUI and headless engine."""
     if sys.platform != "win32":
-        raise RuntimeError("Viewer EXE is built and smoke tested on native Windows")
-    root = project_root if project_root is not None else Path(__file__).resolve().parent.parent
+        raise RuntimeError("Holding EXE must be built and exercised on native Windows")
+    expected_files = (
+        ("control_center_entry.py", "control_center_live.py") if ui else
+        ("daemon_entry.py", "service.py", "state_store.py")
+    )
     if (not isinstance(root, Path) or not root.is_absolute()
             or root != root.resolve()
             or not isinstance(output_dir, Path) or not output_dir.is_absolute()
             or output_dir.is_symlink()
-            or not (root / "holding" / "control_center_entry.py").is_file()
-            or not (root / "holding" / "control_center_live.py").is_file()):
-        raise ValueError("Verified Windows viewer sources and absolute output required")
-    destination = output_dir / "AtlasHoldingControlCenter.exe"
+            or any(not (root / "holding" / f).is_file()
+                   for f in expected_files)):
+        raise ValueError("Verified Windows sources and absolute output required")
+    destination = output_dir / (executable_name + ".exe")
     if destination.exists() or destination.is_symlink():
-        raise FileExistsError("Refusing to overwrite an existing viewer binary")
+        raise FileExistsError("Refusing to overwrite an existing runtime executable")
     output_dir.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="atlas-viewer-build-") as temp:
+    with tempfile.TemporaryDirectory(prefix="atlas-runtime-build-") as temp:
         workspace = Path(temp)
-        entry = workspace / "viewer_entry.py"
+        entry = workspace / "frozen_entry.py"
         entry.write_text(
-            "from holding.control_center_entry import main\n"
-            "raise SystemExit(main())\n", encoding="utf-8",
+            f"from {entry_module} import main\\n"
+            "raise SystemExit(main())\\n", encoding="utf-8",
         )
         dist = workspace / "dist"
         command = [
             sys.executable, "-m", "PyInstaller",
-            "--clean", "--noconfirm", "--onefile", "--windowed", "--noupx",
-            "--name", "AtlasHoldingControlCenter",
+            "--clean", "--noconfirm", "--onefile",
+            "--windowed" if ui else "--console", "--noupx",
+            "--name", executable_name,
             "--paths", str(root),
             "--distpath", str(dist),
             "--workpath", str(workspace / "build"),
@@ -73,19 +78,18 @@ def build_windows_control_center(
         subprocess.run(
             command, cwd=root, shell=False, check=True, timeout=900,
         )
-        candidate = dist / "AtlasHoldingControlCenter.exe"
+        candidate = dist / (executable_name + ".exe")
         if (not candidate.is_file() or candidate.is_symlink()
                 or candidate.stat().st_size < 1_000_000):
-            raise RuntimeError("Windows viewer binary is missing or incomplete")
-        # Build and output can be on different Windows volumes. Copy to a
-        # random temporary file on the chosen destination volume, then publish
-        # atomically without replacing an existing artifact.
-        staged = output_dir / (".viewer-" + secrets.token_hex(16) + ".tmp")
+            raise RuntimeError("Frozen Windows runtime is missing or incomplete")
+        # The destination may be on another disk; stage the complete binary
+        # on that disk and refuse to overwrite a previously produced artifact.
+        staged = output_dir / (".runtime-" + secrets.token_hex(16) + ".tmp")
         try:
             with candidate.open("rb") as inp, staged.open("xb") as out:
                 shutil.copyfileobj(inp, out, length=1024 * 1024)
             if destination.exists() or destination.is_symlink():
-                raise FileExistsError("Viewer output appeared during packaging")
+                raise FileExistsError("Runtime output appeared during packaging")
             os.rename(staged, destination)
         finally:
             staged.unlink(missing_ok=True)
@@ -93,6 +97,29 @@ def build_windows_control_center(
         str(destination), _digest(destination), destination.stat().st_size,
     )
 
+
+def build_windows_control_center(
+    *, output_dir: Path, project_root: Path | None = None,
+) -> ViewerBuildEvidence:
+    """Package PySide6 Qt and strict enrollment CLI; never publish a release."""
+    root = project_root if project_root is not None else Path(__file__).resolve().parent.parent
+    return _freeze_entry(
+        output_dir=output_dir, root=root,
+        executable_name="AtlasHoldingControlCenter",
+        entry_module="holding.control_center_entry", ui=True,
+    )
+
+
+def build_windows_engine(
+    *, output_dir: Path, project_root: Path | None = None,
+) -> ViewerBuildEvidence:
+    """Package headless durable engine, independent of Qt/window life cycle."""
+    root = project_root if project_root is not None else Path(__file__).resolve().parent.parent
+    return _freeze_entry(
+        output_dir=output_dir, root=root,
+        executable_name="AtlasHoldingEngine",
+        entry_module="holding.daemon_entry", ui=False,
+    )
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="atlas-holding-viewer-build")
