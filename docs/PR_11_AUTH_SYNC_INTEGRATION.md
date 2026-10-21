@@ -159,3 +159,35 @@ d'une installation avec ACL.
   avec précondition `sha`.
 - [Workflow dispatch REST](https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event)
   limité au workflow de certification et à la branche autorisée.
+
+## Adaptateur Ollama natif autonome — build nonrelease (22 octobre 2026)
+
+La PR #11 réemploie `holding/ollama_protocol.py` (contrat moteur JSON v1)
+sans introduire un nouveau protocole. `holding/windows_control_center_build.py`
+dispose désormais d'un troisième binaire : `AtlasHoldingAgent.exe`.
+La commande `--kind all` produit les trois exécutables natifs séparés :
+GUI, moteur SQLite et agent console Ollama. `--kind both` est conservé pour
+la compatibilité des précédents tests.
+
+Le binaire agent transmet les arguments à `main(sys.argv[1:])` : l'appel
+normal exige **un chemin absolu vers un JSON de modèle installé, distinctement
+épinglé par SHA-256 dans le schéma v3 du moteur**. Il refuse de travailler
+sans configuration ; le mode `--self-test` teste uniquement le paquet et
+la structure du protocole, sans solliciter de LLM.
+
+La CI Windows construit réellement `AtlasHoldingAgent.exe`, puis exécute
+`tests/native_windows_agent_smoke.py`. Un faux Ollama **local sur
+127.0.0.1:11434** valide le dialogue `health` puis `plan_patch`,
+vérifie le refus d'un digest modèle altéré et confirme que l'agent ne modifie
+aucun fichier. Aucun modèle n'est téléchargé et aucune qualité de code IA
+n'est déduite de cet échange contrôlé. Les vrais tests de performance, la
+sélection du modèle et une mission réelle nécessitent toujours Ollama et
+un modèle attestés sur la machine cible.
+
+**Dépendance à résoudre avant installation** : la PR #2 prépare un EXE
+`AtlasHoldingAgent.exe`, mais son wizard n'a pas encore de provisioning du
+fichier de modèle local ni de son argument SHA-256. Une inscription sans cet
+argument ne rend donc pas l'agent prêt. Il faut réunir PR #2 et #11 sur
+le même SHA intégré, inscrire un modèle local présent par son digest,
+sécuriser/épingler `model.json`, puis certifier la chaîne Windows complète
+avant toute release.
