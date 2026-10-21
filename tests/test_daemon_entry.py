@@ -129,6 +129,80 @@ json.dump({'schema_version':1,'request_id':r['request_id'],'status':'OK',
         with self.assertRaises(BootstrapError):
             Installation.load(self.config)
 
+    def _enable_dashboard(self, *, readonly=False):
+        script = self.root / 'viewer.py'
+        script.write_text(
+            "import pathlib,sys,time\\n"
+            "data=sys.stdin.buffer.read(65)\\n"
+            "assert len(data)==(32 if '--readonly' in sys.argv else 64)\\n"
+            "pathlib.Path(" + repr(str(self.root / 'viewer-started')) +
+            ").write_text('authenticated-pipe-delivered')\\n"
+            "time.sleep(15)\\n"
+        )
+        self.data['schema'] = 3
+        self.data['github'] = None
+        self.data['dashboard'] = {
+            'executable': str(Path(sys.executable).resolve()),
+            'executable_sha256':
+                hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest(),
+            'script': str(script),
+            'script_sha256': hashlib.sha256(script.read_bytes()).hexdigest(),
+            'readonly': readonly,
+        }
+        return script
+
+    def test_schema_three_launches_real_pinned_viewer(self):
+        self._enable_dashboard()
+        self.save()
+        installation = Installation.load(self.config)
+        self.assertIsNone(installation.github)
+        self.assertFalse(installation.dashboard.readonly)
+        with installation.build_service() as service:
+            service.start()
+            pid = service.launch_dashboard(installation.dashboard.program)
+            self.assertGreater(pid, 0)
+            marker = self.root / 'viewer-started'
+            for _ in range(100):
+                if marker.is_file():
+                    break
+                time.sleep(.025)
+            self.assertEqual(marker.read_text(), 'authenticated-pipe-delivered')
+            self.assertIsNotNone(service._dashboard_ipc)
+        self.assertIsNone(service._dashboard_ipc)
+        self.assertIsNone(service._dashboard_session)
+
+    def test_schema_three_bad_dashboard_pins_fail_before_agent_start(self):
+        script = self._enable_dashboard()
+        self.save()
+        script.write_text('raise RuntimeError("tampered")')
+        with self.assertRaises(BootstrapError):
+            Installation.load(self.config)
+        self.data['dashboard']['script_sha256'] = '0' * 64
+        self.save()
+        with self.assertRaises(BootstrapError):
+            Installation.load(self.config)
+
+    def test_schema_three_denies_unknown_ui_keys_and_malformed_rights(self):
+        self._enable_dashboard(readonly=True)
+        self.data['dashboard']['source'] = 'roadmap'
+        self.save()
+        with self.assertRaises(BootstrapError):
+            Installation.load(self.config)
+        del self.data['dashboard']['source']
+        self.data['dashboard']['readonly'] = 1
+        self.save()
+        with self.assertRaises(BootstrapError):
+            Installation.load(self.config)
+
+    def test_schema_three_supports_optional_pinned_github(self):
+        self._enable_dashboard()
+        self.enable_github()
+        self.data['schema'] = 3
+        self.save()
+        installation = Installation.load(self.config)
+        self.assertIsNotNone(installation.github)
+        self.assertIsNotNone(installation.dashboard)
+
     def test_unpinned_inline_code_refused(self):
         self.data['arguments']=['-c','print(123)']
         self.data['argument_sha256']={}
