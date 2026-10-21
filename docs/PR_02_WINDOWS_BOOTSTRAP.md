@@ -50,3 +50,10 @@ L'utilisateur fournit ensuite **uniquement les roadmaps**. Les téléchargements
 - `holding/probe_process.py` ne collecte plus les sorties avec `communicate()` sans borne : deux lecteurs simultanés plafonnent stdout et stderr à **32 KiB chacun** par défaut, détruisent le groupe de processus/Job Windows lors d'un dépassement ou timeout et refusent les descendants qui gardent des pipes ouverts.
 - `tests/test_probe_process.py` couvre sortie normale, saturation stdout/stderr, timeout, descendant qui hérite des handles et paramètres invalides.
 - Il s'agit du budget de la **sonde**, pas d'une preuve du budget RAM global du Control Center/holding, qui reste une exigence E2E de la PR #9.
+
+## Inventaire des versions installées (21 octobre 2026)
+
+- `inspect_versioned_zip()` lit le répertoire versionné sans créer de dossier, télécharger, lancer un exécutable ou réparer. Les retours sont `NOT_INSTALLED`, `VERIFIED_PAYLOAD` (hash de chaque fichier revérifié) et `BLOCKED_INVALID` (installation altérée, chemin lié ou état illisible).
+- `bootstrap_assets_cli` renvoie ces observations dans le `PREVIEW_ONLY` avec un volume réseau prévu de **0 octet** si les fichiers correspondent déjà exactement au manifeste. Une installation corrompue produit `PREVIEW_BLOCKED` et un code de sortie d'échec ; aucune réparation silencieuse, ni suppression de données.
+- La prévisualisation peut devenir périmée : avant tout réemploi, le téléchargement/installer recontrôle le paquet sous verrou. `VERIFIED_PAYLOAD` signifie uniquement **fichiers installés conformes**, jamais `READY` du programme tant que son healthcheck réel n'est pas passé.
+- Testé par les nouvelles régressions de découverte sans mutation, état corrompu/symlink et indicateurs du CLI. **Dépendance restante** : brancher ces états à la GUI Windows et aux vraies vérifications Git/Ollama/OpenCode, avec des ACL natives.
