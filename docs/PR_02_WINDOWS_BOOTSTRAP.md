@@ -461,3 +461,26 @@ Reste : produire l'adaptateur réellement compatible, intégrer la paire
 GUI+moteur depuis la PR #11 sur un SHA commun, valider le protocole de santé,
 les permissions Windows réelles, l'E2E machine propre et la certification
 avant release.
+
+### Enrôlement du modèle Ollama local réellement installé
+
+Le wizard sélectionne maintenant un nom de modèle issu exclusivement
+de `GET http://127.0.0.1:11434/api/tags` ; les réponses sont bornées,
+sans proxy et les noms/digests sont vérifiés. Un modèle absent, ambigu
+ou dont l'empreinte est modifiée bloque l'activation.
+
+`holding/windows_model_enrollment.py` écrit uniquement après
+consentement un `agents/AtlasHoldingModel.json` protégé par ACL Windows
+et épinglé SHA-256, avec les cinq champs attendus par le protocole Ollama
+de la PR #11 : `schema=1`, `model`, `digest`, `num_ctx`, `timeout`.
+La configuration de l'agent dans `engine.json` contient désormais
+**l'argument absolu du fichier** et son empreinte. Sans choix d'un modèle
+vérifié, le moteur n'est pas inscrit. Les réutilisations sont idempotentes,
+un fichier différent exige réparation explicite et le modèle ne reçoit
+aucune autorisation GitHub.
+
+Limites : le choix d'un modèle installé ne vaut ni benchmark qualité,
+ni modèle chargé en VRAM, ni preuve d'agent sain. Le couple de vrais
+binaires GUI/moteur/agent doit encore provenir du même SHA intégré
+(PR #2 + PR #11), puis passer les tests Windows et une mission réelle
+avant toute publication.
