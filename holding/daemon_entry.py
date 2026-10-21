@@ -345,15 +345,10 @@ def _native_ipc_smoke(input_stream=None, *, output_stream=None) -> int:
                 'schema': 1,
             }, sort_keys=True) + '\n')
             outgoing.flush()
-            deadline = time.monotonic() + 18
-            while time.monotonic() < deadline:
-                with server._server.nonce_lock:
-                    # Only valid signed request nonces are registered; a
-                    # forged request can never complete the native test.
-                    if server._server.nonces:
-                        return 0
-                time.sleep(0.035)
-    return 2
+            # Set only after the engine has emitted a complete authenticated
+            # snapshot on the wire; a forged request or failed projection
+            # cannot satisfy this native diagnostic proof.
+            return 0 if server._server.valid_read_replied.wait(timeout=18) else 2
 
 
 def main(argv: list[str] | None = None) -> int:
