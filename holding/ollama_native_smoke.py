@@ -58,40 +58,54 @@ def verify_real_ollama() -> dict[str, str]:
             discovered = discover_winget_binary(PIN)
             if discovered.state != "EXACT_BINARY_VERIFIED":
                 raise RuntimeError("Installed Ollama binary absent or wrong version")
-            if _local_api_alive():
-                raise RuntimeError(
-                    "Desktop Ollama started automatically; chosen model "
-                    "volume cannot be attested without owning the process"
+            # Inno Setup may auto-launch its own Ollama daemon as soon as
+            # WinGet reports installation success. Never kill, reconfigure or
+            # falsely claim its model disk. In either branch, its API must
+            # still prove the pinned native version and a healthy tags route.
+            installer_started_api = _local_api_alive()
+            launch = None
+            if not installer_started_api:
+                candidate = replace(
+                    before, ollama=Component(
+                        "FOUND_BROKEN", path=discovered.executable,
+                        version=discovered.version,
+                        reason="Ollama installed but local API is not healthy",
+                    ),
                 )
-            candidate = replace(
-                before, ollama=Component(
-                    "FOUND_BROKEN", path=discovered.executable,
-                    version=discovered.version,
-                    reason="Ollama installed but local API is not healthy",
-                ),
-            )
-            launch = start_local_ollama(
-                candidate, install_root=root, model_root=root / "models",
-                pins=(PIN,), authorized=True, startup_seconds=45,
-            )
+                launch = start_local_ollama(
+                    candidate, install_root=root, model_root=root / "models",
+                    pins=(PIN,), authorized=True, startup_seconds=45,
+                )
             try:
-                if launch.state != "OWNED_API_HEALTHY":
-                    raise RuntimeError("Owned Ollama start failed: " + launch.state)
+                if (launch is not None
+                        and launch.state not in {
+                            "OWNED_API_HEALTHY",
+                            "EXISTING_API_STORAGE_UNVERIFIED",
+                        }):
+                    raise RuntimeError("Ollama start failed: " + launch.state)
                 version = _api_json("/api/version").get("version", "")
                 tags = _api_json("/api/tags").get("models")
                 if (not matches_component_version("ollama", PIN.version, version)
                         or not isinstance(tags, list)):
                     raise RuntimeError("Ollama API does not match pinned version")
+                owned = launch is not None and launch.owned
                 return {
-                    "state": "OLLAMA_WINDOWS_NATIVE_API_PASS",
+                    "state": (
+                        "OLLAMA_WINDOWS_NATIVE_API_PASS"
+                        if owned else
+                        "OLLAMA_WINDOWS_AUTOSTART_API_PASS_STORAGE_UNVERIFIED"
+                    ),
                     "winget_version": PIN.version,
                     "api_version": version,
-                    "model_volume": "runner-temp-owned-process",
+                    "model_volume": (
+                        "runner-temp-owned-process"
+                        if owned else "NOT_ATTESTED"
+                    ),
                     "model_downloads": "none",
                 }
             finally:
-                # Stop only the process started by this exact smoke test.
-                if launch.owned and launch.process is not None:
+                # Stop only the child created by this exact smoke test.
+                if launch is not None and launch.owned and launch.process is not None:
                     child = launch.process
                     if child.poll() is None:
                         child.terminate()
@@ -100,6 +114,7 @@ def verify_real_ollama() -> dict[str, str]:
                         except subprocess.TimeoutExpired:
                             child.kill()
                             child.wait(timeout=5)
+
         finally:
             # The ephemeral GitHub VM is discarded after the job; never run
             # an uninstall that might remove a pre-existing unrelated app.
