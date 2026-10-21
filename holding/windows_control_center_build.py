@@ -9,7 +9,10 @@ import argparse
 from dataclasses import asdict, dataclass
 import hashlib
 import json
+import os
 from pathlib import Path
+import secrets
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -74,7 +77,18 @@ def build_windows_control_center(
         if (not candidate.is_file() or candidate.is_symlink()
                 or candidate.stat().st_size < 1_000_000):
             raise RuntimeError("Windows viewer binary is missing or incomplete")
-        candidate.replace(destination)
+        # Build and output can be on different Windows volumes. Copy to a
+        # random temporary file on the chosen destination volume, then publish
+        # atomically without replacing an existing artifact.
+        staged = output_dir / (".viewer-" + secrets.token_hex(16) + ".tmp")
+        try:
+            with candidate.open("rb") as inp, staged.open("xb") as out:
+                shutil.copyfileobj(inp, out, length=1024 * 1024)
+            if destination.exists() or destination.is_symlink():
+                raise FileExistsError("Viewer output appeared during packaging")
+            os.rename(staged, destination)
+        finally:
+            staged.unlink(missing_ok=True)
     return ViewerBuildEvidence(
         str(destination), _digest(destination), destination.stat().st_size,
     )
