@@ -78,6 +78,41 @@ class ControlCenterProjectionTests(unittest.TestCase):
         self.assertEqual(task.completion_evidence.kind, "CI")
         self.assertEqual(task.completion_evidence.digest, DIGEST)
 
+    def test_sync_proof_cannot_be_borrowed_by_unrelated_mission_same_sha(self):
+        from holding.schema import SYNC_STATE_SCHEMA
+        with StateStore(self.path) as store:
+            apply_schema(store.db, SYNC_STATE_SCHEMA)
+            store.add_missions([
+                Mission("synced", "r9327/Dof-Atlas", operation="push",
+                        external_required=True),
+                Mission("unrelated", "r9327/Dof-Atlas", operation="push",
+                        external_required=True),
+            ])
+            store.db.execute(
+                "UPDATE missions SET state='DONE',candidate_sha=?,evidence_sha=?,"
+                "updated_at=? WHERE id IN ('synced','unrelated')",
+                (SHA, SHA, NOW - 5))
+            key = "c" * 64
+            store.db.execute(
+                "INSERT INTO github_sync_attempts "
+                "(operation,repo,branch,candidate_sha,attempt,status,"
+                "retryable,idempotency_key,updated_epoch) "
+                "VALUES('github.push','r9327/Dof-Atlas','holding/code-1',?,"
+                "1,'SUCCEEDED',0,?,?)", (SHA, key, NOW - 2))
+            store._event("synced", "RUNNING_TO_DONE",
+                         "verified sync:github.push:" + key)
+            # A different DONE record cannot inherit the same successful push.
+            store._event("unrelated", "RUNNING_TO_DONE",
+                         "verified sync:github.merge:" + key)
+        payload, state = self.project()
+        by_id = {task.task_id: task for task in state.tasks}
+        self.assertEqual(by_id["synced"].state, "DONE")
+        self.assertEqual(by_id["synced"].completion_evidence.kind, "SYNC")
+        self.assertEqual(by_id["synced"].completion_evidence.scope, "SCOPED")
+        self.assertEqual(by_id["unrelated"].state, "DONE_UNVERIFIED")
+        self.assertIsNone(by_id["unrelated"].completion_evidence)
+        self.assertNotIn("verified sync:", json.dumps(payload))
+
     def test_event_details_are_not_exposed_to_ui(self):
         with StateStore(self.path) as store:
             store._event("first", "MISSION_BLOCKED", "token=must-not-leak")
