@@ -70,21 +70,23 @@ def build_windows_installer(
         if _sha256(pinned_manifest) != expected_manifest_sha256.lower():
             raise ValueError("Release manifest changed while preparing Windows build")
         shim = workspace / "atlas_windows_entry.py"
-        shim.write_text(
-            "from pathlib import Path\\n"
-            "import hashlib, sys\\n"
-            "from holding.windows_setup import main\\n"
-            "base = Path(getattr(sys, '_MEIPASS', Path(__file__).parent))\\n"
-            "manifest = base / 'release-assets.json'\\n"
-            "expected = " + repr(expected_manifest_sha256.lower()) + "\\n"
-            "if len(sys.argv) > 1:\\n"
-            "    raise SystemExit(0 if sys.argv[1:] == ['--self-test'] "
-            "and hashlib.sha256(manifest.read_bytes()).hexdigest() == expected else 2)\\n"
-            "raise SystemExit(main(["
-            "'--manifest', str(manifest), '--manifest-sha256', expected"
-            "]))\\n",
-            encoding="utf-8",
-        )
+        shim_lines = [
+            "from pathlib import Path",
+            "import hashlib, sys",
+            "from holding.bootstrap_assets_cli import read_pinned_manifest",
+            "from holding.windows_setup import main",
+            "base = Path(getattr(sys, '_MEIPASS', Path(__file__).parent))",
+            "manifest = base / 'release-assets.json'",
+            f"expected = {expected_manifest_sha256.lower()!r}",
+            "if len(sys.argv) > 1:",
+            "    if sys.argv[1:] != ['--self-test']:",
+            "        raise SystemExit(2)",
+            "    read_pinned_manifest(manifest, expected_sha256=expected)",
+            "    raise SystemExit(0)",
+            "raise SystemExit(main(['--manifest', str(manifest),",
+            "                       '--manifest-sha256', expected]))",
+        ]
+        shim.write_text("\n".join(shim_lines) + "\n", encoding="utf-8")
         # Do not invoke shells, arbitrary remote scripts or a runtime model.
         command = [
             sys.executable, "-m", "PyInstaller", "--onefile", "--windowed",
