@@ -13,6 +13,7 @@ from holding.control import ControlPlane
 from holding.dashboard_session import (
     DashboardSessionError, ViewerProgram,
 )
+from holding.dashboard_ipc import DashboardIpcClient, DashboardIpcError
 from holding.service import HoldingService, ServiceSettings
 from holding.state_store import StateStore
 
@@ -124,6 +125,53 @@ time.sleep(30)
             self.until(lambda: self.marker.is_file())
             with ControlPlane(self.db) as control:
                 self.assertFalse(control.snapshot().paused)
+
+    def test_closed_viewer_can_reopen_with_fresh_capabilities(self):
+        # Closing the GUI must neither kill the engine nor strand its IPC.
+        # The prior session's read capability must stop working even if the
+        # operating system reuses the same ephemeral loopback port.
+        import json
+        with self.make_service() as service:
+            service.start()
+            first_pid = service.launch_dashboard(self.program, readonly=True)
+            self.until(lambda: self.marker.is_file())
+            first_session = service._dashboard_session
+            first_server = service._dashboard_ipc
+            old_engine_id = json.loads(first_server._server.supplier())["engine_id"]
+            old_client = DashboardIpcClient(
+                port=first_server.port, secret=first_server._server.key,
+                engine_id=old_engine_id,
+            )
+            self.assertEqual(old_client.fetch().engine_id, old_engine_id)
+            first_session._process.terminate()
+            first_session._process.wait(timeout=3)
+            self.marker.unlink()
+
+            second_pid = service.launch_dashboard(self.program, readonly=True)
+            self.assertGreater(second_pid, 0)
+            self.assertIsNot(service._dashboard_session, first_session)
+            self.assertIsNot(service._dashboard_ipc, first_server)
+            self.assertEqual(first_server._server.socket.fileno(), -1)
+            with self.assertRaises(DashboardIpcError):
+                old_client.fetch()
+            self.until(lambda: self.marker.is_file())
+            self.assertTrue(service._started)
+            with ControlPlane(self.db) as control:
+                self.assertFalse(control.snapshot().paused)
+
+    def test_dead_viewer_with_tampered_binary_does_not_keep_old_ipc(self):
+        with self.make_service() as service:
+            service.start()
+            service.launch_dashboard(self.program, readonly=True)
+            first = service._dashboard_session
+            first._process.terminate()
+            first._process.wait(timeout=3)
+            self.script.write_text("print('changed')", encoding="utf-8")
+            with self.assertRaisesRegex(DashboardSessionError, "changed"):
+                service.launch_dashboard(self.program, readonly=True)
+            self.assertIsNone(service._dashboard_session)
+            self.assertIsNone(service._dashboard_ipc)
+            self.assertTrue(service._started)
 
     def test_tampered_script_is_rejected_without_opening_ipc(self):
         with self.make_service() as service:
