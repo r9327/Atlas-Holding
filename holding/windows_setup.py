@@ -25,6 +25,7 @@ from .staged_install import PinnedZip, inspect_versioned_zip
 from .windows_package_manager import WingetPin
 from .managed_toolchain import resolve_managed_tool
 from .version_evidence import matches_component_version
+from .ollama_service import start_local_ollama
 
 
 @dataclass(frozen=True)
