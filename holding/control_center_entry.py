@@ -55,12 +55,32 @@ def _run_gui(
     return int(app.exec())
 
 
+def _self_test() -> int:
+    """Offline smoke: instantiate the actual Qt window without any credentials."""
+    from PySide6.QtWidgets import QApplication
+    from .control_center_ui import ControlCenterWindow
+
+    app = QApplication.instance() or QApplication([])
+    window = ControlCenterWindow(trusted_engine_id="bundled-self-test")
+    if window.objectName() != "atlasControlCenter":
+        return 2
+    window.close()
+    return 0
+
+
 def main(argv: list[str] | None = None, *, input_stream: BinaryIO | None = None) -> int:
     parser = argparse.ArgumentParser(prog="atlas-holding-control-center")
-    parser.add_argument("--port", type=int, required=True)
-    parser.add_argument("--engine-id", required=True)
+    parser.add_argument("--port", type=int)
+    parser.add_argument("--engine-id")
     parser.add_argument("--readonly", action="store_true")
+    parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args(argv)
+    if args.self_test:
+        if args.port is not None or args.engine_id is not None or args.readonly:
+            return 2
+        return _self_test()
+    if args.port is None or args.engine_id is None:
+        parser.error("--port and --engine-id are required outside self-test")
     try:
         read_key, write_key = read_capabilities(
             sys.stdin.buffer if input_stream is None else input_stream,
