@@ -69,6 +69,33 @@ class ViewerEntryTests(unittest.TestCase):
             self.assertNotIn("credential-too-short", diagnostics.getvalue())
             ui.assert_not_called()
 
+    def test_packaged_self_test_requires_no_secret_or_engine(self):
+        class NoCredentialStream:
+            def isatty(self):
+                raise AssertionError("A self-test must not request credentials")
+
+            def read(self, count=-1):
+                raise AssertionError("A self-test must not read stdin")
+
+        with patch("holding.control_center_entry._self_test",
+                   return_value=0) as smoke:
+            self.assertEqual(main(["--self-test"],
+                                  input_stream=NoCredentialStream()), 0)
+            smoke.assert_called_once_with()
+        for args in (
+            ["--self-test", "--port", "9000"],
+            ["--self-test", "--engine-id", "spoofed"],
+            ["--self-test", "--readonly"],
+        ):
+            with self.subTest(args=args), \
+                 patch("holding.control_center_entry._self_test") as smoke:
+                self.assertEqual(main(args, input_stream=NoCredentialStream()), 2)
+                smoke.assert_not_called()
+
+    def test_packaged_self_test_creates_real_qt_window_offscreen(self):
+        from holding.control_center_entry import _self_test
+        self.assertEqual(_self_test(), 0)
+
     def test_invalid_port_does_not_start_ui(self):
         with patch("holding.control_center_entry._run_gui") as ui:
             with redirect_stderr(io.StringIO()):
