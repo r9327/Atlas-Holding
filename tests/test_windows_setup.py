@@ -58,6 +58,16 @@ class WindowsSetupTests(unittest.TestCase):
         self.assertEqual(summary.status, "CONSENT_REQUIRED")
         self.assertEqual(summary.download_upper_bound_bytes, 0)
 
+    def test_winget_download_size_is_explicitly_unknown(self):
+        from holding.windows_package_manager import WingetPin
+        pin = WingetPin("opencode", "SST.opencode", "1.18.29")
+        summary, pins = self.call_preflight(pins=(pin,))
+        self.assertEqual(summary.status, "CONSENT_REQUIRED")
+        self.assertEqual(summary.unestimated_package_downloads, 1)
+        self.assertEqual(summary.download_upper_bound_bytes, 0)
+        self.assertEqual(summary.dependency_actions[-2][0], "opencode")
+        self.assertEqual(summary.dependency_actions[-2][2], "WINGET_VERSION_PINNED")
+
     def test_corrupt_pinned_payload_blocks_setup(self):
         summary, _ = self.call_preflight(observed="BLOCKED_INVALID")
         self.assertEqual(summary.status, "BLOCKED")
