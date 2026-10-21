@@ -18,12 +18,13 @@ from typing import Callable
 from urllib.request import Request, build_opener, ProxyHandler
 
 from .bootstrap_assets_cli import read_pinned_manifest
-from .inventory import Inventory, scan
+from .inventory import Component, Inventory, scan
 from .provision_plan import make_plan
 from .provision_runtime import (ProvisionExecution, ProvisionStep,
                                 stage_required_dependencies)
 from .staged_install import PinnedZip, inspect_versioned_zip
 from .windows_package_manager import WingetPin
+from .managed_toolchain import resolve_managed_tool
 
 
 @dataclass(frozen=True)
@@ -107,6 +108,7 @@ def preflight_setup(
 def assess_post_install(
     result: ProvisionExecution, snapshot: Inventory,
     pins: tuple[PinnedZip | WingetPin, ...],
+    *, install_root: Path | None = None,
 ) -> ProvisionExecution:
     """Re-measure after setup; a package-manager exit code is never runtime QA.
 
@@ -125,11 +127,28 @@ def assess_post_install(
     steps = list(result.steps)
     blockers: list[str] = []
     for name, component in known.items():
+        spec = pinned.get(name)
+        # ZIP executables live under the selected Holding volume, not Windows
+        # PATH. Resolve the verified binary only for components just staged.
+        # An executable version probe is enough for Git/OpenCode discovery,
+        # never for Ollama: the local Ollama HTTP API must also be healthy.
+        if (name in {"git", "opencode"} and name in mutating
+                and isinstance(spec, PinnedZip) and install_root is not None):
+            managed = resolve_managed_tool(spec, install_root=install_root)
+            if managed.state == "VERIFIED_EXECUTABLE":
+                component = Component(
+                    "FOUND_VALID", path=managed.executable,
+                    version=managed.expected_version,
+                    reason="Holding-managed, SHA-verified executable",
+                )
+                steps.append(ProvisionStep(name, "MANAGED_BINDING",
+                                           "VERIFIED_EXECUTABLE"))
+            elif component.status != "FOUND_VALID":
+                steps.append(ProvisionStep(name, "MANAGED_BINDING", managed.state))
         if component.status != "FOUND_VALID":
             steps.append(ProvisionStep(name, "POST_INSTALL_HEALTH", component.status))
             blockers.append("Post-install health check failed: " + name)
             continue
-        spec = pinned.get(name)
         if name in mutating and spec is not None:
             # Git for Windows appends a build marker such as
             # 2.55.0.windows.1. Permit only this known vendor suffix; an
@@ -175,7 +194,8 @@ def execute_setup(
         cancelled=cancelled, progress=progress,
     )
     if result.state == "PAYLOADS_STAGED_NOT_VALIDATED":
-        result = assess_post_install(result, scan(install_root), pins)
+        result = assess_post_install(result, scan(install_root), pins,
+                                     install_root=install_root)
     return report, result
 
 
