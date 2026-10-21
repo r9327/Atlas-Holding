@@ -1,6 +1,7 @@
 """Windows setup build contract without uploading or running a release artifact."""
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 from pathlib import Path
@@ -72,6 +73,10 @@ class WindowsBuildTests(unittest.TestCase):
             self.assertIn(self.digest, shim)
             self.assertIn("--self-test", shim)
             self.assertIn("holding.windows_setup", shim)
+            parsed = ast.parse(shim, filename="atlas_windows_entry.py")
+            self.assertTrue(parsed.body)
+            self.assertNotIn(r"\\n", shim)
+            self.assertIn("read_pinned_manifest(manifest,", shim)
             (stage / "AtlasHoldingSetup.exe").write_bytes(b"MZ" + b"0" * 1500)
             calls.append(True)
 
