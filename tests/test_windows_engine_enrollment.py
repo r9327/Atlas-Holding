@@ -127,7 +127,7 @@ class EngineEnrollmentTests(unittest.TestCase):
                 verify_installed_engine(spec),
                 (str(self.engine), str(enrolled.config_path)),
             )
-            self.assertEqual(rights.call_count, 6)
+            self.assertEqual(rights.call_count, 7)
         self.assertFalse(enrolled.engine_healthy)
 
     def test_enrollment_receipt_binds_to_actual_native_launch_preflight(self):
@@ -211,6 +211,18 @@ class EngineEnrollmentTests(unittest.TestCase):
         self.assertFalse((self.root / "data").exists())
         with self.assertRaisesRegex(EngineEnrollmentError, "approval"):
             enroll_pinned_engine(self.request, approved=False)
+
+    def test_unprotected_install_root_blocks_enrollment_before_writes(self):
+        with self.fake_windows(), patch(
+                "holding.windows_runtime_acl.secure_runtime_acl") as secure, patch(
+                "holding.windows_runtime_acl.validate_runtime_acl",
+                side_effect=ValueError("root is not protected")) as acl:
+            with self.assertRaisesRegex(ValueError, "not protected"):
+                prepare_protected_engine_roots(self.root, approved=True)
+        acl.assert_called_once_with(self.root)
+        secure.assert_not_called()
+        self.assertFalse((self.root / "config").exists())
+        self.assertFalse((self.root / "data").exists())
 
     def test_native_acl_failure_refuses_configuration_without_elevating_claim(self):
         with self.fake_windows(), self.mock_acl(), \
@@ -296,7 +308,8 @@ class EngineEnrollmentTests(unittest.TestCase):
         )
 
         for path in (
-            self.runtime.parent, self.runtime, self.viewer, self.engine,
+            self.root, self.runtime.parent, self.runtime,
+            self.viewer, self.engine,
         ):
             secure_runtime_acl(path)
             validate_runtime_acl(path)
