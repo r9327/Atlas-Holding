@@ -123,6 +123,24 @@ class WindowsSetupTests(unittest.TestCase):
                 )
             plan.assert_not_called()
 
+    def test_checkout_guard_requires_exact_clean_canonical_git_origin(self):
+        from holding.windows_setup import verify_canonical_atlas_checkout
+        from holding.windows_engine_enrollment import EngineEnrollmentError
+        atlas = self.install_root.parent / "atlas"
+        atlas.mkdir()
+        with patch("holding.git_worktree.GitWorktrees") as controller:
+            verify_canonical_atlas_checkout(
+                atlas, self.install_root / "workspaces")
+            controller.assert_called_once_with(
+                atlas, self.install_root / "workspaces", "r9327/Dof-Atlas")
+            controller.return_value.inspect_canonical.assert_called_once()
+            from holding.git_worktree import GitSafetyError
+            controller.return_value.inspect_canonical.side_effect = GitSafetyError(
+                "Remote points to an unrelated repository")
+            with self.assertRaisesRegex(EngineEnrollmentError, "clean"):
+                verify_canonical_atlas_checkout(
+                    atlas, self.install_root / "workspaces")
+
     def test_engine_activation_does_not_run_without_consent_or_release_pin(self):
         from holding.windows_setup import configure_and_launch_engine
         from holding.windows_engine_enrollment import EngineEnrollmentError
@@ -242,6 +260,8 @@ class WindowsSetupTests(unittest.TestCase):
                 "holding.windows_setup.discover_local_models",
                 return_value=(("atlas-test:Q4", "e" * 64),),
         ), patch(
+                "holding.windows_setup.verify_canonical_atlas_checkout"
+        ) as checkout, patch(
                 "holding.windows_setup.enroll_local_model",
                 return_value=PinnedModel(
                     self.install_root / "agents" / "AtlasHoldingModel.json",
