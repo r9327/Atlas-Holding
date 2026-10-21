@@ -39,6 +39,28 @@ non-release de la PR #11 valide actuellement les exécutables congelés, mais
 ne prouve pas une installation Windows neuve, l'isolation ACL ni une roadmap
 multi-agent autonome. Cette PR demeure en Draft.
 
+## Staging natif des trois exécutables (non-release)
+
+Le nouveau module `holding/native_candidate_stage.py` prépare **sans écraser
+les installations existantes** un dossier candidat contenant uniquement
+`AtlasHoldingSetup.exe`, `AtlasHoldingControlCenter.exe`,
+`AtlasHoldingEngine.exe` et `candidate-index.json`.
+
+Le staging vérifie les fichiers sources réels par SHA-256/taille, les copie
+dans un répertoire temporaire sur le volume de destination, **rehache** les
+copies ainsi que les sources avant publication du dossier, puis écrit un
+index de provenance lié au SHA du checkout et à toutes les dépendances requises.
+Un verrou exclusif interdit les assemblages concurrents sur le même nom.
+Chemins relatifs, liens symboliques, fichiers absents, index dupliqué,
+binaire modifié et configuration trop vieille sont rejetés.
+
+Le futur installateur peut appeler `verify_native_candidate(...,
+expected_source_sha=..., expected_upstream_shas=...)` pour recontrôler les
+binaires avant adoption. Le champ `release_ready` est **toujours false** :
+cette étape n'installe rien, ne confère aucune signature et ne fabrique aucun
+PASS d'installation. La véritable certification Windows, les ACL et les
+scénarios IA/roadmap restent obligatoires.
+
 ## Implémentation
 - Packaging reproductible sur runner Windows à partir de code versionné, versions figées, bundles/licences vérifiés, ressources Qt et vrais assets ; chemins sans installation Python préalable côté utilisateur.
 - Créer `AtlasHoldingSetup.exe` + manifest/hashes SHA-256 + guide court, dans une Release GitHub. EXE non signé possible -> avertissement SmartScreen explicite, **pas** de fausse signature ; publication testée sur Windows propre.
