@@ -83,6 +83,8 @@ class OllamaTests(unittest.TestCase):
              patch.object(op, '_http', side_effect=AssertionError('called')):
             self.assertEqual(op.main(['--self-test']), 0)
             self.assertEqual(op.main(['--self-test', str(self.config_path)]), 2)
+            with patch.object(op, 'BASE', 'https://outside.example:443'):
+                self.assertEqual(op.main(['--self-test']), 2)
         with patch('sys.stdin') as fake:
             fake.buffer.read.return_value = (
                 b'{"protocol":1,"action":"health","payload":{}}')
