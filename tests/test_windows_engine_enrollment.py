@@ -13,7 +13,8 @@ from unittest.mock import patch
 from holding.windows_engine_enrollment import (
     EngineEnrollmentError, EngineEnrollmentRequest,
     enroll_pinned_engine, prepare_protected_engine_roots,
-    prepare_installed_engine_launch, _require_native_windows,
+    prepare_installed_engine_launch, launch_enrolled_engine,
+    _require_native_windows,
 )
 
 
@@ -145,6 +146,44 @@ class EngineEnrollmentTests(unittest.TestCase):
             )
         # Enrollment and verified preflight still do not start a worker.
         self.assertFalse(enrolled.engine_healthy)
+
+    def test_enrolled_engine_launch_requires_separate_consent_and_exact_config(self):
+        from holding.windows_runtime_launch import EngineLaunch
+        from unittest.mock import Mock
+        self.create_roots()
+        receipt = self.enroll()
+        with self.fake_windows(), patch(
+                "holding.windows_engine_enrollment._native_security"
+        ), patch(
+                "holding.windows_runtime_launch.sys.platform", "win32"
+        ), patch("holding.windows_runtime_acl.validate_runtime_acl"), patch(
+                "holding.windows_runtime_launch._interactive_user_session",
+                return_value=True,
+        ), patch("holding.windows_runtime_launch.subprocess.Popen") as spawn:
+            with self.assertRaisesRegex(EngineEnrollmentError, "launch approval"):
+                launch_enrolled_engine(self.request, receipt, approved=False)
+            spawn.assert_not_called()
+            with self.assertRaisesRegex(EngineEnrollmentError, "receipt"):
+                launch_enrolled_engine(
+                    self.request,
+                    replace(receipt, config_sha256="0" * 64),
+                    approved=True,
+                )
+            spawn.assert_not_called()
+            child = Mock()
+            child.poll.return_value = None
+            spawn.return_value = child
+            launched = launch_enrolled_engine(
+                self.request, receipt, approved=True)
+            self.assertIsInstance(launched, EngineLaunch)
+            self.assertEqual(launched.status, "ENGINE_SPAWNED_HEALTH_PENDING")
+            self.assertIs(launched.process, child)
+            spawn.assert_called_once()
+            self.assertEqual(
+                spawn.call_args.args[0],
+                [str(self.engine), "--config", str(receipt.config_path)],
+            )
+            self.assertFalse(spawn.call_args.kwargs["shell"])
 
     def test_replaced_receipt_and_changed_agent_block_native_handoff(self):
         self.create_roots()
