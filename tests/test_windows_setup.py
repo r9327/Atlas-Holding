@@ -43,6 +43,86 @@ class WindowsSetupTests(unittest.TestCase):
                         online=online,
                     )
 
+    def test_setup_stages_agent_only_after_healthy_toolchain_and_consent(self):
+        import hashlib
+        from unittest.mock import Mock
+        from holding.windows_setup import SetupSummary
+        runtime = (self.install_root.parent / "approved-runtime").resolve()
+        runtime.mkdir()
+        agent_source = self.install_root.parent / "AtlasHoldingAgent.exe"
+        agent_source.write_bytes(b"trusted packaged agent")
+        agent_pin = hashlib.sha256(agent_source.read_bytes()).hexdigest()
+        pins = {
+            "AtlasHoldingControlCenter.exe": "a" * 64,
+            "AtlasHoldingEngine.exe": "b" * 64,
+        }
+        summary = SetupSummary(
+            "PREFLIGHT", "CONSENT_REQUIRED", "Windows", "AMD64", "", None,
+            0, 0, (), 0, (),
+        )
+        staged = ProvisionExecution(
+            "PAYLOADS_STAGED_NOT_VALIDATED", (), ())
+        healthy = ProvisionExecution(
+            "TOOLCHAIN_HEALTHY_MODEL_BENCHMARK_PENDING", (), ())
+        calls = []
+        with patch("holding.windows_setup.verify_runtime_payload"), patch(
+                "holding.windows_setup.preflight_setup",
+                return_value=(summary, ()),
+        ), patch("holding.windows_setup.scan", return_value=self.snapshot), patch(
+                "holding.windows_setup.stage_required_dependencies",
+                return_value=staged,
+        ), patch("holding.windows_setup.assess_post_install",
+                 return_value=healthy), patch(
+                "holding.windows_setup.protect_approved_install_root",
+                side_effect=lambda *a, **kw: calls.append("protect"),
+        ), patch(
+                "holding.windows_setup.install_pinned_runtime_pair",
+                side_effect=lambda *a, **kw: (
+                    calls.append("runtime"),
+                    Mock(state="STAGED_BINARIES_SECURITY_PENDING"),
+                )[1],
+        ), patch(
+                "holding.windows_setup.install_pinned_adapter",
+                side_effect=lambda *a, **kw: (
+                    calls.append("adapter"),
+                    "STAGED_PINNED_ADAPTER_HEALTH_PENDING",
+                )[1],
+        ):
+            report, result = execute_setup(
+                manifest=self.manifest, manifest_sha256="b" * 64,
+                install_root=self.install_root, cache_root=self.cache_root,
+                online=True, approved=True,
+                runtime_root=runtime, runtime_pins=pins,
+                adapter_source=agent_source, adapter_sha256=agent_pin,
+            )
+        self.assertEqual(report, summary)
+        self.assertEqual(calls, ["protect", "runtime", "adapter"])
+        self.assertEqual(result.state, "RUNTIME_STAGED_ENGINE_CONFIG_PENDING")
+        self.assertIn(
+            ("holding-adapter", "STAGE_VERIFIED_AGENT",
+             "STAGED_PINNED_ADAPTER_HEALTH_PENDING"),
+            [(x.name, x.action, x.result) for x in result.steps],
+        )
+
+    def test_setup_refuses_unpinned_agent_before_any_mutating_preflight(self):
+        from holding.windows_setup import execute_setup
+        agent_source = self.install_root.parent / "AtlasHoldingAgent.exe"
+        agent_source.write_bytes(b"trust must not be fabricated")
+        with patch("holding.windows_setup.preflight_setup") as plan:
+            with self.assertRaisesRegex(ValueError, "release pin"):
+                execute_setup(
+                    manifest=self.manifest, manifest_sha256="b" * 64,
+                    install_root=self.install_root,
+                    cache_root=self.cache_root, online=True, approved=True,
+                    runtime_root=self.install_root.parent,
+                    runtime_pins={
+                        "AtlasHoldingControlCenter.exe": "a" * 64,
+                        "AtlasHoldingEngine.exe": "b" * 64,
+                    },
+                    adapter_source=agent_source, adapter_sha256="0" * 64,
+                )
+            plan.assert_not_called()
+
     def test_engine_activation_does_not_run_without_consent_or_release_pin(self):
         from holding.windows_setup import configure_and_launch_engine
         from holding.windows_engine_enrollment import EngineEnrollmentError
