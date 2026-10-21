@@ -21,6 +21,11 @@ release sans **trois artefacts observés indépendamment** (noms, SHA-256, taill
 `AtlasHoldingEngine.exe`. Un simple setup PyInstaller ou une fenêtre qui
 s'ouvre sans moteur ne suffisent pas.
 
+La publication exige également les SHA exacts des dépendances
+`pr1` à `pr8`, plus `pr11` (intégration moteur/GUI) et `pr12`
+(garde-fous architecture). Une liste fournie par erreur sans ces PR est
+refusée avant toute qualification.
+
 La validation exige aussi de véritables preuves externes `PASS` pour les
 gates `windows-clean-install`, `native-runtime-ipc`,
 `windows-acl-isolation`, `offline-after-provisioning` et
