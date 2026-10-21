@@ -28,6 +28,7 @@ from .version_evidence import matches_component_version
 from .ollama_setup import ensure_selected_model_volume
 from .ollama_storage import read_model_directory
 from .windows_autostart import configure_logon_resume
+from .windows_ollama_environment import configure_user_models, undo_created_user_models
 from .model_volume import inspect_model_volume
 from .winget_binary import discover_winget_binary
 from .pinned_inventory import restore_pinned_inventory
@@ -227,11 +228,48 @@ def execute_setup(
     snapshot = restore_pinned_inventory(
         scan(install_root), pins, install_root=install_root,
     )
+    # WinGet's Ollama Desktop may auto-start before we can launch our own
+    # daemon. The official Windows contract requires HKCU OLLAMA_MODELS.
+    # Apply this *only* for a new user-scope Ollama installation, under the
+    # explicit setup authorization. Never overwrite an existing other path.
+    chosen_user_models = None
+    if (model_root is not None and snapshot.ollama.status == "NOT_FOUND"
+            and any(isinstance(x, WingetPin) and x.component == "ollama"
+                    for x in pins)):
+        chosen_user_models = configure_user_models(
+            model_root, authorized=True,
+        )
+        if chosen_user_models.status not in {
+            "USER_MODELS_CREATED", "USER_MODELS_ALREADY_MATCH",
+        }:
+            return report, ProvisionExecution(
+                "PARTIAL_OR_BLOCKED",
+                (ProvisionStep(
+                    "ollama", "USER_MODEL_ENVIRONMENT",
+                    chosen_user_models.status,
+                ),),
+                ("Cannot configure Ollama user model volume",),
+            )
     result = stage_required_dependencies(
         snapshot, pins, online=online, authorized=True,
         install_root=install_root, cache_root=cache_root,
-        cancelled=cancelled, progress=progress,
+        cancelled=cancelled, progress=progress, model_root=model_root,
     )
+    if chosen_user_models is not None:
+        status = chosen_user_models.status
+        if (status == "USER_MODELS_CREATED"
+                and result.state != "PAYLOADS_STAGED_NOT_VALIDATED"
+                and not any(
+                    step.name == "ollama" and
+                    step.result == "INSTALLED_NOT_HEALTHCHECKED"
+                    for step in result.steps
+                )):
+            status = undo_created_user_models(model_root)
+        result = ProvisionExecution(
+            result.state, result.steps + (
+                ProvisionStep("ollama", "USER_MODEL_ENVIRONMENT", status),
+            ), result.blockers,
+        )
     if result.state == "PAYLOADS_STAGED_NOT_VALIDATED":
         observed = restore_pinned_inventory(
             scan(install_root), pins, install_root=install_root,
@@ -514,9 +552,11 @@ def main(argv: list[str] | None = None) -> int:
             return
         if not messagebox.askyesno(
             "Autoriser l'installation",
-            "Autoriser une seule préparation des paquets vérifiés pour "
-            "ce PC ? Aucun logiciel ni modèle IA ne sera déclaré prêt "
-            "sans tests réels.",
+            "Autoriser l'installation des paquets vérifiés ? Si Ollama "
+            "doit être installé, cette autorisation permet aussi de créer "
+            "la variable utilisateur OLLAMA_MODELS pour le disque choisi, "
+            "sans écraser une valeur existante différente. Aucun modèle "
+            "IA ne sera déclaré prêt sans tests réels.",
         ):
             return
         start(True)
