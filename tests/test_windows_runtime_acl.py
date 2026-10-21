@@ -58,6 +58,36 @@ class NativeRuntimeAclTests(unittest.TestCase):
             validate_runtime_acl(inherited)
 
     @unittest.skipUnless(os.name == "nt", "Real Windows security descriptor required")
+    def test_everyone_ace_is_rejected_after_external_permission_change(self):
+        # Actively loosen the ACL through the real Win32 API, as could happen
+        # through another installer or a mistaken repair utility.
+        import ctypes
+        from ctypes import wintypes
+        import holding.windows_runtime_acl as native
+
+        with tempfile.TemporaryDirectory(prefix="atlas-acl-tamper-") as temp:
+            root = Path(temp).resolve()
+            file = root / "AtlasHoldingEngine.exe"
+            file.write_bytes(b"MZ" + b"native-security-test")
+            secure_runtime_acl(file)
+            validate_runtime_acl(file)
+            descriptor = ctypes.c_void_p()
+            size = wintypes.DWORD()
+            if not native._advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                    "D:P(A;;FA;;;WD)", 1,
+                    ctypes.byref(descriptor), ctypes.byref(size)):
+                self.fail("Test could not construct a real Everyone ACE")
+            try:
+                if not native._advapi.SetFileSecurityW(
+                        str(file), native._DACL | native._PROTECTED_DACL,
+                        descriptor):
+                    self.fail("Test could not apply an intentionally weak ACL")
+            finally:
+                native._kernel.LocalFree(descriptor)
+            with self.assertRaisesRegex(RuntimeAclError, "unsafe permissions"):
+                validate_runtime_acl(file)
+
+    @unittest.skipUnless(os.name == "nt", "Real Windows security descriptor required")
     def test_runtime_payload_enforces_acl_on_first_stage_and_reuse(self):
         import hashlib
         from holding.windows_runtime_payload import install_pinned_runtime_pair
