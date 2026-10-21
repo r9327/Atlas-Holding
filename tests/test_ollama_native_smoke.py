@@ -96,7 +96,7 @@ class NativeOllamaSmokeTests(unittest.TestCase):
             str(self.root / "ollama.exe"), "ollama 0.32.8",
         )
         values = [
-            binary,
+            WingetBinary("NO_PINNED_BINARY_FOUND"),
             binary,
         ]
         with patch("holding.ollama_native_smoke._runner_gate"):
