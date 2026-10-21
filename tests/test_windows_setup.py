@@ -349,6 +349,52 @@ class WindowsSetupTests(unittest.TestCase):
         self.assertEqual(outcome.state, "POST_INSTALL_RECHECK_REQUIRED")
         resolver.assert_not_called()
 
+    def test_native_winget_binary_after_install_does_not_need_relogon(self):
+        from holding.windows_package_manager import WingetPin
+        from holding.winget_binary import WingetBinary
+        pin = WingetPin("opencode", "SST.opencode", "1.18.29")
+        staged = ProvisionExecution(
+            "PAYLOADS_STAGED_NOT_VALIDATED",
+            (ProvisionStep("opencode", "INSTALL",
+                           "INSTALLED_NOT_HEALTHCHECKED"),),
+            (),
+        )
+        missing = sample(opencode=Component("NOT_FOUND"))
+        with patch("holding.windows_setup.discover_winget_binary",
+                   return_value=WingetBinary(
+                       "EXACT_BINARY_VERIFIED",
+                       str(self.install_root / "opencode.exe"),
+                       "opencode 1.18.29",
+                   )) as locate:
+            result = assess_post_install(
+                staged, missing, (pin,), install_root=self.install_root,
+            )
+        self.assertEqual(result.state,
+                         "TOOLCHAIN_HEALTHY_MODEL_BENCHMARK_PENDING")
+        self.assertTrue(any(row.action == "WINGET_BINDING" and
+                            row.result == "EXACT_BINARY_VERIFIED"
+                            for row in result.steps))
+        locate.assert_called_once_with(pin)
+
+    def test_winget_version_mismatch_does_not_satisfy_health(self):
+        from holding.windows_package_manager import WingetPin
+        from holding.winget_binary import WingetBinary
+        pin = WingetPin("opencode", "SST.opencode", "1.18.29")
+        staged = ProvisionExecution(
+            "PAYLOADS_STAGED_NOT_VALIDATED",
+            (ProvisionStep("opencode", "INSTALL",
+                           "INSTALLED_NOT_HEALTHCHECKED"),),
+            (),
+        )
+        with patch("holding.windows_setup.discover_winget_binary",
+                   return_value=WingetBinary("NO_PINNED_BINARY_FOUND")):
+            result = assess_post_install(
+                staged, sample(opencode=Component("NOT_FOUND")),
+                (pin,), install_root=self.install_root,
+            )
+        self.assertEqual(result.state, "POST_INSTALL_RECHECK_REQUIRED")
+        self.assertTrue(result.blockers)
+
     def test_healthy_reused_tool_need_not_match_new_manifest_release_version(self):
         result = ProvisionExecution(
             "PAYLOADS_STAGED_NOT_VALIDATED",
