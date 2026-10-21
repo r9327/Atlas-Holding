@@ -57,7 +57,7 @@ class OllamaSetupTests(unittest.TestCase):
                            "STORED_PREFERENCE_NOT_RUNTIME_ATTESTED",
                            self.models,
                        )) as store:
-                with patch("holding.ollama_setup.scan", return_value=after) as scan:
+                with patch("holding.ollama_setup.scan_ollama_with_pins", return_value=after) as scan:
                     result, inventory = ensure_selected_model_volume(
                         self.result, before, install_root=self.root,
                         model_root=self.models, pins=(),
@@ -67,7 +67,7 @@ class OllamaSetupTests(unittest.TestCase):
         self.assertEqual(result.steps[-1].result,
                          "STORED_PREFERENCE_NOT_RUNTIME_ATTESTED")
         self.assertEqual(inventory.ollama.status, "FOUND_VALID")
-        scan.assert_called_once_with(self.root)
+        scan.assert_called_once_with(self.root, ())
         self.assertTrue(launch.call_args.kwargs["authorized"])
         self.assertEqual(launch.call_args.kwargs["model_root"], self.models)
 
@@ -77,7 +77,7 @@ class OllamaSetupTests(unittest.TestCase):
         ))
         with patch("holding.ollama_setup.start_local_ollama",
                    return_value=OllamaLaunch("START_TIMEOUT", str(self.models))):
-            with patch("holding.ollama_setup.scan") as scan:
+            with patch("holding.ollama_setup.scan_ollama_with_pins") as scan:
                 result, inventory = ensure_selected_model_volume(
                     self.result, before, install_root=self.root,
                     model_root=self.models, pins=(),
