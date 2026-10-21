@@ -159,6 +159,23 @@ time.sleep(30)
             with ControlPlane(self.db) as control:
                 self.assertFalse(control.snapshot().paused)
 
+    def test_failed_dead_viewer_cleanup_revokes_old_capabilities(self):
+        from unittest.mock import Mock
+        with self.make_service() as service:
+            service.start()
+            service.enable_dashboard_ipc(
+                secret=b"t" * 32, engine_id="retired-viewer",
+            )
+            dead_viewer = Mock()
+            dead_viewer.is_running.return_value = False
+            dead_viewer.close.side_effect = OSError("dead viewer cleanup")
+            service._dashboard_session = dead_viewer
+            with self.assertRaisesRegex(OSError, "dead viewer cleanup"):
+                service.launch_dashboard(self.program)
+            self.assertIsNone(service._dashboard_ipc)
+            self.assertIsNone(service._dashboard_session)
+            self.assertTrue(service._started)
+
     def test_dead_viewer_with_tampered_binary_does_not_keep_old_ipc(self):
         with self.make_service() as service:
             service.start()
