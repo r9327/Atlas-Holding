@@ -11,15 +11,17 @@ from dataclasses import asdict, dataclass
 import json
 import os
 from pathlib import Path
+import re
 from queue import Empty, Queue
 import threading
 from typing import Callable
 from urllib.request import Request, build_opener, ProxyHandler
 
 from .bootstrap_assets_cli import read_pinned_manifest
-from .inventory import scan
+from .inventory import Inventory, scan
 from .provision_plan import make_plan
-from .provision_runtime import ProvisionExecution, stage_required_dependencies
+from .provision_runtime import (ProvisionExecution, ProvisionStep,
+                                stage_required_dependencies)
 from .staged_install import PinnedZip, inspect_versioned_zip
 from .windows_package_manager import WingetPin
 
@@ -102,6 +104,46 @@ def preflight_setup(
     ), pins
 
 
+def assess_post_install(
+    result: ProvisionExecution, snapshot: Inventory,
+    pins: tuple[PinnedZip | WingetPin, ...],
+) -> ProvisionExecution:
+    """Re-measure after setup; a package-manager exit code is never runtime QA.
+
+    Validate pinned component versions for newly provisioned tools. A healthy
+    reused executable is intentionally not downgraded to meet a release pin.
+    """
+    if result.state != "PAYLOADS_STAGED_NOT_VALIDATED":
+        return result
+    known = {
+        "git": snapshot.git, "ollama": snapshot.ollama,
+        "opencode": snapshot.opencode, "python_runtime": snapshot.python,
+    }
+    pinned = {spec.component: spec for spec in pins}
+    mutating = {step.name for step in result.steps
+                if step.action in {"INSTALL", "REPAIR"}}
+    steps = list(result.steps)
+    blockers: list[str] = []
+    for name, component in known.items():
+        if component.status != "FOUND_VALID":
+            steps.append(ProvisionStep(name, "POST_INSTALL_HEALTH", component.status))
+            blockers.append("Post-install health check failed: " + name)
+            continue
+        spec = pinned.get(name)
+        if name in mutating and spec is not None:
+            version_pattern = r"(?<![0-9A-Za-z._-])" + re.escape(spec.version) + r"(?![0-9A-Za-z._-])"
+            if not re.search(version_pattern, component.version):
+                steps.append(ProvisionStep(name, "POST_INSTALL_HEALTH", "VERSION_MISMATCH"))
+                blockers.append("Post-install version mismatch: " + name)
+                continue
+        steps.append(ProvisionStep(name, "POST_INSTALL_HEALTH", "FOUND_VALID"))
+    return ProvisionExecution(
+        "POST_INSTALL_RECHECK_REQUIRED" if blockers else
+        "TOOLCHAIN_HEALTHY_MODEL_BENCHMARK_PENDING",
+        tuple(steps), tuple(blockers),
+    )
+
+
 def execute_setup(
     *, manifest: Path, manifest_sha256: str, install_root: Path,
     cache_root: Path, online: bool, approved: bool,
@@ -125,6 +167,8 @@ def execute_setup(
         install_root=install_root, cache_root=cache_root,
         cancelled=cancelled, progress=progress,
     )
+    if result.state == "PAYLOADS_STAGED_NOT_VALIDATED":
+        result = assess_post_install(result, scan(install_root), pins)
     return report, result
 
 
@@ -304,7 +348,7 @@ def main(argv: list[str] | None = None) -> int:
                         lines += list(executed.blockers)
                         state_message.set(
                             "Paquets préparés — contrôles logiciels et IA encore nécessaires"
-                            if executed.state == "PAYLOADS_STAGED_NOT_VALIDATED"
+                            if executed.state == "TOOLCHAIN_HEALTHY_MODEL_BENCHMARK_PENDING"
                             else "Installation partielle ou bloquée"
                         )
                     else:
