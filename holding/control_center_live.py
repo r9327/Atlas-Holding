@@ -7,7 +7,7 @@ future polls without interrupting the engine or waiting on a hung network.
 from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Slot
 
 from .control_center_ui import ControlCenterWindow
 from .dashboard_ipc import DashboardIpcClient, DashboardIpcError
@@ -31,6 +31,7 @@ class LiveControlCenterWindow(ControlCenterWindow):
         self._poll_timer.start()
         self.poll_live_state()
 
+    @Slot()
     def poll_live_state(self) -> None:
         """Runs on the Qt thread, never blocks on sockets or SQLite."""
         if self._closing:
