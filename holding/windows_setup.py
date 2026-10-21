@@ -371,7 +371,6 @@ def configure_and_launch_engine(
     from .windows_engine_enrollment import _require_native_windows
     if approved is not True or type(launch_approved) is not bool:
         raise EngineEnrollmentError("Explicit engine configuration consent required")
-    _require_native_windows()
     if (not isinstance(install_root, Path) or not install_root.is_absolute()
             or not isinstance(atlas_root, Path) or not atlas_root.is_absolute()
             or not isinstance(adapter_sha256, str)
@@ -381,6 +380,7 @@ def configure_and_launch_engine(
                 "AtlasHoldingControlCenter.exe", "AtlasHoldingEngine.exe",
             }):
         raise EngineEnrollmentError("Trusted first-run installation inputs required")
+    _require_native_windows()
     if (install_root.is_symlink() or install_root.resolve(strict=True) != install_root
             or atlas_root.is_symlink()
             or atlas_root.resolve(strict=True) != atlas_root
