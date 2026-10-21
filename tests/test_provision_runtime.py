@@ -87,6 +87,32 @@ class ProvisionRuntimeTests(unittest.TestCase):
         self.assertEqual(result.steps[-1].result, "STAGED_VERIFIED")
         install.assert_not_called()
 
+    def test_v2_pinned_binary_requires_real_native_version_pass(self):
+        pin = PinnedZip("opencode", "2.1",
+                        "https://example.invalid/opencode.zip",
+                        "b" * 64, 321, 789, "opencode.exe", "2.1")
+        from holding.native_health import NativeHealth
+        with patch("holding.provision_runtime.inspect_versioned_zip",
+                   return_value=InstallInspection("VERIFIED_PAYLOAD", self.root)):
+            with patch("holding.provision_runtime.check_staged_binary",
+                       return_value=NativeHealth("opencode", "BINARY_VERSION_PROBED")):
+                result = self.run_plan(pins=(pin,), approved=True)
+        self.assertEqual(result.state, "PAYLOADS_STAGED_NOT_VALIDATED")
+        self.assertEqual(result.steps[-1].result, "STAGED_NATIVE_PROBED")
+
+    def test_v2_binary_probe_failure_blocks_instead_of_declaring_ready(self):
+        pin = PinnedZip("opencode", "2.1",
+                        "https://example.invalid/opencode.zip",
+                        "b" * 64, 321, 789, "opencode.exe", "2.1")
+        from holding.native_health import NativeHealth
+        with patch("holding.provision_runtime.inspect_versioned_zip",
+                   return_value=InstallInspection("VERIFIED_PAYLOAD", self.root)):
+            with patch("holding.provision_runtime.check_staged_binary",
+                       return_value=NativeHealth("opencode", "BINARY_VERSION_MISMATCH")):
+                result = self.run_plan(pins=(pin,), approved=True)
+        self.assertEqual(result.state, "PARTIAL_OR_BLOCKED")
+        self.assertEqual(result.steps[-1].result, "BINARY_VERSION_MISMATCH")
+
     def test_tampered_version_blocks_no_replacement(self):
         with patch(
             "holding.provision_runtime.inspect_versioned_zip",
