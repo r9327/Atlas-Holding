@@ -35,7 +35,7 @@ def ensure_selected_model_volume(
         ), inventory
     session = start_local_ollama(
         inventory, install_root=install_root, model_root=model_root,
-        pins=tuple(x for x in pins if isinstance(x, PinnedZip)),
+        pins=pins,
         authorized=True, cancelled=cancelled,
     )
     step = ProvisionStep("ollama", "START_LOCAL_SERVER", session.state)
