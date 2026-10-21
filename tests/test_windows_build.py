@@ -17,7 +17,7 @@ class WindowsBuildTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        base = Path(tmp.name)
+        base = Path(tmp.name).resolve()
         self.manifest = base / "assets.json"
         self.output = base / "dist"
         self.project = base / "project"
