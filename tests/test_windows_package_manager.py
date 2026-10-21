@@ -91,6 +91,42 @@ class WindowsPackageManagerTests(unittest.TestCase):
         self.assertIn("--scope", show)
         self.assertEqual(show[show.index("--scope") + 1], "user")
 
+    def test_ollama_installer_inherits_only_approved_model_disk(self):
+        from pathlib import Path
+        from holding.model_volume import ModelVolumeInspection
+        models = Path("C:/Atlas Models")
+        pin = WingetPin("ollama", "Ollama.Ollama", "0.32.8")
+        good = subprocess.CompletedProcess([], 0, "v1", "")
+        with patch("holding.windows_package_manager.platform.system",
+                   return_value="Windows"):
+            with patch("holding.windows_package_manager.shutil.which",
+                       return_value="C:\\winget.exe"):
+                with patch("holding.windows_package_manager.os.path.isabs",
+                           return_value=True):
+                    with patch("holding.model_volume.inspect_model_volume",
+                               return_value=ModelVolumeInspection(
+                                   "VOLUME_AVAILABLE", 20 * 1024**3,
+                               )):
+                        with patch("holding.windows_package_manager.run_probe",
+                                   side_effect=[good, good, good]) as runner:
+                            installed = install_pinned_winget(
+                                pin, authorized=True, online=True,
+                                model_root=models,
+                            )
+        self.assertEqual(installed.state, "INSTALLED_NOT_HEALTHCHECKED")
+        self.assertEqual(
+            runner.call_args.kwargs["environment"]["OLLAMA_MODELS"],
+            str(models),
+        )
+
+    def test_other_packages_cannot_override_models_directory(self):
+        from pathlib import Path
+        with self.assertRaises(WindowsPackageError):
+            install_pinned_winget(
+                self.pin, authorized=True, online=True,
+                model_root=Path("C:/models"),
+            )
+
     def test_manager_missing_or_unsupported_os_does_not_install(self):
         with patch("holding.windows_package_manager.platform.system",
                    return_value="Linux"):
