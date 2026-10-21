@@ -28,6 +28,7 @@ class LiveControlCenterWindow(ControlCenterWindow):
             raise ValueError("Dashboard read/write endpoints must be the same service")
         super().__init__(trusted_engine_id=client.engine_id)
         self._client = client
+        self._closing = False
         self._control = control
         self._control_pending: Future | None = None
         self._control_name: str | None = None
