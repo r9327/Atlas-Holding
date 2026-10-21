@@ -69,7 +69,7 @@ def build_windows_installer(
     if path.exists():
         raise FileExistsError("Refusing to overwrite an existing setup executable")
     with tempfile.TemporaryDirectory(prefix="atlas-pyinstaller-") as temp:
-        workspace = Path(temp)
+        workspace = Path(temp).resolve()
         stage = workspace / "dist"
         # This digest comes from a trusted build input, not a self-reported
         # value inside the JSON assets manifest.
