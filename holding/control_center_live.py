@@ -8,19 +8,47 @@ from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
 from PySide6.QtCore import QTimer, Slot
+from PySide6.QtWidgets import QHBoxLayout, QMessageBox, QPushButton, QWidget
 
 from .control_center_ui import ControlCenterWindow
-from .dashboard_ipc import DashboardIpcClient, DashboardIpcError
+from .dashboard_ipc import DashboardControlClient, DashboardIpcClient, DashboardIpcError
 
 
 class LiveControlCenterWindow(ControlCenterWindow):
-    def __init__(self, client: DashboardIpcClient, *, refresh_ms: int = 1500):
+    def __init__(self, client: DashboardIpcClient, *,
+                 control: DashboardControlClient | None = None,
+                 refresh_ms: int = 1500):
         if not isinstance(client, DashboardIpcClient):
             raise ValueError("Authenticated dashboard client required")
         if type(refresh_ms) is not int or not 250 <= refresh_ms <= 10_000:
             raise ValueError("Dashboard refresh must be 250-10000 milliseconds")
+        if control is not None and not isinstance(control, DashboardControlClient):
+            raise ValueError("A separately authenticated write capability is required")
+        if control is not None and control.port != client.port:
+            raise ValueError("Dashboard read/write endpoints must be the same service")
         super().__init__(trusted_engine_id=client.engine_id)
         self._client = client
+        self._control = control
+        self._control_pending: Future | None = None
+        self._control_name: str | None = None
+        self._connected = False
+        self._control_report: str | None = None
+        self.control_panel = QWidget(self)
+        self.control_panel.setObjectName("controlPanel")
+        row = QHBoxLayout(self.control_panel)
+        self.pause_button = QPushButton("Pause", self)
+        self.pause_button.setObjectName("pauseHolding")
+        self.resume_button = QPushButton("Reprendre", self)
+        self.resume_button.setObjectName("resumeHolding")
+        self.stop_button = QPushButton("Arrêter", self)
+        self.stop_button.setObjectName("stopHolding")
+        for button in (self.pause_button, self.resume_button, self.stop_button):
+            row.addWidget(button)
+        self.pause_button.clicked.connect(self.request_pause)
+        self.resume_button.clicked.connect(self.request_resume)
+        self.stop_button.clicked.connect(self.request_stop)
+        self.centralWidget().layout().insertWidget(1, self.control_panel)
+        self._update_control_buttons()
         self._executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="atlas-dashboard-ipc")
         self._pending: Future | None = None
@@ -31,11 +59,60 @@ class LiveControlCenterWindow(ControlCenterWindow):
         self._poll_timer.start()
         self.poll_live_state()
 
+    def _update_control_buttons(self) -> None:
+        enabled = (not self._closing and self._connected
+                   and self._control is not None
+                   and self._control_pending is None)
+        for button in (self.pause_button, self.resume_button, self.stop_button):
+            button.setEnabled(enabled)
+
+    def _request_command(self, name: str) -> None:
+        if (self._closing or not self._connected or self._control is None
+                or self._control_pending is not None):
+            return
+        self._control_name = name
+        self._control_pending = self._executor.submit(self._control.send, name)
+        self._update_control_buttons()
+
+    @Slot()
+    def request_pause(self) -> None:
+        self._request_command("pause")
+
+    @Slot()
+    def request_resume(self) -> None:
+        self._request_command("resume")
+
+    @Slot()
+    def request_stop(self) -> None:
+        if (self._control is not None and self._connected
+                and self._control_pending is None
+                and QMessageBox.question(
+                    self, "Arrêter la Holding",
+                    "Confirmer la demande d’arrêt durable du moteur ?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                ) == QMessageBox.StandardButton.Yes):
+            self._request_command("stop")
+
     @Slot()
     def poll_live_state(self) -> None:
         """Runs on the Qt thread, never blocks on sockets or SQLite."""
         if self._closing:
             return
+        if self._control_pending is not None and self._control_pending.done():
+            completed = self._control_pending
+            name = self._control_name
+            self._control_pending = None
+            self._control_name = None
+            try:
+                completed.result()
+            except Exception:
+                self._control_report = (
+                    f"Commande {name} non confirmée — inspecter l’état durable")
+            else:
+                self._control_report = (
+                    f"Commande {name} enregistrée — vérification en cours")
+            self._update_control_buttons()
         if self._pending is None:
             self._pending = self._executor.submit(self._client.fetch)
             return
@@ -47,11 +124,14 @@ class LiveControlCenterWindow(ControlCenterWindow):
             state = result.result()
         except (DashboardIpcError, OSError, ValueError):
             # Old rows may remain for diagnosis, but are never presented as live.
+            self._connected = False
             self.status.setText(
                 "Déconnecté — dernier état conservé, non actualisé")
         except Exception:
+            self._connected = False
             self.status.setText("État indisponible — dernière vue non actualisée")
         else:
+            self._connected = True
             if self.displayed_sequence is not None and (
                     state.sequence == self.displayed_sequence):
                 # Same durable state; connection was authenticated again.
@@ -60,6 +140,10 @@ class LiveControlCenterWindow(ControlCenterWindow):
                     f"{state.pending_external} vérification(s) externe(s) en attente")
             else:
                 self.render_state(state)
+            if self._control_report is not None:
+                self.status.setText(self._control_report)
+                self._control_report = None
+        self._update_control_buttons()
 
     def closeEvent(self, event) -> None:
         self._closing = True
