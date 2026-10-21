@@ -364,3 +364,20 @@ fenêtre Qt. Le refus intervient **avant** toute création de processus et
 avant le chargement d'une configuration active. Les tests de régression
 couvrent cette règle séparément des ACL et des signatures SHA-256.
 
+
+## Blocage du lancement hors bureau Windows interactif
+
+Le lancement de l'exécutable moteur vérifie maintenant par les API Win32
+`ProcessIdToSessionId`, `GetProcessWindowStation` et
+`GetUserObjectInformationW(UOI_FLAGS)` que la Holding s'exécute **dans une
+session utilisateur non nulle disposant d'une window station visible**.
+Les services en Session 0, les processus sans station visible et les appels
+natifs impossibles sont refusés avant `Popen` : un processus démarré
+silencieusement ne doit pas être confondu avec une interface utilisable.
+Cela s'ajoute aux contrôles SHA-256 et ACL des exécutables et de la
+configuration. Les tests du module simulent explicitement ces cas d'échec.
+
+Ce contrôle ne vaut pas encore installation terminée : le compte Windows,
+le schéma de configuration moteur, le premier cycle roadmap et les preuves
+d'E2E restent des gates séparés.
+
