@@ -11,6 +11,19 @@ MAX_MANIFEST_BYTES = 512 * 1024
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _ARTIFACT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$")
+# A setup-only ZIP or a frozen GUI with no engine is never an installable
+# autonomous Holding. Observed bytes must include every runtime component.
+_REQUIRED_RUNTIME_FILES = frozenset({
+    "AtlasHoldingSetup.exe", "AtlasHoldingControlCenter.exe",
+    "AtlasHoldingEngine.exe",
+})
+_REQUIRED_NATIVE_GATES = frozenset({
+    "windows-clean-install",
+    "native-runtime-ipc",
+    "windows-acl-isolation",
+    "offline-after-provisioning",
+    "e2e-roadmap",
+})
 
 
 class ReleaseEvidenceError(ValueError):
@@ -83,6 +96,7 @@ def validate_release_manifest(
                    or not 0 < value.size_bytes <= 20 * 1024**3
                    for name, value in observed.items())
             or len(set(required_gates)) != len(required_gates)
+            or not _REQUIRED_NATIVE_GATES.issubset(set(required_gates))
             or any(not isinstance(name, str) or not name or len(name) > 100
                    for name in required_gates)
             or set(gate_evidence) != set(required_gates)
@@ -123,8 +137,9 @@ def validate_release_manifest(
         declared[name] = ArtifactObservation(
             _digest(item["sha256"], "artifact"), item["size_bytes"],
         )
-    if declared != observed or "AtlasHoldingSetup.exe" not in declared:
-        raise ReleaseEvidenceError("Declared artifacts differ from observed files")
+    if declared != observed or not _REQUIRED_RUNTIME_FILES.issubset(declared):
+        raise ReleaseEvidenceError(
+            "Release requires observed setup, Control Center and engine binaries")
 
     gates = data["gates"]
     if not isinstance(gates, list):
