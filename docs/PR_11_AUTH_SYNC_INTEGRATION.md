@@ -66,6 +66,13 @@ Cette PR Draft vérifie ensemble les contrats développés séparément dans :
 
 **Gates de livraison toujours ouverts :** installation native de l'identité Windows/ACL, distribution protégée des deux secrets (jamais via ligne de commande de processus ni dans des logs), bootstrap/launch du viewer installé, scénarios de reboot et arrêt, E2E EXE sur machine propre, RAM process-tree et release certifiée. Un HMAC sur loopback n'isole pas des programmes malveillants lancés sous la même identité Windows.
 
+## Point d'entrée autonome de la fenêtre (21 octobre 2026)
+
+- `python -B -m holding.control_center_entry --port <port> --engine-id <identifiant>` est un point d'entrée Qt réel **réservé au lanceur installé de confiance**. Le lanceur doit transmettre exactement 64 octets sur son pipe privé `stdin` (clé de consultation puis clé de commandes, toutes deux indépendantes), ou 32 octets avec `--readonly`. EOF obligatoire pour borner la lecture.
+- Les secrets ne sont **jamais acceptés dans argv, variables d'environnement, chemin de fichier, URL ou logs**. Une trame tronquée, des clés identiques, un terminal interactif ou un port invalide bloque avant toute ouverture de Qt. Le mode lecture seule ne fabrique jamais de capacité d'écriture.
+- `tests/test_control_center_entry.py` couvre le parsing strict des capacités, l'absence de divulgation des secrets, le mode lecture seule et les erreurs pré-Qt.
+- **Prochaine étape à ne pas confondre avec ce lot :** le setup natif doit démarrer les processus de confiance avec un pipe OS protégé, générer des clés aléatoires fraîches à chaque session, contrôler ACL et identité de l'utilisateur, leur distribuer les capacités, puis tester l'EXE sans Python préinstallé.
+
 ## Limites explicites
 
 - Aucun token n'est fourni au coordinateur ou stocké dans SQLite.
