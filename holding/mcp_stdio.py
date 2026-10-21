@@ -123,8 +123,15 @@ class McpRouter:
         if not raw or b"\n" in raw or b"\r" in raw:
             return self._encode(self._error(None, -32700, "Invalid stdio framing"))
         try:
-            request = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object)
-        except (UnicodeError, ValueError, McpProtocolError):
+            def reject_nonfinite(_value: str):
+                raise McpProtocolError("Non-finite JSON value")
+            request = json.loads(
+                raw.decode("utf-8"), object_pairs_hook=_unique_object,
+                parse_constant=reject_nonfinite,
+            )
+        except (UnicodeError, ValueError, McpProtocolError, RecursionError):
+            # Deeply nested valid-looking input cannot crash the stdio hub;
+            # NaN/Infinity are not standard JSON and may bypass tool guards.
             return self._encode(self._error(None, -32700, "Parse error"))
         if type(request) is not dict:
             return self._encode(self._error(None, -32600, "Invalid Request"))
