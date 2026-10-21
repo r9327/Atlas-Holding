@@ -97,7 +97,7 @@ def build_windows_installer(
             "from holding.windows_setup import main",
             "from holding.windows_runtime_payload import verify_runtime_payload",
             "from holding.ollama_resume import resume_ollama_at_logon",
-            "base = Path(getattr(sys, '_MEIPASS', Path(__file__).parent))",
+            "base = Path(getattr(sys, '_MEIPASS', Path(__file__).parent)).resolve()",
             "manifest = base / 'release-assets.json'",
             f"expected = {expected_manifest_sha256.lower()!r}",
             f"runtime_pins = {dict(runtime_pins) if runtime_pins is not None else None!r}",
