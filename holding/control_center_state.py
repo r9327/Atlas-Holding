@@ -99,6 +99,8 @@ class DashboardState:
     plugins: tuple[PluginView, ...]
     logs: tuple[LogView, ...]
     next_log_cursor: str | None
+    paused: bool | None = None
+    stop_requested: bool | None = None
 
 
 def _object(value: Any, required: set[str]) -> dict[str, Any]:
@@ -297,13 +299,22 @@ def consume_dashboard_snapshot(
         raise
     except (UnicodeError, ValueError) as exc:
         raise ControlCenterStateError("Snapshot is not valid JSON") from exc
-    data = _object(payload, {
+    if not isinstance(payload, dict):
+        raise ControlCenterStateError("Snapshot object required")
+    version = payload.get("schema_version")
+    keys = {
         "schema_version", "engine_id", "sequence", "generated_at", "network",
         "pending_external", "tasks", "agents", "plugins", "log_page",
-    })
-    if (type(data["schema_version"]) is not int or data["schema_version"] != 1
+    }
+    if type(version) is int and version == 2:
+        keys |= {"paused", "stop_requested"}
+    data = _object(payload, keys)
+    if (type(version) is not int or version not in (1, 2)
             or data["engine_id"] != trusted_engine_id):
         raise ControlCenterStateError("Snapshot identity mismatch")
+    if version == 2 and (type(data["paused"]) is not bool
+                          or type(data["stop_requested"]) is not bool):
+        raise ControlCenterStateError("Invalid durable operator control state")
     sequence = _integer(data["sequence"], "snapshot sequence", maximum=2**63 - 1)
     if sequence != expected_sequence:
         raise ControlCenterStateError("Stale or unexpected snapshot sequence")
@@ -356,4 +367,6 @@ def consume_dashboard_snapshot(
         data["network"],
         _integer(data["pending_external"], "pending external count", maximum=100_000),
         tasks, agents, plugins, logs, cursor,
+        data["paused"] if version == 2 else None,
+        data["stop_requested"] if version == 2 else None,
     )
