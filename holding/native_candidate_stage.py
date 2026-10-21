@@ -67,8 +67,10 @@ def stage_native_candidate(
     # destination. Never replace files, a previous candidate or a release.
     lock = parent / ("." + destination.name + ".staging-lock")
     fd = None
+    acquired = False
     try:
         fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        acquired = True
         os.close(fd)
         fd = None
         with tempfile.TemporaryDirectory(prefix=".native-stage-", dir=parent) as work:
@@ -118,5 +120,5 @@ def stage_native_candidate(
             os.close(fd)
         # A failed run must not leave an invisible lock behind. Only the
         # trusted single-runner staging flow can manipulate this directory.
-        if lock.exists():
-            lock.unlink()
+        if acquired:
+            lock.unlink(missing_ok=True)
