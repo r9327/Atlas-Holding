@@ -39,6 +39,55 @@ class OllamaStorageTests(unittest.TestCase):
         self.assertEqual([item.name for item in folder.iterdir()],
                          ["ollama-model-storage.json"])
 
+    def test_desktop_user_environment_preference_is_readable_but_unattested(self):
+        saved = store_model_directory(
+            self.install, self.models, authorized=True,
+            source="consented_user_ollama_environment",
+        )
+        self.assertEqual(saved.status,
+                         "STORED_PREFERENCE_NOT_RUNTIME_ATTESTED")
+        persisted = json.loads((
+            self.install / "settings" / "ollama-model-storage.json"
+        ).read_text(encoding="utf-8"))
+        self.assertEqual(persisted["source"],
+                         "consented_user_ollama_environment")
+        self.assertEqual(read_model_directory(self.install).directory, self.models)
+
+    def test_second_setup_cannot_overwrite_different_existing_volume(self):
+        first = store_model_directory(
+            self.install, self.models, authorized=True,
+        )
+        different = self.root / "other"
+        different.mkdir()
+        refused = store_model_directory(
+            self.install, different, authorized=True,
+            source="consented_user_ollama_environment",
+        )
+        self.assertEqual(refused.status, "EXISTING_MODEL_VOLUME_CONFLICT")
+        self.assertEqual(refused.directory, self.models)
+        self.assertEqual(read_model_directory(self.install).directory, self.models)
+
+    def test_second_setup_does_not_override_existing_origin(self):
+        store_model_directory(self.install, self.models, authorized=True)
+        outcome = store_model_directory(
+            self.install, self.models, authorized=True,
+            source="consented_user_ollama_environment",
+        )
+        self.assertEqual(outcome.status,
+                         "STORED_PREFERENCE_NOT_RUNTIME_ATTESTED")
+        document = json.loads((
+            self.install / "settings" / "ollama-model-storage.json"
+        ).read_text(encoding="utf-8"))
+        self.assertEqual(document["source"],
+                         "consented_owned_ollama_service")
+
+    def test_unknown_preference_provenance_is_rejected(self):
+        with self.assertRaises(ValueError):
+            store_model_directory(
+                self.install, self.models, authorized=True,
+                source="untrusted_import",
+            )
+
     def test_unknown_schema_or_tampering_blocks(self):
         store_model_directory(self.install, self.models, authorized=True)
         path = self.install / "settings" / "ollama-model-storage.json"
