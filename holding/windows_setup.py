@@ -546,12 +546,18 @@ def main(argv: list[str] | None = None) -> int:
                             if last_summary.status == "CONSENT_REQUIRED"
                             else last_summary.status
                         )
-                        if last_summary.status == "CONSENT_REQUIRED":
+                        if (last_summary.status == "CONSENT_REQUIRED"
+                                or (last_summary.status == "BENCHMARK_REQUIRED"
+                                    and args.runtime_root is not None)):
+                            # Even when Git/Ollama are already healthy, copying
+                            # the two bundled executables requires consent.
                             approve.state(["!disabled"])
                     write("\n".join(lines))
                     if (executed is not None
-                            and executed.state ==
-                            "TOOLCHAIN_HEALTHY_MODEL_BENCHMARK_PENDING"
+                            and executed.state in {
+                                "TOOLCHAIN_HEALTHY_MODEL_BENCHMARK_PENDING",
+                                "RUNTIME_STAGED_ENGINE_CONFIG_PENDING",
+                            }
                             and any(step.name == "ollama"
                                     and step.action == "START_LOCAL_SERVER"
                                     and step.result == "OWNED_API_HEALTHY"
@@ -600,7 +606,10 @@ def main(argv: list[str] | None = None) -> int:
             root.after(150, drain)
 
     def approve_install() -> None:
-        if last_summary is None or last_summary.status != "CONSENT_REQUIRED":
+        if (last_summary is None
+                or last_summary.status not in {"CONSENT_REQUIRED", "BENCHMARK_REQUIRED"}
+                or (last_summary.status == "BENCHMARK_REQUIRED"
+                    and args.runtime_root is None)):
             return
         if last_paths != selected_paths():
             state_message.set("Emplacements modifiés : nouvelle analyse nécessaire")
