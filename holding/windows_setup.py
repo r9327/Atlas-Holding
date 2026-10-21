@@ -27,6 +27,7 @@ from .managed_toolchain import resolve_managed_tool
 from .version_evidence import matches_component_version
 from .ollama_setup import ensure_selected_model_volume
 from .ollama_storage import read_model_directory
+from .windows_autostart import configure_logon_resume
 
 
 @dataclass(frozen=True)
@@ -411,6 +412,44 @@ def main(argv: list[str] | None = None) -> int:
                         if last_summary.status == "CONSENT_REQUIRED":
                             approve.state(["!disabled"])
                     write("\n".join(lines))
+                    if (executed is not None
+                            and executed.state ==
+                            "TOOLCHAIN_HEALTHY_MODEL_BENCHMARK_PENDING"
+                            and any(step.name == "ollama"
+                                    and step.action == "START_LOCAL_SERVER"
+                                    and step.result == "OWNED_API_HEALTHY"
+                                    for step in executed.steps)):
+                        # Starting at user logon is a separate persistent
+                        # change, not covered by initial one-time staging.
+                        if messagebox.askyesno(
+                            "Relancer Ollama avec Windows",
+                            "Après connexion à Windows, relancer Ollama en "
+                            "local avec le dossier de modèles choisi ? "
+                            "Cela ajoute uniquement une entrée de démarrage "
+                            "pour votre compte. Vous pourrez la désactiver.",
+                        ):
+                            approved_root = last_paths[0]
+                            def enroll_worker() -> None:
+                                try:
+                                    outcome = configure_logon_resume(
+                                        approved_root, authorized=True,
+                                    )
+                                except (OSError, ValueError, TypeError):
+                                    outcome = "LOGON_REGISTRATION_FAILED"
+                                events.put(("logon_enrolled", outcome))
+                            threading.Thread(
+                                target=enroll_worker, daemon=True,
+                            ).start()
+                elif event[0] == "logon_enrolled":
+                    status = event[1]
+                    output.configure(state=tk.NORMAL)
+                    output.insert(tk.END, "\nDémarrage Windows : " + status)
+                    output.configure(state=tk.DISABLED)
+                    if status not in {"LOGON_RESUME_ENROLLED",
+                                      "ALREADY_ENROLLED"}:
+                        state_message.set(
+                            "Service lancé ; reprise Windows non configurée"
+                        )
                 elif event[0] == "error":
                     busy = False
                     check.state(["!disabled"])
