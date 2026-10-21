@@ -99,3 +99,39 @@ def undo_created_user_models(model_root: Path) -> str:
         return "USER_MODELS_ROLLED_BACK"
     except OSError:
         return "USER_MODELS_ROLLBACK_FAILED"
+
+
+def inspect_user_models(model_root: Path) -> UserModelEnvironment:
+    """Read-only HKCU registry attestation, never an active-daemon assertion."""
+    if not isinstance(model_root, Path) or not model_root.is_absolute():
+        raise ValueError("Absolute requested model path required")
+    if platform.system() != "Windows":
+        return UserModelEnvironment("WINDOWS_REQUIRED", str(model_root))
+    try:
+        _no_linked_ancestors(model_root)
+        import winreg
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER, "Environment", 0,
+            winreg.KEY_QUERY_VALUE,
+        ) as key:
+            try:
+                value, kind = winreg.QueryValueEx(key, "OLLAMA_MODELS")
+            except FileNotFoundError:
+                return UserModelEnvironment(
+                    "USER_MODELS_NOT_CONFIGURED", str(model_root),
+                )
+        if value == str(model_root) and kind == winreg.REG_SZ:
+            if inspect_model_volume(model_root).status != "VOLUME_AVAILABLE":
+                return UserModelEnvironment(
+                    "MODEL_VOLUME_UNAVAILABLE", str(model_root),
+                )
+            return UserModelEnvironment("USER_MODELS_MATCH", str(model_root))
+        return UserModelEnvironment("USER_MODELS_CONFLICT", str(model_root))
+    except FileNotFoundError:
+        return UserModelEnvironment(
+            "USER_MODELS_NOT_CONFIGURED", str(model_root),
+        )
+    except (OSError, ValueError):
+        return UserModelEnvironment(
+            "USER_MODELS_READ_FAILED", str(model_root),
+        )
