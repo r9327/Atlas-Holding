@@ -1,6 +1,7 @@
 """First-run setup wizard's headless contract; no display required on CI."""
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 import tempfile
 import unittest
@@ -9,7 +10,8 @@ from unittest.mock import patch
 from holding.inventory import Component
 from holding.provision_runtime import ProvisionExecution, ProvisionStep
 from holding.staged_install import InstallInspection, PinnedZip
-from holding.windows_setup import detect_online, preflight_setup, execute_setup
+from holding.windows_setup import (assess_post_install, detect_online,
+                                  preflight_setup, execute_setup)
 from test_provision_plan import sample
 
 
@@ -122,10 +124,47 @@ class WindowsSetupTests(unittest.TestCase):
                         progress=callback,
                     )
         self.assertEqual(actual, summary)
-        self.assertEqual(executed.state, "PAYLOADS_STAGED_NOT_VALIDATED")
-        scan.assert_called_once_with(self.install_root)
+        self.assertEqual(executed.state, "POST_INSTALL_RECHECK_REQUIRED")
+        self.assertEqual(scan.call_count, 2)
+        self.assertEqual(scan.call_args.args, (self.install_root,))
         self.assertTrue(stage.call_args.kwargs["authorized"])
         self.assertIs(stage.call_args.kwargs["progress"], callback)
+
+    def test_post_install_requires_real_healthy_dependency_not_installer_exit(self):
+        result = ProvisionExecution(
+            "PAYLOADS_STAGED_NOT_VALIDATED",
+            (ProvisionStep("opencode", "INSTALL", "INSTALLED_NOT_HEALTHCHECKED"),),
+            (),
+        )
+        invalid = assess_post_install(result, self.snapshot, (self.pin,))
+        self.assertEqual(invalid.state, "POST_INSTALL_RECHECK_REQUIRED")
+        self.assertIn("opencode", invalid.blockers[0])
+        self.assertEqual(invalid.steps[-2].result, "NOT_FOUND")
+
+    def test_post_install_enforces_exact_pinned_version(self):
+        result = ProvisionExecution(
+            "PAYLOADS_STAGED_NOT_VALIDATED",
+            (ProvisionStep("opencode", "INSTALL", "STAGED_NATIVE_PROBED"),),
+            (),
+        )
+        wrong = sample(opencode=Component("FOUND_VALID", version="opencode 10.0"))
+        outcome = assess_post_install(result, wrong, (self.pin,))
+        self.assertEqual(outcome.state, "POST_INSTALL_RECHECK_REQUIRED")
+        self.assertEqual(outcome.steps[-2].result, "VERSION_MISMATCH")
+        valid = sample(opencode=Component("FOUND_VALID", version="opencode 1.0"))
+        outcome = assess_post_install(result, valid, (self.pin,))
+        self.assertEqual(outcome.state, "TOOLCHAIN_HEALTHY_MODEL_BENCHMARK_PENDING")
+        self.assertFalse(outcome.blockers)
+        self.assertEqual(outcome.steps[-2].result, "FOUND_VALID")
+
+    def test_healthy_reused_tool_need_not_match_new_manifest_release_version(self):
+        result = ProvisionExecution(
+            "PAYLOADS_STAGED_NOT_VALIDATED",
+            (ProvisionStep("opencode", "REUSE", "REUSED_HEALTHY"),), (),
+        )
+        valid = sample(opencode=Component("FOUND_VALID", version="opencode 0.9"))
+        outcome = assess_post_install(result, valid, (self.pin,))
+        self.assertEqual(outcome.state, "TOOLCHAIN_HEALTHY_MODEL_BENCHMARK_PENDING")
 
     def test_network_probe_fails_closed_without_tokens(self):
         with patch("holding.windows_setup.build_opener", side_effect=OSError):
