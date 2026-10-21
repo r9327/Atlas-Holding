@@ -13,6 +13,10 @@ _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _ARTIFACT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$")
 # A setup-only ZIP or a frozen GUI with no engine is never an installable
 # autonomous Holding. Observed bytes must include every runtime component.
+_REQUIRED_UPSTREAM = frozenset({
+    "pr1", "pr2", "pr3", "pr4", "pr5", "pr6", "pr7", "pr8",
+    "pr11", "pr12",
+})
 _REQUIRED_RUNTIME_FILES = frozenset({
     "AtlasHoldingSetup.exe", "AtlasHoldingControlCenter.exe",
     "AtlasHoldingEngine.exe",
@@ -86,7 +90,7 @@ def validate_release_manifest(
     expected_upstream = dict(expected_upstream_shas)
     observed = dict(observed_artifacts)
     gate_evidence = dict(observed_gate_evidence)
-    if (not expected_upstream or any(
+    if (not _REQUIRED_UPSTREAM.issubset(expected_upstream) or any(
             not isinstance(name, str) or not name or not isinstance(sha, str)
             or not _SHA.fullmatch(sha) for name, sha in expected_upstream.items())
             or any(not isinstance(name, str) or not _ARTIFACT.fullmatch(name)
