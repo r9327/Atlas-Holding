@@ -95,3 +95,11 @@ Le manifeste de release **v2** ajoute `executable` (chemin ZIP relatif se termin
 `holding/native_health.py` confirme l'intégrité de chaque fichier du composant **avant et après** l'exécution, contrôle l'absence de lien pour l'EXE et exécute seulement `<exe> --version` dans le groupe/Job Object borné du superviseur ; toute version inattendue, timeout ou détérioration retourne un statut bloquant. Les sondes natales sont limitées aux composants Git, Ollama et OpenCode. Ce contrôle n'installe pas de service, ne configure pas PATH et ne prouve pas les appels API Ollama, l'appel d'outil OpenCode ou la qualité de l'IA.
 
 **Validation finale de la PR #2 non satisfaite** avant installation réelle depuis machine Windows vierge, autorisation/ACL native et manifeste officiel épinglé, réparations/upgrade/reboot, vérification des vraies versions et intégration de l'EXE au processus de release #9.
+
+## Acquisition des modèles Ollama (contrat de staging, non qualifié)
+
+`holding/ollama_model_pull.py` permet à l'installateur autorisé de demander `POST http://127.0.0.1:11434/api/pull` avec le **nom exact et le digest SHA-256 épinglés** par le futur catalogue/benchmarks de #4. Ollama sait reprendre ses téléchargements interrompus ; la Holding consomme le flux NDJSON avec des limites strictes par message et par essai, progression octet réelle, annulation et timeout. Après le statut `success`, la Holding doit relire `/api/tags` et obtenir le **même digest** avant de déclarer `MODEL_VERIFIED_NOT_BENCHMARKED`.
+
+Les modèles déjà présents au digest exact sont réutilisés. Une étiquette installée mais correspondant à un autre digest est bloquée sans remplacement. Hors ligne, sans consentement ou en cas de flux interrompu, aucun modèle n'est déclaré prêt et la commande n'efface rien.
+
+**À raccorder** : catalogue vérifié #4, emplacement `OLLAMA_MODELS` piloté au lancement du service, outil d'installation natif Ollama, adaptation du wizard, calibration VRAM/contexte et benchmark de code et tool-calling indépendant. Le module seul ne choisit jamais un modèle sur ses paramètres et ne prétend pas que le téléchargement prouve sa qualité.
