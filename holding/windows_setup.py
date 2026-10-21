@@ -28,6 +28,7 @@ from .version_evidence import matches_component_version
 from .ollama_setup import ensure_selected_model_volume
 from .ollama_storage import read_model_directory
 from .windows_autostart import configure_logon_resume
+from .model_volume import inspect_model_volume
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,8 @@ class SetupSummary:
     installed_models: int
     blockers: tuple[str, ...]
     unestimated_package_downloads: int = 0
+    model_volume_free_bytes: int | None = None
+    model_volume_status: str = "NOT_CHECKED"
 
 
 def detect_online(*, timeout: float = 3.0) -> bool:
@@ -63,6 +66,7 @@ def detect_online(*, timeout: float = 3.0) -> bool:
 def preflight_setup(
     *, manifest: Path, manifest_sha256: str,
     install_root: Path, cache_root: Path, online: bool,
+    model_root: Path | None = None,
 ) -> tuple[SetupSummary, tuple[PinnedZip | WingetPin, ...]]:
     """Read-only inventory, compatibility checks and conservative download sizes."""
     if not install_root.is_absolute() or not cache_root.is_absolute():
@@ -75,6 +79,11 @@ def preflight_setup(
     upper_bound = 0
     winget_unknown = 0
     blockers = list(plan.blockers)
+    observed_volume = (inspect_model_volume(model_root)
+                       if model_root is not None else None)
+    if observed_volume is not None and observed_volume.status != "VOLUME_AVAILABLE":
+        blockers.append("Selected AI models disk is not usable: " +
+                        observed_volume.status)
     if plan.state == "INSPECTION_REQUIRED":
         blockers.append("An installed dependency requires manual inspection")
     for action in plan.actions:
@@ -105,6 +114,8 @@ def preflight_setup(
         snapshot.installation_disk_free_bytes, upper_bound,
         tuple(dependency_actions), len(snapshot.models), tuple(blockers),
         winget_unknown,
+        observed_volume.free_bytes if observed_volume else None,
+        observed_volume.status if observed_volume else "NOT_CHECKED",
     ), pins
 
 
@@ -182,6 +193,7 @@ def execute_setup(
     report, pins = preflight_setup(
         manifest=manifest, manifest_sha256=manifest_sha256,
         install_root=install_root, cache_root=cache_root, online=online,
+        model_root=model_root,
     )
     if report.status == "BLOCKED":
         return report, None
@@ -340,7 +352,7 @@ def main(argv: list[str] | None = None) -> int:
                         manifest_sha256=args.manifest_sha256,
                         install_root=current_target,
                         cache_root=current_storage,
-                        online=online,
+                        online=online, model_root=model_directory,
                     )
                     executed = None
                     events.put(("pins", pins))
@@ -381,6 +393,10 @@ def main(argv: list[str] | None = None) -> int:
                         f"GPU : {last_summary.gpu or 'Non détecté'}",
                         f"Modèles locaux trouvés : {last_summary.installed_models}",
                         f"Dossier choisi pour les futurs modèles : {last_paths[2]}",
+                        f"Disque des modèles : {last_summary.model_volume_status}",
+                        (f"Espace libre modèles : {last_summary.model_volume_free_bytes / 1024**3:.1f} Gio"
+                         if last_summary.model_volume_free_bytes is not None
+                         else "Espace libre modèles : inconnu"),
                         f"Archives ZIP à prévoir (maximum) : "
                         f"{last_summary.download_upper_bound_bytes / 1024**2:.1f} Mio",
                         (
