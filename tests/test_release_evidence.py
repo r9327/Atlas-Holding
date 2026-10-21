@@ -10,9 +10,14 @@ SHA = "a" * 40
 UPSTREAM = {"pr8": "b" * 40, "pr10": "c" * 40}
 OBSERVED = {
     "AtlasHoldingSetup.exe": ArtifactObservation("d" * 64, 100),
+    "AtlasHoldingControlCenter.exe": ArtifactObservation("1" * 64, 200),
+    "AtlasHoldingEngine.exe": ArtifactObservation("2" * 64, 300),
     "manifest.json": ArtifactObservation("e" * 64, 100),
 }
-GATES = ("windows-clean-install", "offline-after-provisioning", "e2e-roadmap")
+GATES = (
+    "windows-clean-install", "offline-after-provisioning", "e2e-roadmap",
+    "native-runtime-ipc", "windows-acl-isolation",
+)
 GATE_EVIDENCE = {name: "f" * 64 for name in GATES}
 
 
@@ -86,6 +91,34 @@ class ReleaseEvidenceTests(unittest.TestCase):
         value = manifest(); value["gates"][0]["status"] = "FAIL"
         with self.assertRaisesRegex(ReleaseEvidenceError, "PASS"):
             validate(value)
+
+    def test_setup_without_real_viewer_or_engine_is_unpublishable(self):
+        for missing in ("AtlasHoldingControlCenter.exe", "AtlasHoldingEngine.exe"):
+            payload = manifest()
+            payload["artifacts"] = [
+                item for item in payload["artifacts"]
+                if item["name"] != missing
+            ]
+            observed = dict(OBSERVED)
+            del observed[missing]
+            with self.subTest(missing=missing), self.assertRaisesRegex(
+                    ReleaseEvidenceError, "requires observed setup"):
+                validate(payload, observed=observed)
+
+    def test_operator_cannot_omit_native_acl_or_ipc_release_gates(self):
+        for gate in ("native-runtime-ipc", "windows-acl-isolation"):
+            gates = tuple(item for item in GATES if item != gate)
+            with self.subTest(gate=gate), self.assertRaises(
+                    ReleaseEvidenceError):
+                validate_release_manifest(
+                    json.dumps(manifest()).encode(),
+                    expected_source_sha=SHA,
+                    expected_upstream_shas=UPSTREAM,
+                    observed_artifacts=OBSERVED,
+                    observed_gate_evidence=GATE_EVIDENCE,
+                    observed_signature_evidence_sha256=None,
+                    required_gates=gates,
+                )
 
     def test_unsigned_build_requires_smartscreen_warning(self):
         value = manifest(); value["signing"]["smartscreen_warning"] = False
