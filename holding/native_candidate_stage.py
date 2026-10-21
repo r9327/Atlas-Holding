@@ -60,7 +60,7 @@ def stage_native_candidate(
                 or destination.is_symlink() or source == parent):
             raise ReleaseEvidenceError("Unsafe or already published candidate path")
         before = observe_native_release_files(source)
-    except (OSError, ValueError) as exc:
+    except OSError as exc:
         raise ReleaseEvidenceError("Trusted staging path unavailable") from exc
 
     # O_EXCL lock prevents two cooperative builds from racing on the same
