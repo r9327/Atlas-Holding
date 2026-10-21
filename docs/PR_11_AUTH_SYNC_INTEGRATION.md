@@ -46,6 +46,15 @@ Cette PR Draft vérifie ensemble les contrats développés séparément dans :
     `DONE_UNVERIFIED` à l'écran. Les détails d'événements ne traversent pas cette
     frontière afin de ne pas exposer un secret accidentellement journalisé.
 
+## Nouveau canal Control Center réel (21 octobre 2026)
+
+- `holding/dashboard_ipc.py` : serveur TCP **bouclé sur 127.0.0.1 uniquement**, autorisation HMAC-SHA256 sur requêtes et réponses, nonce aléatoire à chaque requête avec anti-replay borné, messages binaires plafonnés à 2 Mio, délais courts et quatre clients concurrents au maximum. Aucune désérialisation pickle, aucun endpoint de mutation, commande shell ou accès SQLite depuis le client.
+- `HoldingService.enable_dashboard_ipc(secret=..., engine_id=...)` : serveur en lecture seule activable par le **bootstrap de confiance après démarrage**, maintenu indépendamment des fenêtres Qt puis arrêté avant fermeture du moteur. Le secret est fourni par le superviseur, pas par une roadmap ou le modèle.
+- `holding/control_center_live.py` : première fenêtre PySide6 qui récupère les projections SQLite **authentifiées et validées** de façon asynchrone, sans bloquer l'interface ; en cas de perte de connexion, affiche explicitement l'état comme non actualisé. La fermeture de la fenêtre n'arrête pas le moteur.
+- `tests/test_dashboard_ipc.py` et `tests/test_control_center_live.py` : vrais échanges TCP/SQLite, mauvais secret et moteur, réponse frauduleuse, rejeu, limites de taille, disponibilité après fermeture et déconnexion UI.
+
+**Ce canal n'est pas encore le setup Windows final :** son port et son secret doivent être provisionnés par le service d'installation avec ACL natives, identité de processus et stockage protégés. Aucun secret de démonstration ne doit être utilisé en production. Le lancement automatique du viewer, les commandes authentifiées Pause/Reprendre/Stop, les preuves graphiques et le cycle de vie complet de l'EXE restent à intégrer/tester. Il n'existe aucun mode de secours donnant directement SQLite à l'UI.
+
 ## Limites explicites
 
 - Aucun token n'est fourni au coordinateur ou stocké dans SQLite.
