@@ -20,6 +20,8 @@ from .inventory import Inventory, _api_json, _existing_disk
 from .managed_toolchain import resolve_managed_tool
 from .staged_install import PinnedZip, _no_linked_ancestors
 
+_OWNED_PROCESSES: list[subprocess.Popen] = []
+
 
 @dataclass(frozen=True)
 class OllamaLaunch:
@@ -150,6 +152,7 @@ def start_local_ollama(
                 return OllamaLaunch("PROCESS_EXITED", str(target))
             if _local_api_alive() and process.poll() is None:
                 succeeded = True
+                _OWNED_PROCESSES.append(process)
                 return OllamaLaunch("OWNED_API_HEALTHY", str(target), process)
             time.sleep(0.2)
         return OllamaLaunch("START_TIMEOUT", str(target))
