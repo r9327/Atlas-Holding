@@ -22,7 +22,7 @@ from .downloads import download_pinned, _target_lock, _validate_url
 
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 _SHA = re.compile(r"^[a-fA-F0-9]{64}$")
-_INVALID = re.compile(r'[<>:"|?*\\\\\\x00-\\x1f]')
+_INVALID_WINDOWS_CHARS = frozenset('<>:"|?*')
 _RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
              *(f"LPT{i}" for i in range(1, 10))}
 MAX_FILES = 4096
@@ -78,7 +78,9 @@ def _safe_relative(raw: str) -> str:
     parts = raw.rstrip("/").split("/")
     if not parts or any(
         part in ("", ".", "..") or len(part) > 120
-        or part.endswith((" ", ".")) or _INVALID.search(part)
+        or part.endswith((" ", "."))
+        or any(ord(char) < 32 or ord(char) == 92 or char in _INVALID_WINDOWS_CHARS
+               for char in part)
         or part.split(".")[0].upper() in _RESERVED
         for part in parts
     ):
