@@ -72,12 +72,16 @@ def build_windows_installer(
         shim = workspace / "atlas_windows_entry.py"
         shim.write_text(
             "from pathlib import Path\\n"
-            "import sys\\n"
+            "import hashlib, sys\\n"
             "from holding.windows_setup import main\\n"
             "base = Path(getattr(sys, '_MEIPASS', Path(__file__).parent))\\n"
+            "manifest = base / 'release-assets.json'\\n"
+            "expected = " + repr(expected_manifest_sha256.lower()) + "\\n"
+            "if len(sys.argv) > 1:\\n"
+            "    raise SystemExit(0 if sys.argv[1:] == ['--self-test'] "
+            "and hashlib.sha256(manifest.read_bytes()).hexdigest() == expected else 2)\\n"
             "raise SystemExit(main(["
-            "'--manifest', str(base / 'release-assets.json'), "
-            "'--manifest-sha256', " + repr(expected_manifest_sha256.lower()) +
+            "'--manifest', str(manifest), '--manifest-sha256', expected"
             "]))\\n",
             encoding="utf-8",
         )
@@ -90,7 +94,7 @@ def build_windows_installer(
             "--distpath", str(stage),
             "--workpath", str(workspace / "work"),
             "--specpath", str(workspace / "spec"),
-            "--add-data", str(pinned_manifest) + os.pathsep + ".",
+            "--add-data", str(pinned_manifest) + ":.",
             str(shim),
         ]
         subprocess.run(command, cwd=root, check=True, timeout=900,
