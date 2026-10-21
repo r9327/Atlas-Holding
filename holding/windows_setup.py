@@ -11,7 +11,6 @@ from dataclasses import asdict, dataclass
 import json
 import os
 from pathlib import Path
-import re
 from queue import Empty, Queue
 import threading
 from typing import Callable
@@ -25,6 +24,7 @@ from .provision_runtime import (ProvisionExecution, ProvisionStep,
 from .staged_install import PinnedZip, inspect_versioned_zip
 from .windows_package_manager import WingetPin
 from .managed_toolchain import resolve_managed_tool
+from .version_evidence import matches_component_version
 
 
 @dataclass(frozen=True)
@@ -150,15 +150,9 @@ def assess_post_install(
             blockers.append("Post-install health check failed: " + name)
             continue
         if name in mutating and spec is not None:
-            # Git for Windows appends a build marker such as
-            # 2.55.0.windows.1. Permit only this known vendor suffix; an
-            # unrelated 2.55.01 or 2.55.0-alpha must not satisfy the pin.
-            vendor_suffix = r"(?:[.]windows[.][0-9]+)?" if name == "git" else ""
-            version_pattern = (
-                r"(?<![0-9A-Za-z._-])" + re.escape(spec.version)
-                + vendor_suffix + r"(?![0-9A-Za-z._-])"
-            )
-            if not re.search(version_pattern, component.version):
+            # Same exact, vendor-aware pin used by the verified ZIP probe.
+            if not matches_component_version(
+                    name, spec.version, component.version):
                 steps.append(ProvisionStep(name, "POST_INSTALL_HEALTH", "VERSION_MISMATCH"))
                 blockers.append("Post-install version mismatch: " + name)
                 continue
