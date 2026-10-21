@@ -39,15 +39,26 @@ def _table(headers: tuple[str, ...], object_name: str) -> QTableWidget:
 
 
 def _replace_rows(table: QTableWidget, rows: tuple[tuple[str, ...], ...]) -> None:
+    """Update only changed cells; avoid a full Qt item rebuild per snapshot.
+
+    Repeated 2-second snapshots with 1,000 tasks used to throw away every
+    row/item, causing allocations and disrupting selection and scroll position.
+    The snapshot is bounded upstream; this function owns only the visible data.
+    """
     table.setSortingEnabled(False)
-    table.clearContents()
-    table.setRowCount(len(rows))
+    if table.rowCount() != len(rows):
+        table.setRowCount(len(rows))
     for row_index, row in enumerate(rows):
         for column_index, value in enumerate(row):
-            item = QTableWidgetItem(value)
-            item.setToolTip(value)
-            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            table.setItem(row_index, column_index, item)
+            item = table.item(row_index, column_index)
+            if item is None:
+                item = QTableWidgetItem(value)
+                item.setToolTip(value)
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                table.setItem(row_index, column_index, item)
+            elif item.text() != value:
+                item.setText(value)
+                item.setToolTip(value)
 
 
 class ControlCenterWindow(QMainWindow):
