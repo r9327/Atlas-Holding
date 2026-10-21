@@ -267,9 +267,11 @@ class HoldingService:
                 raise RuntimeError("Dashboard viewer already launched")
             # A user may close the window while the engine keeps running.
             # Retire the old listener and both keys before re-enrollment.
-            self._dashboard_session.close()
-            self._dashboard_session = None
-            self.disable_dashboard_ipc()
+            try:
+                self._dashboard_session.close()
+            finally:
+                self._dashboard_session = None
+                self.disable_dashboard_ipc()
         from .dashboard_session import start_dashboard_session
         session = start_dashboard_session(self, program, readonly=readonly)
         self._dashboard_session = session
