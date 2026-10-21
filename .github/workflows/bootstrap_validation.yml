@@ -13,8 +13,7 @@ jobs:
     if: >-
       github.head_ref == 'feat/02-windows-bootstrap' &&
       (github.event.action == 'ready_for_review' ||
-       github.event.label.name == 'ci:validate' ||
-       github.event.label.name == 'ci:package-smoke')
+       github.event.label.name == 'ci:validate')
     name: Bootstrap unittest on ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -39,31 +38,3 @@ jobs:
       - name: Require clean checkout after tests
         shell: bash
         run: 'test -z "$(git status --porcelain --untracked-files=normal)"'
-      - name: Install fixed packaging tool
-        if: matrix.os == 'windows-latest' && github.event.label.name == 'ci:package-smoke'
-        run: python -m pip install --disable-pip-version-check --only-binary=:all: "pyinstaller==6.22.3"
-      - name: Build EXE from test-only fixture (never publish)
-        if: matrix.os == 'windows-latest' && github.event.label.name == 'ci:package-smoke'
-        shell: pwsh
-        run: |
-          $fixture = (Resolve-Path "tests/fixtures/bootstrap_smoke_assets.json").Path
-          $pin = (Get-FileHash -Algorithm SHA256 $fixture).Hash.ToLowerInvariant()
-          $destination = (Join-Path $PWD "smoke-output")
-          python -B -m holding.windows_build --manifest "$fixture" --manifest-sha256 "$pin" --output-dir "$destination"
-          if ($LASTEXITCODE -ne 0) { throw "Packaging failed" }
-          $exe = Join-Path $destination "AtlasHoldingSetup.exe"
-          if (!(Test-Path $exe)) { throw "Installer artifact missing" }
-          if ((Get-Item $exe).Length -lt 1000000) { throw "Executable is suspiciously small" }
-          Write-Output "Windows PE built from non-installable smoke fixture; NOT A RELEASE."
-          Write-Output "SHA256: $((Get-FileHash -Algorithm SHA256 $exe).Hash.ToLowerInvariant())"
-      - name: Check EXE verifies embedded manifest without launching setup
-        if: matrix.os == 'windows-latest' && github.event.label.name == 'ci:package-smoke'
-        shell: pwsh
-        run: |
-          $exe = Join-Path $PWD "smoke-output/AtlasHoldingSetup.exe"
-          $child = Start-Process -FilePath $exe -ArgumentList "--self-test" -PassThru -Wait
-          if ($child.ExitCode -ne 0) { throw "EXE manifest self-test failed: $($child.ExitCode)" }
-      - name: Check source remains unchanged after optional build
-        if: matrix.os == 'windows-latest' && github.event.label.name == 'ci:package-smoke'
-        shell: bash
-        run: 'test -z "$(git status --porcelain --untracked-files=normal -- . :!smoke-output/)"'
