@@ -11,6 +11,7 @@ from typing import Callable
 from .inventory import Inventory, scan
 from .ollama_service import start_local_ollama
 from .ollama_storage import store_model_directory
+from .post_ollama_inventory import scan_ollama_with_pins
 from .provision_runtime import ProvisionExecution, ProvisionStep
 from .staged_install import PinnedZip
 from .windows_package_manager import WingetPin
@@ -56,4 +57,4 @@ def ensure_selected_model_volume(
         ), inventory
     return ProvisionExecution(
         execution.state, execution.steps + (step, stored), execution.blockers,
-    ), scan(install_root)
+    ), scan_ollama_with_pins(install_root, pins)
