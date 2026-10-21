@@ -239,6 +239,9 @@ class WindowsSetupTests(unittest.TestCase):
         ) as folders, patch(
                 "holding.windows_setup.enroll_pinned_engine", return_value=receipt
         ) as enroll, patch(
+                "holding.windows_setup.discover_local_models",
+                return_value=(("atlas-test:Q4", "e" * 64),),
+        ), patch(
                 "holding.windows_setup.enroll_local_model",
                 return_value=PinnedModel(
                     self.install_root / "agents" / "AtlasHoldingModel.json",
