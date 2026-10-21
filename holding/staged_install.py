@@ -192,6 +192,40 @@ def _inspect_version(target: Path, spec: PinnedZip) -> int:
         raise InstallError("Installed manifest cannot be verified") from exc
 
 
+
+@dataclass(frozen=True)
+class InstallInspection:
+    """Read-only assessment, never equivalent to an executable health check."""
+
+    status: str
+    directory: Path
+    file_count: int = 0
+
+
+def inspect_versioned_zip(spec: PinnedZip, *, install_root: Path) -> InstallInspection:
+    """Check a pinned local payload without downloading, creating or repairing.
+
+    The result may be stale by the time the install begins; install_versioned_zip
+    re-verifies under its destination lock. A verified payload is not a working
+    Ollama, Git or OpenCode binary until the native health probe passes.
+    """
+    spec.validate()
+    if not isinstance(install_root, Path) or not install_root.is_absolute():
+        raise InstallError("Absolute installation root required")
+    target = (
+        install_root / "components" / spec.component /
+        (spec.version + "-" + spec.sha256[:16].lower())
+    )
+    try:
+        _no_linked_ancestors(target)
+        if not target.exists():
+            return InstallInspection("NOT_INSTALLED", target)
+        files = _inspect_version(target, spec)
+    except (InstallError, OSError):
+        return InstallInspection("BLOCKED_INVALID", target)
+    return InstallInspection("VERIFIED_PAYLOAD", target, files)
+
+
 def install_versioned_zip(
     spec: PinnedZip, *, install_root: Path, cache_root: Path,
     authorized: bool, cancelled: Callable[[], bool] | None = None,
