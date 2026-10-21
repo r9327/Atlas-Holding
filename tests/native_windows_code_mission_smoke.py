@@ -218,6 +218,17 @@ def run(agent: Path, *, real_model: Path | None = None) -> None:
                         raise RuntimeError("Native agent/model health unavailable")
                     candidate_sha = worker(Mission(
                         "native-code-smoke", REPOSITORY))
+                    # The Windows Job Object covers only the lightweight
+                    # agent process tree, not Ollama's inference/VRAM.
+                    # Do not convert unavailable telemetry into a fake zero.
+                    adapter_peak = child.last_job_peak_bytes
+                    if adapter_peak is not None:
+                        if (type(adapter_peak) is not int
+                                or not 0 <= adapter_peak <= 256 * 1024**2):
+                            raise RuntimeError("Native agent breached its Job cap")
+                        print("Native agent Job peak bytes: " + str(adapter_peak))
+                    else:
+                        print("Native agent Job peak bytes: NOT_MEASURED")
                     path = trees / "native-code-smoke"
                     if not re.fullmatch(r"[0-9a-f]{40}", candidate_sha):
                         raise RuntimeError("No verifiable candidate commit")
