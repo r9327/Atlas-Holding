@@ -231,7 +231,8 @@ class HoldingService:
             self._recovery_seen = {}
         return quarantined
 
-    def enable_dashboard_ipc(self, *, secret: bytes, engine_id: str) -> int:
+    def enable_dashboard_ipc(self, *, secret: bytes, engine_id: str,
+                             control_secret: bytes | None = None) -> int:
         """Trusted host only: expose sanitised state, never engine commands.
 
         The installation supervisor owns and provisions the secret. It MUST
@@ -242,6 +243,7 @@ class HoldingService:
         from .dashboard_ipc import DashboardIpcServer
         server = DashboardIpcServer.for_database(
             self.settings.database, secret=secret, engine_id=engine_id,
+            control_secret=control_secret,
         )
         try:
             server.start()
