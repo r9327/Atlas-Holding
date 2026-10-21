@@ -121,3 +121,29 @@ Le workflow `.github/workflows/native_packaging_rehearsal.yml` assemble, sur un 
 Le label `ci:package-native` déclenche ce test séparé. Cette épreuve vérifie le **câblage d'emballage et l'extraction réelle**, mais **pas** l'installation complète sur un PC vierge, l'ACL native, le lancement des agents ou une roadmap autonome. La PR reste Draft et les gates de sortie demeurent obligatoires.
 
 **Extension de la répétition :** après avoir produit le setup avec les vrais EXE, le runner exécute la fonction de staging **réelle de la PR #2** sur un chemin Windows contenant des espaces et des accents, puis lance les deux vrais EXE depuis leur dossier de version. Il teste l'absence de copie avant autorisation, la réutilisation de fichiers conformes et le refus d'écraser un moteur corrompu. Ce contrôle teste le lancement *depuis le disque choisi*, sans faire croire à une inscription de service, un raccourci, une ACL validée ou un parcours IA autonome.
+
+## Assemblage Windows trois EXE sur SHAs distincts (non-release)
+
+Le workflow `.github/workflows/native_three_binary_assembly.yml` réunit
+sans merge les commits exacts et préalablement testés des PR #2 et #11 sur
+un même **runner Windows natif**. Il compile la paire Qt/moteur autonome,
+vérifie l'autotest de chacun, exige un vrai échange IPC signé **entre les
+deux exécutables compilés**, puis construit `AtlasHoldingSetup.exe` avec
+leurs octets et leurs SHA-256 embarqués. Le `--self-test` du setup doit
+revérifier les ressources extraites, sans installation de Python chez
+l'utilisateur.
+
+L'assemblage relève de nouveau les trois empreintes depuis les fichiers
+réellement copiés, et écrit `cross-pr-nonrelease-evidence.json` comprenant
+les SHA des deux dépôts sources, tailles/empreintes observées et
+`release_ready: false`. L'entrée de test du manifeste des dépendances est
+**explicitement non téléchargeable et fictive** : ce workflow ne simule
+pas une machine Windows vierge, une IA productive, un démarrage depuis
+l'installateur ou la sécurité ACL de l'app installée. Il ne publie rien
+dans GitHub Releases et nettoie les fichiers temporaires.
+
+Ce test est volontairement séparé de la certification finale : intégrer
+réellement les autres PR, écrire la configuration du service, réaliser
+l'installation Windows choisie, prouver les ACL et exécuter une roadmap
+complète restent des gates bloquants.
+
