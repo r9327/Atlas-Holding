@@ -48,6 +48,12 @@ class NativeOllamaSmokeTests(unittest.TestCase):
         )
         self.configure_mock = environment_patcher.start()
         self.addCleanup(environment_patcher.stop)
+        inspection_patcher = patch(
+            "holding.ollama_native_smoke.inspect_user_models",
+            return_value=UserModelEnvironment("USER_MODELS_MATCH"),
+        )
+        self.inspect_mock = inspection_patcher.start()
+        self.addCleanup(inspection_patcher.stop)
         undo_patcher = patch(
             "holding.ollama_native_smoke.undo_created_user_models",
             return_value="USER_MODELS_ROLLED_BACK",
@@ -103,6 +109,34 @@ class NativeOllamaSmokeTests(unittest.TestCase):
                                     RuntimeError, "USER_MODELS_CONFLICT"):
                                 verify_real_ollama()
         install.assert_not_called()
+
+    def test_missing_registered_user_model_path_blocks_false_success(self):
+        from holding.windows_ollama_environment import UserModelEnvironment
+        self.inspect_mock.return_value = UserModelEnvironment(
+            "USER_MODELS_CONFLICT",
+        )
+        baseline = sample(ollama=Component("NOT_FOUND"), models=())
+        with patch("holding.ollama_native_smoke._runner_gate"):
+            with patch("holding.ollama_native_smoke.scan",
+                       return_value=baseline):
+                with patch("holding.ollama_native_smoke._local_api_alive",
+                           return_value=False):
+                    with patch("holding.ollama_native_smoke.discover_winget_binary",
+                               side_effect=[
+                                   WingetBinary("NO_PINNED_BINARY_FOUND"),
+                                   WingetBinary(
+                                       "EXACT_BINARY_VERIFIED",
+                                       str(self.root / "ollama.exe"),
+                                       "ollama 0.32.8",
+                                   ),
+                               ]):
+                        with patch("holding.ollama_native_smoke.install_pinned_winget",
+                                   return_value=WingetResult(
+                                       "ollama", "INSTALLED_NOT_HEALTHCHECKED",
+                                   )):
+                            with self.assertRaisesRegex(
+                                    RuntimeError, "directory mismatch"):
+                                verify_real_ollama()
 
     def test_installation_failure_never_claims_api(self):
         no_server = sample(ollama=Component("NOT_FOUND"), models=())
