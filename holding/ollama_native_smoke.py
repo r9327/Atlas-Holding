@@ -21,7 +21,10 @@ from .ollama_service import _local_api_alive, start_local_ollama
 from .version_evidence import matches_component_version
 from .windows_package_manager import WingetPin, install_pinned_winget
 from .winget_binary import discover_winget_binary
-from .windows_ollama_environment import configure_user_models, undo_created_user_models
+from .windows_ollama_environment import (configure_user_models,
+                                         undo_created_user_models,
+                                         inspect_user_models)
+from .ollama_storage import store_model_directory, read_model_directory
 
 
 PIN = WingetPin("ollama", "Ollama.Ollama", "0.32.8")
@@ -75,6 +78,25 @@ def verify_real_ollama() -> dict[str, str]:
             discovered = discover_winget_binary(PIN)
             if discovered.state != "EXACT_BINARY_VERIFIED":
                 raise RuntimeError("Installed Ollama binary absent or wrong version")
+            # Prove our intended models directory has been saved in the
+            # actual Windows user registry and in Atlas' on-disk settings.
+            # This is persistent configuration evidence only; it cannot
+            # attest a daemon that Windows already auto-started.
+            registered = inspect_user_models(selected_models)
+            if registered.status != "USER_MODELS_MATCH":
+                raise RuntimeError("Windows user model directory mismatch: " +
+                                   registered.status)
+            selected_models.mkdir(parents=True, exist_ok=True)
+            persisted = store_model_directory(
+                root, selected_models, authorized=True,
+                source="consented_user_ollama_environment",
+            )
+            loaded = read_model_directory(root)
+            if (persisted.status != "STORED_PREFERENCE_NOT_RUNTIME_ATTESTED"
+                    or loaded.status != persisted.status
+                    or loaded.directory != selected_models
+                    or loaded.source != "consented_user_ollama_environment"):
+                raise RuntimeError("User model preference did not survive reread")
             # Inno Setup may auto-launch its own Ollama daemon as soon as
             # WinGet reports installation success. Never kill, reconfigure or
             # falsely claim its model disk. In either branch, its API must
@@ -132,6 +154,8 @@ def verify_real_ollama() -> dict[str, str]:
                         if owned else "NOT_ATTESTED"
                     ),
                     "model_downloads": "none",
+                    "hkcu_models": "EXACT_USER_PATH_VERIFIED",
+                    "atlas_preference": "PERSISTED_NOT_RUNTIME_ATTESTED",
                 }
             finally:
                 # Stop only the child created by this exact smoke test.
