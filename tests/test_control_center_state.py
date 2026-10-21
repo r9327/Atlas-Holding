@@ -110,6 +110,42 @@ class ControlCenterStateTests(unittest.TestCase):
         with self.assertRaisesRegex(ControlCenterStateError, "Non-DONE"):
             consume(payload)
 
+    def test_local_doctor_and_scoped_tests_cannot_be_final_done(self):
+        for kind, scope in (("DOCTOR", "FULL"), ("TEST", "SCOPED"),
+                            ("CI", "SCOPED")):
+            payload = snapshot()
+            payload["tasks"][0]["completion_evidence"].update({
+                "kind": kind, "scope": scope})
+            with self.subTest(kind=kind, scope=scope):
+                with self.assertRaises(ControlCenterStateError):
+                    consume(payload)
+
+    def test_sync_success_is_separate_from_full_quality_certification(self):
+        payload = snapshot()
+        task = payload["tasks"][0]
+        task["title"] = "push-1 · push"
+        task["completion_evidence"].update({
+            "kind": "SYNC", "scope": "SCOPED",
+            "source": "github_sync_attempts", "outcome": "SUCCESS"})
+        self.assertEqual(consume(payload).tasks[0].completion_evidence.kind, "SYNC")
+        for change in (
+                {"title": "code-1 · code"},
+                {"source": "self-declared"},
+                {"scope": "FULL"},
+                {"outcome": "PASS"}):
+            candidate = snapshot()
+            entry = candidate["tasks"][0]
+            entry["title"] = "push-1 · push"
+            entry["completion_evidence"].update({
+                "kind": "SYNC", "scope": "SCOPED",
+                "source": "github_sync_attempts", "outcome": "SUCCESS"})
+            if "title" in change:
+                entry["title"] = change["title"]
+            else:
+                entry["completion_evidence"].update(change)
+            with self.subTest(change=change), self.assertRaises(ControlCenterStateError):
+                consume(candidate)
+
     def test_evidence_must_match_candidate_sha(self):
         payload = snapshot()
         payload["tasks"][0]["completion_evidence"]["sha"] = "c" * 40
