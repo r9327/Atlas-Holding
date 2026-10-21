@@ -7,6 +7,8 @@ projection. No tokens, engine commands, or secrets appear in argv/logs.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -29,37 +31,66 @@ def run(viewer: Path, engine: Path) -> None:
         if not exe.is_absolute() or not exe.is_file() or exe.is_symlink():
             raise ValueError("Real absolute Windows executable is required")
     read_key = os.urandom(32)
-    with tempfile.TemporaryDirectory(prefix="atlas-runtime-ipc-") as tmp:
-        database = Path(tmp) / "holding.sqlite"
-        with StateStore(database):
-            pass
-        with DashboardIpcServer.for_database(
-                database, engine_id="native-runtime-proof", secret=read_key) as server:
-            argv = [str(viewer), "--probe", "--readonly",
-                    "--port", str(server.port),
-                    "--engine-id", "native-runtime-proof"]
-            common = {
-                "stdin": subprocess.PIPE,
-                "stdout": subprocess.DEVNULL,
-                "stderr": subprocess.DEVNULL,
-                "timeout": 50,
-                "shell": False,
-                "check": False,
-            }
-            result = subprocess.run(argv, input=read_key, **{
-                key: value for key, value in common.items()
-                if key != "stdin"
-            })
-            if result.returncode != 0:
-                raise RuntimeError(
-                    "Frozen GUI rejected real signed local IPC projection")
-            denied = subprocess.run(argv, input=os.urandom(32), **{
-                key: value for key, value in common.items()
-                if key != "stdin"
-            })
-            if denied.returncode != 2:
-                raise RuntimeError(
-                    "Frozen GUI failed to reject unauthenticated local IPC")
+    # The frozen ENGINE hosts the actual SQLite-backed IPC server. No Python
+    # interpreter, installed package or parent-owned server is used for this
+    # native wire test. The secret crosses only an anonymous stdin pipe.
+    worker = subprocess.Popen(
+        [str(engine), "--native-ipc-smoke"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL, shell=False, close_fds=True,
+    )
+    try:
+        if worker.stdin is None or worker.stdout is None:
+            raise RuntimeError("Frozen engine diagnostic pipes unavailable")
+        worker.stdin.write(read_key)
+        worker.stdin.close()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            ready = pool.submit(worker.stdout.readline).result(timeout=25)
+        try:
+            response = json.loads(ready)
+        except (ValueError, UnicodeDecodeError):
+            raise RuntimeError("Frozen engine did not provide native IPC address")
+        if (type(response) is not dict
+                or set(response) != {"schema", "port", "engine_id"}
+                or type(response["schema"]) is not int
+                or response["schema"] != 1
+                or response["engine_id"] != "frozen-engine-smoke-v1"
+                or type(response["port"]) is not int
+                or not 1 <= response["port"] <= 65535):
+            raise RuntimeError("Frozen engine IPC handshake was invalid")
+        argv = [str(viewer), "--probe", "--readonly",
+                "--port", str(response["port"]),
+                "--engine-id", response["engine_id"]]
+        # Probe the bad key FIRST, otherwise a genuine success is allowed to
+        # end the engine's ephemeral server before the negative test runs.
+        denied = subprocess.run(
+            argv, input=os.urandom(32),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=45, shell=False, check=False,
+        )
+        if denied.returncode != 2:
+            raise RuntimeError("Frozen engine accepted untrusted GUI credentials")
+        valid = subprocess.run(
+            argv, input=read_key,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=45, shell=False, check=False,
+        )
+        if valid.returncode != 0:
+            raise RuntimeError("Frozen GUI could not authenticate to frozen engine")
+        try:
+            proof = worker.wait(timeout=15)
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("Frozen engine did not record signed native request") from exc
+        if proof != 0:
+            raise RuntimeError("Frozen engine did not certify its local IPC probe")
+    finally:
+        if worker.poll() is None:
+            worker.kill()
+            worker.wait(timeout=5)
+        if worker.stdout is not None:
+            worker.stdout.close()
+    # Standalone durable engine SQLite offline check is independent of the
+    # authenticated IPC check and catches missing frozen runtime modules.
     engine_ok = subprocess.run(
         [str(engine), "--self-test"],
         stdin=subprocess.DEVNULL,
@@ -69,7 +100,7 @@ def run(viewer: Path, engine: Path) -> None:
     )
     if engine_ok.returncode != 0:
         raise RuntimeError("Frozen engine failed actual offline SQLite self-test")
-    print("NONRELEASE_AUTHENTICATED_GUI_ENGINE_RUNTIME_PASS")
+    print("NONRELEASE_FROZEN_ENGINE_TO_FROZEN_GUI_IPC_PASS")
 
 
 def main() -> None:
