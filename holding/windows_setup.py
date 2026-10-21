@@ -180,9 +180,16 @@ def assess_post_install(
             blockers.append("Post-install health check failed: " + name)
             continue
         if name in mutating and spec is not None:
-            # Same exact, vendor-aware pin used by the verified ZIP probe.
+            # A publisher ZIP asset tag may differ from the executable's
+            # --version output (MinGit 2.56.0.2 reports Git 2.56.0).
+            # Native ZIP evidence has its own explicitly signed version pin.
+            expected_native_version = (
+                spec.expected_version
+                if isinstance(spec, PinnedZip) and spec.expected_version
+                else spec.version
+            )
             if not matches_component_version(
-                    name, spec.version, component.version):
+                    name, expected_native_version, component.version):
                 steps.append(ProvisionStep(name, "POST_INSTALL_HEALTH", "VERSION_MISMATCH"))
                 blockers.append("Post-install version mismatch: " + name)
                 continue
