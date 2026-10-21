@@ -305,11 +305,69 @@ def _self_test() -> int:
     return 0
 
 
+def _native_ipc_smoke(input_stream=None, *, output_stream=None) -> int:
+    """Native frozen-engine proof; disposable DB, read-only key from stdin.
+
+    The test host supplies exactly one private capability over a pipe. Nothing
+    from this diagnostic entrypoint can start a mission, modify a repository,
+    touch an installed config, or create a durable authorization.
+    """
+    import os
+    import sys
+    import tempfile
+    import time
+    from .dashboard_ipc import DashboardIpcServer
+    from .state_store import StateStore
+
+    if os.name != 'nt':
+        return 2
+    incoming = sys.stdin.buffer if input_stream is None else input_stream
+    outgoing = sys.stdout if output_stream is None else output_stream
+    if incoming is None or outgoing is None or incoming.isatty():
+        return 2
+    try:
+        key = incoming.read(33)
+    except (OSError, ValueError, AttributeError):
+        return 2
+    if type(key) is not bytes or len(key) != 32:
+        return 2
+    with tempfile.TemporaryDirectory(prefix='atlas-frozen-engine-ipc-') as tmp:
+        database = Path(tmp) / 'actual-engine.sqlite'
+        with StateStore(database):
+            pass
+        with DashboardIpcServer.for_database(
+                database, engine_id='frozen-engine-smoke-v1',
+                secret=key) as server:
+            import json
+            outgoing.write(json.dumps({
+                'engine_id': 'frozen-engine-smoke-v1',
+                'port': server.port,
+                'schema': 1,
+            }, sort_keys=True) + '\n')
+            outgoing.flush()
+            deadline = time.monotonic() + 18
+            while time.monotonic() < deadline:
+                with server._server.nonce_lock:
+                    # Only valid signed request nonces are registered; a
+                    # forged request can never complete the native test.
+                    if server._server.nonces:
+                        return 0
+                time.sleep(0.035)
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog='atlas-holding-daemon')
     parser.add_argument('--config',type=Path)
     parser.add_argument('--self-test',action='store_true')
+    parser.add_argument('--native-ipc-smoke',action='store_true')
     args=parser.parse_args(argv)
+    if args.self_test and args.native_ipc_smoke:
+        return 2
+    if args.native_ipc_smoke:
+        if args.config is not None:
+            return 2
+        return _native_ipc_smoke()
     if args.self_test:
         if args.config is not None:
             return 2
