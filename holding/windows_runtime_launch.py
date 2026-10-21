@@ -124,6 +124,7 @@ def verify_installed_engine(spec: InstalledEngineSpec) -> tuple[str, str]:
         verify_runtime_payload(spec.runtime_directory, expected)
         from .windows_runtime_acl import validate_runtime_acl
         for path in (
+            spec.install_root,
             spec.runtime_directory.parent, spec.runtime_directory,
             spec.runtime_directory / "AtlasHoldingControlCenter.exe",
             spec.runtime_directory / "AtlasHoldingEngine.exe",
