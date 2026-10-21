@@ -30,6 +30,7 @@ from .ollama_storage import read_model_directory
 from .windows_autostart import configure_logon_resume
 from .model_volume import inspect_model_volume
 from .winget_binary import discover_winget_binary
+from .pinned_inventory import restore_pinned_inventory
 
 
 @dataclass(frozen=True)
@@ -73,7 +74,9 @@ def preflight_setup(
     if not install_root.is_absolute() or not cache_root.is_absolute():
         raise ValueError("Installation folders must be absolute")
     pins = read_pinned_manifest(manifest, expected_sha256=manifest_sha256)
-    snapshot = scan(install_root)
+    snapshot = restore_pinned_inventory(
+        scan(install_root), pins, install_root=install_root,
+    )
     plan = make_plan(snapshot, online=online)
     pin_map = {item.component: item for item in pins}
     dependency_actions = []
@@ -214,14 +217,18 @@ def execute_setup(
         return report, None
     # Fresh inventory is intentionally acquired by the privileged staging
     # boundary. No selected model or network-dependent service is fabricated.
-    snapshot = scan(install_root)
+    snapshot = restore_pinned_inventory(
+        scan(install_root), pins, install_root=install_root,
+    )
     result = stage_required_dependencies(
         snapshot, pins, online=online, authorized=True,
         install_root=install_root, cache_root=cache_root,
         cancelled=cancelled, progress=progress,
     )
     if result.state == "PAYLOADS_STAGED_NOT_VALIDATED":
-        observed = scan(install_root)
+        observed = restore_pinned_inventory(
+            scan(install_root), pins, install_root=install_root,
+        )
         if model_root is not None:
             result, observed = ensure_selected_model_volume(
                 result, observed, install_root=install_root,
