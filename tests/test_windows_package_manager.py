@@ -94,7 +94,7 @@ class WindowsPackageManagerTests(unittest.TestCase):
     def test_ollama_installer_inherits_only_approved_model_disk(self):
         from pathlib import Path
         from holding.model_volume import ModelVolumeInspection
-        models = Path("C:/Atlas Models")
+        models = Path(__file__).resolve().parent / "Atlas Models"
         pin = WingetPin("ollama", "Ollama.Ollama", "0.32.8")
         good = subprocess.CompletedProcess([], 0, "v1", "")
         with patch("holding.windows_package_manager.platform.system",
