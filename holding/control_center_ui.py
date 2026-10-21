@@ -6,7 +6,7 @@ does not expose engine mutation controls until that IPC exists.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Slot
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -114,8 +114,10 @@ class ControlCenterWindow(QMainWindow):
         self.log_search = QLineEdit()
         self.log_search.setObjectName("logSearchFilter")
         self.log_search.setPlaceholderText("Rechercher dans le journal…")
-        self.log_category.currentTextChanged.connect(lambda _value: self._filter_logs())
-        self.log_search.textChanged.connect(lambda _value: self._filter_logs())
+        # Bound Qt slots avoid Python closure cycles that can outlive widgets
+        # and crash during QApplication teardown.
+        self.log_category.currentTextChanged.connect(self._filter_logs)
+        self.log_search.textChanged.connect(self._filter_logs)
         filters = QHBoxLayout()
         filters.addWidget(self.log_category)
         filters.addWidget(self.log_search)
@@ -131,7 +133,8 @@ class ControlCenterWindow(QMainWindow):
         layout.addWidget(tabs)
         self.setCentralWidget(root)
 
-    def _filter_logs(self) -> None:
+    @Slot(str)
+    def _filter_logs(self, _unused: str = "") -> None:
         category = self.log_category.currentText()
         query = self.log_search.text().strip().casefold()
         for row in range(self.logs.rowCount()):
