@@ -15,6 +15,7 @@ import subprocess
 import sys
 
 from .staged_install import _no_linked_ancestors
+from .ollama_storage import read_model_directory
 
 
 REGISTRY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -163,3 +164,20 @@ def disable_logon_resume(install_root: Path) -> str:
         return "NOT_ENROLLED"
     except OSError:
         return "REGISTRY_REGISTRATION_FAILED"
+
+
+def configure_logon_resume(
+    install_root: Path, *, authorized: bool,
+) -> str:
+    """Enroll only after an owned Ollama service saved its storage preference."""
+    if type(authorized) is not bool or not authorized:
+        return "AUTH_REQUIRED"
+    saved = read_model_directory(install_root)
+    if saved.status != "STORED_PREFERENCE_NOT_RUNTIME_ATTESTED":
+        return "MODEL_VOLUME_" + saved.status
+    agent = install_frozen_agent(install_root, authorized=True)
+    if agent.status not in {"HOST_STAGED", "HOST_REUSED"}:
+        return agent.status
+    return enable_logon_resume(
+        install_root, agent_sha256=agent.sha256, authorized=True,
+    )
