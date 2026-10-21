@@ -202,6 +202,23 @@ time.sleep(30)
             ViewerProgram(self.binary, digest(self.binary),
                           link, digest(self.script)).verify()
 
+    def test_failed_enrollment_always_closes_ipc_even_if_child_cleanup_fails(self):
+        from unittest.mock import Mock, patch
+        with self.make_service() as service:
+            service.start()
+            child = Mock()
+            child.stdin = None
+            with patch("holding.dashboard_session.subprocess.Popen",
+                       return_value=child), patch(
+                           "holding.dashboard_session.DashboardSession.close",
+                           side_effect=OSError("child cannot terminate"),
+                       ):
+                with self.assertRaisesRegex(OSError, "cannot terminate"):
+                    service.launch_dashboard(self.program)
+            self.assertIsNone(service._dashboard_ipc)
+            self.assertIsNone(service._dashboard_session)
+            self.assertTrue(service._started)
+
     def test_daemon_start_required_and_failed_popen_releases_listener(self):
         from unittest.mock import patch
         with self.make_service() as service:
