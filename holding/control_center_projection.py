@@ -186,14 +186,18 @@ def project_dashboard_snapshot(
             "SELECT COUNT(*) FROM missions WHERE external_required=1 "
             "AND state!='DONE'").fetchone()[0]
         network = _network(control)
+        paused = control._setting("paused")
+        stop_requested = control._setting("stop_requested")
     except BaseException:
         database.execute("ROLLBACK")
         raise
     else:
         database.execute("COMMIT")
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "engine_id": engine_id,
+        "paused": paused,
+        "stop_requested": stop_requested,
         "sequence": sequence,
         "generated_at": now_epoch,
         "network": network,
