@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from holding.windows_runtime_payload import (
     RuntimePayloadError, install_pinned_runtime_pair, verify_runtime_payload,
@@ -36,18 +38,40 @@ class EmbeddedRuntimeTests(unittest.TestCase):
         adapter.write_bytes(b"trusted fixture adapter")
         pin = hashlib.sha256(adapter.read_bytes()).hexdigest()
         self.assertEqual(verify_pinned_adapter(adapter, pin), pin)
-        staged = install_pinned_adapter(
+        # Native DACL enforcement has a dedicated Windows-only test below.
+        # This contract test isolates the copy/reuse logic across platforms.
+        with patch("holding.windows_runtime_acl.validate_runtime_acl") if os.name == "nt" else patch(
+                "holding.windows_runtime_payload.verify_pinned_adapter",
+                wraps=verify_pinned_adapter,
+        ):
+            with patch("holding.windows_runtime_acl.secure_runtime_acl") if os.name == "nt" else patch(
+                    "holding.windows_runtime_payload.verify_pinned_adapter",
+                    wraps=verify_pinned_adapter,
+            ):
+                staged = install_pinned_adapter(
+                    adapter, self.install_root, pin, approved=True)
+                self.assertEqual(staged, "STAGED_PINNED_ADAPTER_HEALTH_PENDING")
+                target = self.install_root / "agents" / "AtlasHoldingAgent.exe"
+                self.assertEqual(target.read_bytes(), adapter.read_bytes())
+                reused = install_pinned_adapter(
+                    adapter, self.install_root, pin, approved=True)
+                self.assertEqual(reused, "REUSED_PINNED_ADAPTER_HEALTH_PENDING")
+                target.write_bytes(b"modified by another process")
+                with self.assertRaises(RuntimePayloadError):
+                    install_pinned_adapter(adapter, self.install_root, pin,
+                                           approved=True)
+                self.assertEqual(target.read_bytes(), b"modified by another process")
+
+    @unittest.skipUnless(os.name == "nt", "Requires native Windows ACLs")
+    def test_native_adapter_staging_requires_protected_root(self):
+        from holding.windows_runtime_acl import secure_runtime_acl
+        adapter = self.source / "AtlasHoldingAgent.exe"
+        adapter.write_bytes(b"trusted native adapter test")
+        pin = hashlib.sha256(adapter.read_bytes()).hexdigest()
+        secure_runtime_acl(self.install_root)
+        installed = install_pinned_adapter(
             adapter, self.install_root, pin, approved=True)
-        self.assertEqual(staged, "STAGED_PINNED_ADAPTER_HEALTH_PENDING")
-        target = self.install_root / "agents" / "AtlasHoldingAgent.exe"
-        self.assertEqual(target.read_bytes(), adapter.read_bytes())
-        reused = install_pinned_adapter(
-            adapter, self.install_root, pin, approved=True)
-        self.assertEqual(reused, "REUSED_PINNED_ADAPTER_HEALTH_PENDING")
-        target.write_bytes(b"modified by another process")
-        with self.assertRaises(RuntimePayloadError):
-            install_pinned_adapter(adapter, self.install_root, pin, approved=True)
-        self.assertEqual(target.read_bytes(), b"modified by another process")
+        self.assertEqual(installed, "STAGED_PINNED_ADAPTER_HEALTH_PENDING")
 
     def test_adapter_refuses_incomplete_pin_and_never_creates_folder(self):
         adapter = self.source / "AtlasHoldingAgent.exe"
