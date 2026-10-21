@@ -302,3 +302,25 @@ complet et restent des blocages de certification.
 Le workflow Windows de la PR #2 dispose d'un **test distinct du smoke historique** : `holding/native_embedded_setup_smoke.py` fait construire un véritable `AtlasHoldingSetup.exe` avec ses deux ressources `runtime/` épinglées. L'EXE produit doit démarrer en `--self-test`, extraire ses ressources PyInstaller et valider leurs SHA-256. Le test vérifie ensuite que le staging sur un dossier de disque choisi contenant espaces et accents ne fonctionne qu'après autorisation, réutilise une paire intègre et refuse d'écraser un moteur altéré.
 
 Les deux fichiers EXE de cette épreuve sont **des fixtures synthétiques, pas des applications fonctionnelles**. Ce smoke certifie uniquement le *câblage d'emballage/extraction/staging*, sans revendiquer le lancement du moteur depuis le setup. La PR #11 teste séparément le véritable moteur et le vrai Control Center compilés. Les deux chaînes devront être réunies sur un seul SHA intégré avant une release. Les ACL Windows et l'E2E de machine vierge restent bloquants.
+
+## ACL natives des binaires installés (21 octobre 2026)
+
+L'installation consentie de la paire `AtlasHoldingEngine.exe` /
+`AtlasHoldingControlCenter.exe` applique sous Windows un **DACL protégé
+sans héritage d'autorisations de tiers** au dossier `runtime`, au répertoire
+versionné, à la zone de copie temporaire et à chaque exécutable avant
+publication. Le vérificateur Win32 `holding/windows_runtime_acl.py` lit le
+SID de l'utilisateur du processus, l'owner réel et chaque ACE du descripteur
+système ; les seules identités autorisées sont cet utilisateur, SYSTEM et les
+Administrateurs, en accès complet. Une ACL héritée, ouverte à Everyone/Users,
+mal formée, non inspectable ou située sur un disque incapable de représenter
+ce descripteur bloque la préparation. Une paire déjà installée n'est jamais
+réutilisée sans recontrôle des ACL **et** SHA-256.
+
+Ces garde-fous sont exercés par `tests/test_windows_runtime_acl.py` sur
+l'OS Windows natif ; sous Linux ils refusent de feindre un verdict ACL
+Windows. Le résultat reste volontairement `SECURITY_PENDING` :
+l'intégrité globale du chemin d'installation et la séparation des droits
+du lanceur par rapport aux autres processus de même utilisateur doivent
+encore être certifiées, ainsi que le service réellement démarré.
+
