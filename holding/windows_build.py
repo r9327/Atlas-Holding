@@ -119,8 +119,15 @@ def build_windows_installer(
             "    raise SystemExit(0 if outcome.state == 'OWNED_SERVICE_RESUMED' else 2)",
             "if len(sys.argv) > 1:",
             "    raise SystemExit(2)",
-            "raise SystemExit(main(['--manifest', str(manifest),",
-            "                       '--manifest-sha256', expected]))",
+            "wizard_args = ['--manifest', str(manifest),",
+            "               '--manifest-sha256', expected]",
+            "if runtime_pins is not None:",
+            "    wizard_args.extend([",
+            "        '--runtime-root', str(base / 'runtime'),",
+            "        '--runtime-viewer-sha256', runtime_pins['AtlasHoldingControlCenter.exe'],",
+            "        '--runtime-engine-sha256', runtime_pins['AtlasHoldingEngine.exe'],",
+            "    ])",
+            "raise SystemExit(main(wizard_args))",
         ]
         shim.write_text("\n".join(shim_lines) + "\n", encoding="utf-8")
         # Do not invoke shells, arbitrary remote scripts or a runtime model.
