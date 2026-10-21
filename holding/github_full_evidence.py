@@ -84,8 +84,20 @@ class GitHubEvidenceClient:
         if len(raw) > _MAX_RESPONSE:
             raise GitHubEvidenceError("GitHub evidence exceeds 2 MiB")
         try:
-            data = json.loads(raw)
-        except (ValueError, UnicodeError) as exc:
+            def reject_nonfinite(_value: str) -> None:
+                raise ValueError("Non-finite JSON value")
+            def reject_duplicate(pairs):
+                result = {}
+                for key, value in pairs:
+                    if key in result:
+                        raise ValueError("Duplicate GitHub response key")
+                    result[key] = value
+                return result
+            data = json.loads(
+                raw, parse_constant=reject_nonfinite,
+                object_pairs_hook=reject_duplicate,
+            )
+        except (ValueError, UnicodeError, RecursionError) as exc:
             raise GitHubEvidenceError("GitHub response is not valid JSON") from exc
         if not isinstance(data, dict):
             raise GitHubEvidenceError("GitHub response must be a JSON object")
