@@ -54,16 +54,20 @@ def read_pinned_manifest(path: Path, *, expected_sha256: str) -> tuple[PinnedZip
     except (UnicodeError, ValueError) as exc:
         raise BootstrapManifestError("Manifest JSON rejected") from exc
     if (not isinstance(data, dict) or set(data) != {"version", "assets"}
-            or type(data["version"]) is not int or data["version"] != 1
+            or type(data["version"]) is not int or data["version"] not in (1, 2)
             or not isinstance(data["assets"], list)
             or not 1 <= len(data["assets"]) <= 32):
         raise BootstrapManifestError("Invalid manifest schema")
     names = set()
     assets = []
+    base_fields = {
+        "component", "version", "url", "sha256", "download_bytes",
+        "unpacked_bytes",
+    }
+    required_fields = (base_fields if data["version"] == 1
+                       else base_fields | {"executable", "expected_version"})
     for row in data["assets"]:
-        if not isinstance(row, dict) or set(row) != {
-                "component", "version", "url", "sha256", "download_bytes",
-                "unpacked_bytes"}:
+        if not isinstance(row, dict) or set(row) != required_fields:
             raise BootstrapManifestError("Invalid asset record")
         try:
             spec = PinnedZip(**row)
