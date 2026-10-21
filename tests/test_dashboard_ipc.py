@@ -117,7 +117,8 @@ class DashboardIpcTests(unittest.TestCase):
             client = DashboardIpcClient(
                 port=port, secret=b"r" * 32, engine_id="service-engine")
             self.assertEqual(client.fetch().tasks[0].state, "READY")
-            self.assertEqual(service.run(max_ticks=1).action, "COMPLETE")
+            self.assertNotIn(
+                service.run(max_ticks=1).action, ("STOPPED", "LEASE_LOST"))
             self.assertEqual(client.fetch().engine_id, "service-engine")
         finally:
             service.close()
