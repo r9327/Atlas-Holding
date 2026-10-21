@@ -34,6 +34,7 @@ from .winget_binary import discover_winget_binary
 from .pinned_inventory import restore_pinned_inventory
 from .windows_runtime_payload import (
     install_pinned_runtime_pair, verify_runtime_payload, RuntimePayloadError,
+    install_pinned_adapter, verify_pinned_adapter,
 )
 from .windows_engine_enrollment import (
     EngineEnrollmentError, EngineEnrollmentRequest,
@@ -219,10 +220,18 @@ def execute_setup(
     progress: Callable[[int, int], None] | None = None,
     runtime_root: Path | None = None,
     runtime_pins: dict[str, str] | None = None,
+    adapter_source: Path | None = None,
+    adapter_sha256: str | None = None,
 ) -> tuple[SetupSummary, ProvisionExecution | None]:
     """Recheck every premise before any authorized staging operation."""
     if (runtime_root is None) != (runtime_pins is None):
         raise ValueError("Complete pinned runtime pair required")
+    if (adapter_source is None) != (adapter_sha256 is None):
+        raise ValueError("Complete bundled agent source and hash required")
+    if adapter_source is not None and runtime_root is None:
+        raise ValueError("Bundled agent needs pinned engine and viewer")
+    if adapter_source is not None:
+        verify_pinned_adapter(adapter_source, adapter_sha256)
     if runtime_root is not None:
         # Refuse mutations before checking the two real binaries.
         verify_runtime_payload(runtime_root, runtime_pins)
@@ -305,14 +314,25 @@ def execute_setup(
                 runtime_root, install_root, runtime_pins, approved=True,
                 cancelled=cancelled,
             )
+            stage_steps = result.steps + (
+                ProvisionStep(
+                    "holding-runtime", "STAGE_VERIFIED_PAIR",
+                    installed.state,
+                ),
+            )
+            if adapter_source is not None:
+                agent_result = install_pinned_adapter(
+                    adapter_source, install_root, adapter_sha256,
+                    approved=True,
+                )
+                stage_steps += (
+                    ProvisionStep(
+                        "holding-adapter", "STAGE_VERIFIED_AGENT", agent_result,
+                    ),
+                )
             result = ProvisionExecution(
                 "RUNTIME_STAGED_ENGINE_CONFIG_PENDING",
-                result.steps + (
-                    ProvisionStep(
-                        "holding-runtime", "STAGE_VERIFIED_PAIR",
-                        installed.state,
-                    ),
-                ), result.blockers,
+                stage_steps, result.blockers,
             )
         except (RuntimePayloadError, OSError, ValueError):
             result = ProvisionExecution(
@@ -434,7 +454,16 @@ def main(argv: list[str] | None = None) -> int:
     # Only the trusted installer builder may pin a bundled, protocol-compatible
     # AtlasHoldingAgent.exe; OpenCode/Ollama must not be passed as the adapter.
     parser.add_argument("--adapter-sha256")
+    parser.add_argument("--adapter-root", type=Path)
     args = parser.parse_args(argv)
+    if (args.adapter_root is None) != (args.adapter_sha256 is None):
+        parser.error("Both bundled adapter path and its release pin are required")
+    if args.adapter_root is not None and args.runtime_root is None:
+        parser.error("Adapter cannot be installed without the engine bundle")
+    if args.adapter_root is not None:
+        verify_pinned_adapter(
+            args.adapter_root / "AtlasHoldingAgent.exe", args.adapter_sha256,
+        )
     runtime_fields = (
         args.runtime_root, args.runtime_viewer_sha256, args.runtime_engine_sha256,
     )
@@ -579,6 +608,11 @@ def main(argv: list[str] | None = None) -> int:
                         progress=lambda done, size: events.put(("progress", done, size)),
                         runtime_root=args.runtime_root,
                         runtime_pins=bundled_runtime_pins,
+                        adapter_source=(
+                            args.adapter_root / "AtlasHoldingAgent.exe"
+                            if args.adapter_root is not None else None
+                        ),
+                        adapter_sha256=args.adapter_sha256,
                     )
                 else:
                     summary, pins = preflight_setup(
@@ -624,7 +658,13 @@ def main(argv: list[str] | None = None) -> int:
                         executed is not None and
                         executed.state == "RUNTIME_STAGED_ENGINE_CONFIG_PENDING"
                     )
-                    if runtime_staged and args.adapter_sha256 is not None:
+                    if (runtime_staged and args.adapter_sha256 is not None and
+                            executed is not None and any(
+                                step.name == "holding-adapter"
+                                and step.result in {
+                                    "STAGED_PINNED_ADAPTER_HEALTH_PENDING",
+                                    "REUSED_PINNED_ADAPTER_HEALTH_PENDING",
+                                } for step in executed.steps)):
                         activate.state(["!disabled"])
                     check.state(["!disabled"])
                     cancel.state(["disabled"])
