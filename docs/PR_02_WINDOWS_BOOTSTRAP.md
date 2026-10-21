@@ -154,3 +154,24 @@ Si une autre instance Ollama répond déjà sur le port local, la Holding la ré
 **Limites explicites :** lancement après **connexion utilisateur**, pas un véritable service Windows avant connexion ; l'ordre d'exécution de plusieurs programmes au démarrage Windows n'est pas garanti, et l'Ollama officiel peut déjà être inscrit au démarrage. Si un serveur externe s'est lancé avant nous, il n'est pas arrêté et son emplacement de stockage reste non attesté. Aucune migration forcée, aucun remplacement d'un binaire agent différent. L'autostart après un redémarrage réel ainsi que la coexistence avec l'application Ollama officielle restent à certifier sur PC Windows propre avant sortie de Draft.
 
 Sources de contrat : Microsoft Learn « Run and RunOnce Registry Keys » (`https://learn.microsoft.com/en-us/windows/win32/setupapi/run-and-runonce-registry-keys`) et FAQ officielle Ollama (`https://github.com/ollama/ollama/blob/main/docs/faq.mdx`).
+
+## Candidats réels WinGet et vérification du disque modèles
+
+Le fichier `release-candidates/winget-windows-x64-v3.json` contient une **sélection explicite à examiner**, sans installation déclenchée par son seul ajout :
+- Git for Windows CLI `Git.Git`, version `2.55.0`.
+- Ollama CLI/runtime `Ollama.Ollama`, version `0.32.8`.
+- OpenCode **CLI** `SST.opencode`, version `1.18.29`. **Ce n'est pas** `SST.OpenCodeDesktop`.
+
+Les IDs, versions et modes d'installation sont vérifiés à partir des index WinGet et des manifests disponibles publiquement, mais **pas encore depuis un Windows propre réel**. Les versions de ce candidat ne doivent pas être interprétées comme automatiquement les dernières ou les plus sûres. Le catalogue de production exigera un examen de provenance, sécurité, disponibilité des versions, portée utilisateur et tests E2E. Les téléchargements restent vérifiés par le mécanisme natif de WinGet, qui possède ses propres manifestes et SHA ; ces entrées de type `winget` ne sont **pas** des ZIP dont Atlas déclare lui-même connaître le SHA.
+
+`holding/model_volume.py` exécute désormais un contrôle **strictement en lecture seule** du disque choisi pour les modèles : chemin absolu, pas de symlink/jonction, dossier valide, volume disponible et au moins 2 Gio libres. Un lecteur débranché/inaccessible ou insuffisant bloque la phase **avant** les mutations du runtime. Le Wizard affiche son espace libre à côté de celui de l'application. Cette borne de 2 Gio est un premier verrou et **ne vaut pas estimation du futur modèle** : sa taille réelle sera contrôlée depuis le catalogue/benchmark #4 avant téléchargement.
+
+`holding/winget_binary.py` recherche après installation les binaires d'utilisateur aux chemins connus de Git, Ollama et OpenCode CLI portable (`%LOCALAPPDATA%\\Microsoft\\WinGet\\Packages`). Il ne parcourt pas librement le disque : chemins autorisés, budget de fichiers, refus des liens, contrôle `--version` par processus borné, version complète strictement égale à la version WinGet du candidat. Le Wizard reconnait Git et OpenCode ainsi installés même si le `PATH` hérité n'a pas été rafraîchi ; `ollama_service.py` les utilise pour lancer Ollama. `holding/post_ollama_inventory.py` vérifie **à la fois** cet exécutable et l'API Ollama réelle lors du contrôle après installation et lors de la reprise Windows : le succès du paquet ou de l'API seule ne suffit pas.
+
+**Contrat final** : aucune déclaration `READY` tant qu'une vraie installation WinGet/ZIP avec versions officielles, authentification manifeste, modèle local reconnu, benchmark de qualité et test de redémarrage Windows sur machine propre n'a pas réussi.
+
+Sources de vérification documentaire :
+- `https://github.com/microsoft/winget-pkgs/blob/master/manifests/g/Git/Git/2.55.0/Git.Git.yaml`
+- `https://winget.tulio.org/pkg/Ollama.Ollama/`
+- `https://wingetly.io/apps/sst/opencode`
+- `https://learn.microsoft.com/windows/package-manager/winget/settings`
