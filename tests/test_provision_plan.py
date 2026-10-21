@@ -39,6 +39,17 @@ class ProvisionPlanTests(unittest.TestCase):
         self.assertEqual(actions["git"], "REUSE")
         self.assertEqual(actions["python_runtime"], "REUSE")
 
+    def test_stopped_ollama_api_needs_service_diagnosis_not_second_install(self):
+        snapshot = sample(ollama=Component(
+            "FOUND_BROKEN", path="C:/Program Files/Ollama/ollama.exe",
+            reason="Ollama installed but local API is not healthy",
+        ))
+        plan = make_plan(snapshot, online=True)
+        self.assertEqual(plan.state, "INSPECTION_REQUIRED")
+        action = next(row for row in plan.actions if row.name == "ollama")
+        self.assertEqual(action.action, "INSPECT")
+        self.assertIn("service", action.reason)
+
     def test_missing_component_reused_python_remains_untouched(self):
         plan = make_plan(sample(opencode=Component("NOT_FOUND")), online=True)
         self.assertEqual(plan.state, "PROVISIONING_REQUIRED")
