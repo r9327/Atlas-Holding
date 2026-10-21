@@ -4,6 +4,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -115,7 +116,7 @@ class WindowsBuildTests(unittest.TestCase):
             for name in names:
                 observed = [v for v in additions if name in v]
                 self.assertEqual(len(observed), 1)
-                asset = Path(observed[0].rsplit(":", 1)[0])
+                asset = Path(observed[0].rsplit(os.pathsep, 1)[0])
                 self.assertEqual(
                     hashlib.sha256(asset.read_bytes()).hexdigest(), pins[name])
             shim = Path(command[-1]).read_text(encoding="utf-8")
