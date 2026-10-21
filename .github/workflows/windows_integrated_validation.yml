@@ -87,7 +87,21 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "Frozen local agent failed native Ollama protocol v1"
           }
-          Write-Output "Agent SHA256: $((Get-FileHash -Algorithm SHA256 $agent).Hash.ToLowerInvariant())"
+          $manifest = Join-Path $PWD "tests/fixtures/bootstrap_smoke_assets.json"
+          $manifestSha = (Get-FileHash -Algorithm SHA256 "$manifest").Hash.ToLowerInvariant()
+          $viewerSha = (Get-FileHash -Algorithm SHA256 "$exe").Hash.ToLowerInvariant()
+          $engineSha = (Get-FileHash -Algorithm SHA256 "$engine").Hash.ToLowerInvariant()
+          $agentSha = (Get-FileHash -Algorithm SHA256 "$agent").Hash.ToLowerInvariant()
+          $setupOut = Join-Path $env:RUNNER_TEMP "atlas-integrated-setup-$env:GITHUB_RUN_ID"
+          python -B -m holding.windows_build --manifest "$manifest" --manifest-sha256 "$manifestSha" --output-dir "$setupOut" --runtime-directory "$output" --viewer-sha256 "$viewerSha" --engine-sha256 "$engineSha" --adapter-executable "$agent" --adapter-sha256 "$agentSha"
+          if ($LASTEXITCODE -ne 0) { throw "Frozen integrated setup build failed" }
+          $setup = Join-Path $setupOut "AtlasHoldingSetup.exe"
+          if (!(Test-Path $setup)) { throw "Frozen setup missing" }
+          $selfTest = Start-Process -FilePath "$setup" -ArgumentList '--self-test' -Wait -PassThru
+          if ($selfTest.ExitCode -ne 0) { throw "Frozen integrated setup self-test failed" }
+          Write-Output "NONRELEASE_REAL_THREE_BINARY_SETUP_SELF_TEST_PASS"
+          Write-Output "Setup SHA256: $((Get-FileHash -Algorithm SHA256 $setup).Hash.ToLowerInvariant())"
+          Write-Output "Agent SHA256: $agentSha"
           Write-Output "Viewer SHA256: $((Get-FileHash -Algorithm SHA256 $exe).Hash.ToLowerInvariant())"
           Write-Output "Engine SHA256: $((Get-FileHash -Algorithm SHA256 $engine).Hash.ToLowerInvariant())"
           Remove-Item -Force -Recurse "$output"
