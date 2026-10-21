@@ -65,8 +65,8 @@ class WindowsSetupTests(unittest.TestCase):
         self.assertEqual(summary.status, "CONSENT_REQUIRED")
         self.assertEqual(summary.unestimated_package_downloads, 1)
         self.assertEqual(summary.download_upper_bound_bytes, 0)
-        self.assertEqual(summary.dependency_actions[-2][0], "opencode")
-        self.assertEqual(summary.dependency_actions[-2][2], "WINGET_VERSION_PINNED")
+        self.assertEqual(summary.dependency_actions[-3][0], "opencode")
+        self.assertEqual(summary.dependency_actions[-3][2], "WINGET_VERSION_PINNED")
 
     def test_corrupt_pinned_payload_blocks_setup(self):
         summary, _ = self.call_preflight(observed="BLOCKED_INVALID")
