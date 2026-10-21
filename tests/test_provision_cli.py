@@ -66,11 +66,52 @@ class ProvisionCliTests(unittest.TestCase):
                        return_value=InstallResult("INSTALLED", self.install, 3)
                        ) as install:
                 code, report, _, _ = self.run_cli(approve=True)
-        self.assertEqual(code, 0)
-        self.assertEqual(report["state"], "PAYLOADS_STAGED_NOT_VALIDATED")
-        self.assertEqual(report["steps"][-1]["result"], "STAGED_INSTALLED")
+        self.assertEqual(code, 2)
+        self.assertEqual(report["state"], "POST_INSTALL_RECHECK_REQUIRED")
+        self.assertTrue(any(row["result"] == "STAGED_INSTALLED"
+                            for row in report["steps"]))
+        self.assertTrue(any("opencode" in item for item in report["blockers"]))
         self.assertIs(install.call_args.kwargs["authorized"], True)
         self.assertEqual(install.call_args.args[0].component, "opencode")
+
+    def test_postinstall_healthy_toolchain_still_waits_for_benchmarks(self):
+        healthy = sample()
+        output = io.StringIO()
+        with patch("holding.provision_cli.read_pinned_manifest",
+                   return_value=(self.pin,)):
+            with patch("holding.provision_cli.scan",
+                       side_effect=[healthy, healthy]) as scan:
+                with patch("holding.provision_runtime.install_versioned_zip") as install:
+                    with redirect_stdout(output):
+                        code = main(self.arguments + ["--approve-install"])
+        report = json.loads(output.getvalue())
+        self.assertEqual(code, 0)
+        self.assertEqual(report["state"],
+                         "TOOLCHAIN_HEALTHY_MODEL_BENCHMARK_PENDING")
+        self.assertEqual(scan.call_count, 2)
+        install.assert_not_called()
+
+    def test_cli_post_install_recheck_uses_actual_second_inventory(self):
+        first = sample(opencode=Component("NOT_FOUND"))
+        healthy = sample(opencode=Component("FOUND_VALID", version="opencode 1.0"))
+        output = io.StringIO()
+        with patch("holding.provision_cli.read_pinned_manifest",
+                   return_value=(self.pin,)):
+            with patch("holding.provision_cli.scan",
+                       side_effect=[first, healthy]) as scan:
+                with patch("holding.provision_runtime.inspect_versioned_zip",
+                           return_value=InstallInspection("NOT_INSTALLED",
+                                                          self.install)):
+                    with patch("holding.provision_runtime.install_versioned_zip",
+                               return_value=InstallResult(
+                                   "INSTALLED", self.install, 3)):
+                        with redirect_stdout(output):
+                            code = main(self.arguments + ["--approve-install"])
+        report = json.loads(output.getvalue())
+        self.assertEqual(code, 0)
+        self.assertEqual(report["state"],
+                         "TOOLCHAIN_HEALTHY_MODEL_BENCHMARK_PENDING")
+        self.assertEqual(scan.call_count, 2)
 
     def test_no_local_model_offline_blocks_without_staging(self):
         args = [value for value in self.arguments if value != "--online-confirmed"]
