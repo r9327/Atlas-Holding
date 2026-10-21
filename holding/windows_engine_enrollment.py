@@ -272,3 +272,52 @@ def enroll_pinned_engine(
     finally:
         if temp is not None:
             temp.unlink(missing_ok=True)
+
+
+def prepare_installed_engine_launch(
+    request: EngineEnrollmentRequest, enrollment: EngineEnrollment,
+):
+    """Bind an actual enrollment receipt to the existing native launch gate.
+
+    Does not start a process or grant model/GitHub authority. The caller
+    must independently obtain launch approval and call launch_installed_engine.
+    """
+    from .windows_runtime_launch import (
+        InstalledEngineSpec, RuntimeLaunchError, verify_installed_engine,
+    )
+    _require_native_windows()
+    if (not isinstance(enrollment, EngineEnrollment)
+            or enrollment.engine_healthy is not False
+            or enrollment.status not in {
+                "CONFIGURED_ENGINE_HEALTH_PENDING",
+                "REUSED_CONFIG_HEALTH_PENDING",
+            }):
+        raise EngineEnrollmentError("A pending native enrollment receipt is required")
+    _validate(request)
+    config = request.install_root / "config" / "engine.json"
+    if enrollment.config_path != config:
+        raise EngineEnrollmentError("Config receipt does not match selected installation")
+    _canonical(config, directory=False)
+    payload = _document(request)
+    digest = hashlib.sha256(payload).hexdigest()
+    if (enrollment.config_sha256 != digest or config.read_bytes() != payload):
+        raise EngineEnrollmentError("Config receipt is stale or changed")
+    _native_security((
+        request.runtime_directory.parent,
+        request.runtime_directory,
+        request.runtime_directory / "AtlasHoldingControlCenter.exe",
+        request.runtime_directory / "AtlasHoldingEngine.exe",
+        config.parent, config,
+        request.install_root / "data",
+    ))
+    spec = InstalledEngineSpec(
+        request.install_root, request.runtime_directory, config,
+        request.viewer_sha256, request.engine_sha256, digest,
+    )
+    # This last check uses the actual installed-launcher authority and its
+    # native ACL validation; it never silently starts an engine.
+    try:
+        verify_installed_engine(spec)
+    except (RuntimeLaunchError, ValueError, OSError) as exc:
+        raise EngineEnrollmentError("Native installed launch preflight failed") from exc
+    return spec
