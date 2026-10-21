@@ -26,6 +26,15 @@ class ProvisionPlan:
 
 
 def _action(name: str, component: Component) -> ProvisionAction:
+    # An already installed Ollama binary with an unreachable local API needs a
+    # service diagnosis, not a second installer. Never overwrite an existing
+    # application merely because its background service is stopped.
+    if (name == "ollama" and component.status == "FOUND_BROKEN"
+            and component.reason == "Ollama installed but local API is not healthy"):
+        return ProvisionAction(
+            name, "INSPECT",
+            "Ollama executable exists but its local service is unreachable",
+        )
     if component.status == "FOUND_VALID":
         return ProvisionAction(name, "REUSE", "Existing healthy dependency")
     if component.status == "NOT_FOUND":
