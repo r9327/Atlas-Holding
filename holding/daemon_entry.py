@@ -294,10 +294,28 @@ def _is_interactive_windows_session() -> bool:
         return False
 
 
+def _self_test() -> int:
+    """Exercise bundled engine + durable storage offline, without credentials."""
+    import tempfile
+    from .state_store import StateStore
+    with tempfile.TemporaryDirectory(prefix="atlas-engine-self-test-") as root:
+        with StateStore(Path(root) / "selftest.sqlite") as store:
+            if store.missions() or store.background_suspended():
+                return 2
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog='atlas-holding-daemon')
-    parser.add_argument('--config',required=True,type=Path)
+    parser.add_argument('--config',type=Path)
+    parser.add_argument('--self-test',action='store_true')
     args=parser.parse_args(argv)
+    if args.self_test:
+        if args.config is not None:
+            return 2
+        return _self_test()
+    if args.config is None:
+        parser.error('--config required outside self-test')
     config=Installation.load(args.config)
     with config.build_service() as service:
         with termination_signals(service):
