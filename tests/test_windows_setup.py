@@ -70,6 +70,57 @@ class WindowsSetupTests(unittest.TestCase):
         self.assertEqual(summary.dependency_actions[-3][0], "opencode")
         self.assertEqual(summary.dependency_actions[-3][2], "WINGET_VERSION_PINNED")
 
+    def test_model_drive_checked_before_install_and_bytes_reported(self):
+        from holding.model_volume import ModelVolumeInspection
+        destination = self.install_root / "separate-model-volume"
+        with patch("holding.windows_setup.inspect_model_volume",
+                   return_value=ModelVolumeInspection(
+                       "VOLUME_AVAILABLE", 15 * 1024**3, str(self.install_root),
+                   )) as inspect:
+            with patch("holding.windows_setup.read_pinned_manifest",
+                       return_value=(self.pin,)):
+                with patch("holding.windows_setup.scan",
+                           return_value=self.snapshot):
+                    with patch("holding.windows_setup.inspect_versioned_zip",
+                               return_value=InstallInspection(
+                                   "NOT_INSTALLED", self.install_root,
+                               )):
+                        summary, _ = preflight_setup(
+                            manifest=self.manifest, manifest_sha256="b" * 64,
+                            install_root=self.install_root,
+                            cache_root=self.cache_root, online=True,
+                            model_root=destination,
+                        )
+        self.assertEqual(summary.model_volume_status, "VOLUME_AVAILABLE")
+        self.assertEqual(summary.model_volume_free_bytes, 15 * 1024**3)
+        inspect.assert_called_once_with(destination)
+        self.assertFalse(destination.exists())
+
+    def test_unavailable_model_drive_blocks_before_staging(self):
+        from holding.model_volume import ModelVolumeInspection
+        with patch("holding.windows_setup.inspect_model_volume",
+                   return_value=ModelVolumeInspection("VOLUME_UNAVAILABLE")):
+            with patch("holding.windows_setup.read_pinned_manifest",
+                       return_value=(self.pin,)):
+                with patch("holding.windows_setup.scan",
+                           return_value=self.snapshot):
+                    with patch("holding.windows_setup.inspect_versioned_zip",
+                               return_value=InstallInspection(
+                                   "NOT_INSTALLED", self.install_root,
+                               )):
+                        with patch("holding.windows_setup.stage_required_dependencies") as staging:
+                            summary, executed = execute_setup(
+                                manifest=self.manifest, manifest_sha256="b" * 64,
+                                install_root=self.install_root,
+                                cache_root=self.cache_root,
+                                online=True, approved=True,
+                                model_root=self.install_root / "models",
+                            )
+        self.assertEqual(summary.status, "BLOCKED")
+        self.assertIsNone(executed)
+        self.assertIn("VOLUME_UNAVAILABLE", " ".join(summary.blockers))
+        staging.assert_not_called()
+
     def test_corrupt_pinned_payload_blocks_setup(self):
         summary, _ = self.call_preflight(observed="BLOCKED_INVALID")
         self.assertEqual(summary.status, "BLOCKED")
