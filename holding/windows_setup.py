@@ -29,6 +29,7 @@ from .ollama_setup import ensure_selected_model_volume
 from .ollama_storage import read_model_directory
 from .windows_autostart import configure_logon_resume
 from .model_volume import inspect_model_volume
+from .winget_binary import discover_winget_binary
 
 
 @dataclass(frozen=True)
@@ -159,6 +160,18 @@ def assess_post_install(
                                            "VERIFIED_EXECUTABLE"))
             elif component.status != "FOUND_VALID":
                 steps.append(ProvisionStep(name, "MANAGED_BINDING", managed.state))
+        if (name in {"git", "opencode"} and name in mutating
+                and isinstance(spec, WingetPin)
+                and component.status != "FOUND_VALID"):
+            winget_binary = discover_winget_binary(spec)
+            steps.append(ProvisionStep(name, "WINGET_BINDING",
+                                       winget_binary.state))
+            if winget_binary.state == "EXACT_BINARY_VERIFIED":
+                component = Component(
+                    "FOUND_VALID", path=winget_binary.executable,
+                    version=winget_binary.version,
+                    reason="Native user-scope WinGet executable probed",
+                )
         if component.status != "FOUND_VALID":
             steps.append(ProvisionStep(name, "POST_INSTALL_HEALTH", component.status))
             blockers.append("Post-install health check failed: " + name)
