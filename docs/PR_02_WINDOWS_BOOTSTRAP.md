@@ -420,3 +420,17 @@ un consentement distinct et retourne encore `ENGINE_SPAWNED_HEALTH_PENDING`.
 Les scénarios d'acceptation sont ajoutés à `test_windows_engine_enrollment.py`.
 L'exposition dans le wizard, la configuration automatique d'un agent réellement
 fonctionnel, l'observation de santé du moteur et l'E2E Windows restent à réaliser.
+
+### Protéger aussi le dossier d'installation parent
+
+Le contrôleur refuse désormais l'inscription et le lancement si le **dossier
+d'installation sélectionné lui-même** ne passe pas le contrôle ACL Windows.
+Sécuriser seulement `runtime/` et `config/` ne suffisait pas si un autre compte
+pouvait renommer leurs parents. Le premier passage exige que le provisioner
+protège explicitement le dossier racine, sans corriger en silence les ACL
+d'un dossier utilisateur existant. Les tests natifs sécurisent la racine et
+recontrôlent 7 cibles ACL à chaque préflight de lancement.
+
+`launch_enrolled_engine` impose un consentement supplémentaire, revalide le reçu
+v3 et les EXE puis appelle le vrai lanceur. Le résultat ne revendique que
+`ENGINE_SPAWNED_HEALTH_PENDING` : ni un agent sain ni une release certifiée.
