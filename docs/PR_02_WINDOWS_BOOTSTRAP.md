@@ -312,7 +312,10 @@ versionné, à la zone de copie temporaire et à chaque exécutable avant
 publication. Le vérificateur Win32 `holding/windows_runtime_acl.py` lit le
 SID de l'utilisateur du processus, l'owner réel et chaque ACE du descripteur
 système ; les seules identités autorisées sont cet utilisateur, SYSTEM et les
-Administrateurs, en accès complet. Une ACL héritée, ouverte à Everyone/Users,
+Administrateurs, en accès complet. Lorsque le propriétaire Windows est le
+groupe Administrateurs, cette situation n'est acceptée que si le jeton du
+processus démontre l'appartenance administrateur active via
+`CheckTokenMembership` (pas seulement une appartenance UAC désactivée). Une ACL héritée, ouverte à Everyone/Users,
 mal formée, non inspectable ou située sur un disque incapable de représenter
 ce descripteur bloque la préparation. Une paire déjà installée n'est jamais
 réutilisée sans recontrôle des ACL **et** SHA-256.
