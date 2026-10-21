@@ -168,6 +168,15 @@ def launch_installed_engine(
     if not _interactive_user_session():
         raise RuntimeLaunchError("Engine cannot launch outside interactive Windows session")
     executable, config = verify_installed_engine(spec)
+    # An installed GUI-capable engine must start only from a real signed-in
+    # user desktop, never a Windows service Session 0 or invisible station.
+    from .windows_user_session import (
+        InteractiveSessionError, require_interactive_windows_session,
+    )
+    try:
+        require_interactive_windows_session()
+    except InteractiveSessionError as exc:
+        raise RuntimeLaunchError("Trusted interactive Windows session unavailable") from exc
     # Never use shell, inherited stdin, arbitrary environment tokens, or the
     # caller's cwd. Configured roadmap content cannot supply CLI parameters.
     safe = {
