@@ -310,6 +310,10 @@ def execute_setup(
     if runtime_root is not None and result.state == (
             "TOOLCHAIN_HEALTHY_MODEL_BENCHMARK_PENDING"):
         try:
+            # Root ACL consent is part of the explicit setup authorization
+            # only for a bundled, release-pinned adapter.
+            if adapter_source is not None:
+                protect_approved_install_root(install_root, approved=True)
             installed = install_pinned_runtime_pair(
                 runtime_root, install_root, runtime_pins, approved=True,
                 cancelled=cancelled,
@@ -801,8 +805,11 @@ def main(argv: list[str] | None = None) -> int:
             "Autoriser l'installation des paquets vérifiés ? Si Ollama "
             "doit être installé, cette autorisation permet aussi de créer "
             "la variable utilisateur OLLAMA_MODELS pour le disque choisi, "
-            "sans écraser une valeur existante différente. Aucun modèle "
-            "IA ne sera déclaré prêt sans tests réels.",
+            "sans écraser une valeur existante différente. Avec un adaptateur "
+            "IA embarqué, les droits du dossier d'installation choisi pourront "
+            "être restreints à votre compte, SYSTEM et Administrateurs. "
+            "N'utilisez pas un dossier contenant des fichiers partagés. "
+            "Aucun modèle IA ne sera déclaré prêt sans tests réels.",
         ):
             return
         start(True)
