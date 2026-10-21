@@ -13,7 +13,7 @@ from unittest.mock import patch
 from holding.windows_engine_enrollment import (
     EngineEnrollmentError, EngineEnrollmentRequest,
     enroll_pinned_engine, prepare_protected_engine_roots,
-    _require_native_windows,
+    prepare_installed_engine_launch, _require_native_windows,
 )
 
 
@@ -128,6 +128,42 @@ class EngineEnrollmentTests(unittest.TestCase):
             )
             self.assertEqual(rights.call_count, 6)
         self.assertFalse(enrolled.engine_healthy)
+
+    def test_enrollment_receipt_binds_to_actual_native_launch_preflight(self):
+        from holding.windows_runtime_launch import verify_installed_engine
+        self.create_roots()
+        enrolled = self.enroll()
+        with self.fake_windows(), patch(
+                "holding.windows_engine_enrollment._native_security"
+        ), patch(
+                "holding.windows_runtime_launch.sys.platform", "win32"
+        ), patch("holding.windows_runtime_acl.validate_runtime_acl"):
+            launch_spec = prepare_installed_engine_launch(self.request, enrolled)
+            self.assertEqual(
+                verify_installed_engine(launch_spec),
+                (str(self.engine), str(enrolled.config_path)),
+            )
+        # Enrollment and verified preflight still do not start a worker.
+        self.assertFalse(enrolled.engine_healthy)
+
+    def test_replaced_receipt_and_changed_agent_block_native_handoff(self):
+        self.create_roots()
+        receipt = self.enroll()
+        with self.fake_windows(), patch(
+                "holding.windows_engine_enrollment._native_security"
+        ), patch(
+                "holding.windows_runtime_launch.sys.platform", "win32"
+        ), patch("holding.windows_runtime_acl.validate_runtime_acl"):
+            with self.assertRaisesRegex(EngineEnrollmentError, "receipt"):
+                prepare_installed_engine_launch(
+                    self.request, replace(receipt, config_sha256="0" * 64))
+            with self.assertRaisesRegex(EngineEnrollmentError, "receipt"):
+                prepare_installed_engine_launch(
+                    self.request,
+                    replace(receipt, config_path=self.root / "data" / "fake.json"))
+            self.agent.write_bytes(b"new unauthorized bytes")
+            with self.assertRaisesRegex(EngineEnrollmentError, "agent executable changed"):
+                prepare_installed_engine_launch(self.request, receipt)
 
     def test_without_setup_approval_neither_folder_nor_config_is_created(self):
         with self.assertRaisesRegex(EngineEnrollmentError, "approval"):
