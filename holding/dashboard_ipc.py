@@ -72,6 +72,7 @@ class _DashboardTCP(socketserver.ThreadingMixIn, socketserver.TCPServer):
         self.nonces: OrderedDict[bytes, None] = OrderedDict()
         self.control_nonces: OrderedDict[bytes, int] = OrderedDict()
         self.nonce_lock = threading.Lock()
+        self.valid_read_replied = threading.Event()
         super().__init__(("127.0.0.1", 0), _DashboardHandler)
 
     def process_request(self, request, client_address):
@@ -123,6 +124,9 @@ class _DashboardHandler(socketserver.BaseRequestHandler):
                 hashlib.sha256,
             ).digest()
             sock.sendall(_MAGIC + length + raw + mac)
+            # Mark only a completed authenticated response, never just a
+            # registered nonce or a failed supplier; used by native E2E proof.
+            self.server.valid_read_replied.set()
         except (DashboardIpcError, OSError, TimeoutError):
             # Never leak filesystem locations, DB errors or credentials.
             return
