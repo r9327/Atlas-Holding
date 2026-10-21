@@ -74,9 +74,11 @@ def main(argv: list[str] | None = None, *, input_stream: BinaryIO | None = None)
     parser.add_argument("--engine-id")
     parser.add_argument("--readonly", action="store_true")
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--probe", action="store_true")
     args = parser.parse_args(argv)
     if args.self_test:
-        if args.port is not None or args.engine_id is not None or args.readonly:
+        if (args.port is not None or args.engine_id is not None
+                or args.readonly or args.probe):
             return 2
         return _self_test()
     if args.port is None or args.engine_id is None:
@@ -96,6 +98,14 @@ def main(argv: list[str] | None = None, *, input_stream: BinaryIO | None = None)
     except (ViewerEnrollmentError, DashboardIpcError):
         print("Control Center: trusted enrollment unavailable", file=sys.stderr)
         return 2
+    if args.probe:
+        # Test the actual authenticated frozen protocol, not an unauthenticated
+        # port-open check. A probe cannot change engine state.
+        try:
+            reader.fetch()
+        except DashboardIpcError:
+            return 2
+        return 0
     return _run_gui(reader, controller)
 
 
