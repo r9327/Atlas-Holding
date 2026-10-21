@@ -157,6 +157,23 @@ class WindowsSetupTests(unittest.TestCase):
         self.assertFalse(outcome.blockers)
         self.assertEqual(outcome.steps[-2].result, "FOUND_VALID")
 
+    def test_git_for_windows_release_suffix_matches_exact_pin_only(self):
+        from holding.windows_package_manager import WingetPin
+        pin = WingetPin("git", "Git.Git", "2.55.0")
+        steps = (ProvisionStep("git", "INSTALL", "INSTALLED_NOT_HEALTHCHECKED"),)
+        result = ProvisionExecution("PAYLOADS_STAGED_NOT_VALIDATED", steps, ())
+        expected = sample(git=Component(
+            "FOUND_VALID", version="git version 2.55.0.windows.1",
+        ))
+        valid = assess_post_install(result, expected, (pin,))
+        self.assertEqual(valid.state, "TOOLCHAIN_HEALTHY_MODEL_BENCHMARK_PENDING")
+        for label in ("git version 2.55.01.windows.1",
+                      "git version 2.55.0-alpha", "git version 2.55.0.1"):
+            with self.subTest(version=label):
+                wrong = sample(git=Component("FOUND_VALID", version=label))
+                invalid = assess_post_install(result, wrong, (pin,))
+                self.assertEqual(invalid.state, "POST_INSTALL_RECHECK_REQUIRED")
+
     def test_healthy_reused_tool_need_not_match_new_manifest_release_version(self):
         result = ProvisionExecution(
             "PAYLOADS_STAGED_NOT_VALIDATED",
