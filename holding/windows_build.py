@@ -16,7 +16,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from typing import Mapping
 
+from .windows_runtime_payload import verify_runtime_payload
 from .bootstrap_assets_cli import read_pinned_manifest
 
 _HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
@@ -41,6 +43,8 @@ def _sha256(path: Path) -> str:
 def build_windows_installer(
     *, manifest: Path, expected_manifest_sha256: str, output_dir: Path,
     project_root: Path | None = None,
+    runtime_directory: Path | None = None,
+    runtime_pins: Mapping[str, str] | None = None,
 ) -> WindowsBuildResult:
     """Bundle the pinned setup wizard; native E2E and signing are separate gates."""
     if sys.platform != "win32":
@@ -53,6 +57,10 @@ def build_windows_installer(
     if manifest.is_symlink():
         raise ValueError("Refusing symlinked release manifest")
     read_pinned_manifest(manifest, expected_sha256=expected_manifest_sha256)
+    if (runtime_directory is None) != (runtime_pins is None):
+        raise ValueError("Runtime directory and SHA-256 pins must be supplied together")
+    if runtime_directory is not None:
+        verify_runtime_payload(runtime_directory, runtime_pins)
     root = project_root or Path(__file__).resolve().parent.parent
     if not root.is_absolute() or not (root / "holding" / "windows_setup.py").is_file():
         raise ValueError("Expected checked-out project root")
@@ -69,16 +77,32 @@ def build_windows_installer(
         shutil.copyfile(manifest, pinned_manifest)
         if _sha256(pinned_manifest) != expected_manifest_sha256.lower():
             raise ValueError("Release manifest changed while preparing Windows build")
+        bundled_runtime = workspace / "runtime"
+        if runtime_directory is not None:
+            bundled_runtime.mkdir()
+            # Source validation is repeated after the copy, before PyInstaller.
+            for name in sorted(runtime_pins):
+                original = runtime_directory / name
+                copied = bundled_runtime / name
+                with original.open("rb") as reader, copied.open("xb") as writer:
+                    shutil.copyfileobj(reader, writer, 1024 * 1024)
+            verify_runtime_payload(bundled_runtime, runtime_pins)
+            verify_runtime_payload(runtime_directory, runtime_pins)
+
         shim = workspace / "atlas_windows_entry.py"
         shim_lines = [
             "from pathlib import Path",
             "import hashlib, sys",
             "from holding.bootstrap_assets_cli import read_pinned_manifest",
             "from holding.windows_setup import main",
+            "from holding.windows_runtime_payload import verify_runtime_payload",
             "from holding.ollama_resume import resume_ollama_at_logon",
             "base = Path(getattr(sys, '_MEIPASS', Path(__file__).parent))",
             "manifest = base / 'release-assets.json'",
             f"expected = {expected_manifest_sha256.lower()!r}",
+            f"runtime_pins = {dict(runtime_pins) if runtime_pins is not None else None!r}",
+            "if runtime_pins is not None:",
+            "    verify_runtime_payload(base / 'runtime', runtime_pins)",
             "if sys.argv[1:] == ['--self-test']:",
             "    read_pinned_manifest(manifest, expected_sha256=expected)",
             "    raise SystemExit(0)",
@@ -111,6 +135,13 @@ def build_windows_installer(
             "--add-data", str(pinned_manifest) + ":.",
             str(shim),
         ]
+        if runtime_directory is not None:
+            # The script argument stays last, per PyInstaller CLI convention.
+            for name in sorted(runtime_pins):
+                command[-1:-1] = [
+                    "--add-data",
+                    str(bundled_runtime / name) + os.pathsep + "runtime",
+                ]
         subprocess.run(command, cwd=root, check=True, timeout=900,
                        shell=False)
         built = stage / "AtlasHoldingSetup.exe"
