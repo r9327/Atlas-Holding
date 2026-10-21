@@ -96,6 +96,30 @@ class ViewerEntryTests(unittest.TestCase):
         from holding.control_center_entry import _self_test
         self.assertEqual(_self_test(), 0)
 
+    def test_probe_requires_a_real_authenticated_snapshot_not_a_port(self):
+        from pathlib import Path
+        import tempfile
+        from holding.dashboard_ipc import DashboardIpcServer
+        from holding.state_store import StateStore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "state.sqlite"
+            with StateStore(db):
+                pass
+            server = DashboardIpcServer.for_database(
+                db, engine_id="probe-host", secret=READ)
+            with server:
+                args = ["--probe", "--readonly", "--port", str(server.port),
+                        "--engine-id", "probe-host"]
+                with patch("holding.control_center_entry._run_gui") as ui:
+                    self.assertEqual(main(args, input_stream=io.BytesIO(READ)), 0)
+                    ui.assert_not_called()
+                self.assertEqual(main(args, input_stream=io.BytesIO(WRITE)), 2)
+                self.assertEqual(main(
+                    ["--probe", "--port", str(server.port),
+                     "--engine-id", "wrong-engine"],
+                    input_stream=io.BytesIO(READ + WRITE)), 2)
+
     def test_invalid_port_does_not_start_ui(self):
         with patch("holding.control_center_entry._run_gui") as ui:
             with redirect_stderr(io.StringIO()):
