@@ -15,6 +15,7 @@ from .ollama_service import start_local_ollama
 from .ollama_storage import read_model_directory
 from .staged_install import PinnedZip
 from .post_ollama_inventory import scan_ollama_with_pins
+from .windows_ollama_environment import inspect_user_models
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,16 @@ def resume_ollama_at_logon(
     if record.status != "STORED_PREFERENCE_NOT_RUNTIME_ATTESTED":
         return ResumeResult(record.status)
     assert record.directory is not None
+    if record.source == "consented_user_ollama_environment":
+        registered = inspect_user_models(record.directory)
+        if registered.status != "USER_MODELS_MATCH":
+            # A formerly consented user setting may have been removed,
+            # changed externally or become unavailable on this login.
+            # Never start our own daemon with now-stale storage consent.
+            return ResumeResult(
+                "USER_MODEL_ENVIRONMENT_" + registered.status,
+                str(record.directory),
+            )
     inventory = scan(install_root)
     if inventory.os_name != "Windows":
         return ResumeResult("WINDOWS_REQUIRED", str(record.directory))
