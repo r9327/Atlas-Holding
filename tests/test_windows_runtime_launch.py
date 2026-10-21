@@ -85,8 +85,10 @@ class WindowsInstalledEngineLaunchTests(unittest.TestCase):
         with patch("holding.windows_runtime_launch.subprocess.Popen") as spawn:
             with self.assertRaisesRegex(RuntimeLaunchError, "not authorized"):
                 launch_installed_engine(self.spec, approved=False)
-            with patch("holding.windows_runtime_launch.sys.platform", "linux"):
-                with self.assertRaisesRegex(RuntimeLaunchError, "Windows"):
+            with patch("holding.windows_runtime_launch.sys.platform", "linux"), \
+                 patch("holding.windows_runtime_launch._interactive_user_session",
+                       return_value=True):
+                with self.assertRaisesRegex(RuntimeLaunchError, "Native Windows"):
                     launch_installed_engine(self.spec, approved=True)
             spawn.assert_not_called()
 
