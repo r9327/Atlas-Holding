@@ -9,8 +9,11 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
+    QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QTableWidget,
     QTableWidgetItem,
@@ -101,13 +104,47 @@ class ControlCenterWindow(QMainWindow):
         tabs.addTab(self.tasks, "Roadmap")
         tabs.addTab(self.agents, "Agents")
         tabs.addTab(self.plugins, "Plugins")
-        tabs.addTab(self.logs, "Journal")
+
+        # The journal is bounded to one page upstream; filter locally without
+        # touching the service, changing Qt models or requesting extra logs.
+        self.log_category = QComboBox()
+        self.log_category.setObjectName("logCategoryFilter")
+        self.log_category.addItems(
+            ["Toutes", "TASK", "CODE", "QA", "CI", "PLUGIN", "SYSTEM"])
+        self.log_search = QLineEdit()
+        self.log_search.setObjectName("logSearchFilter")
+        self.log_search.setPlaceholderText("Rechercher dans le journal…")
+        self.log_category.currentTextChanged.connect(lambda _value: self._filter_logs())
+        self.log_search.textChanged.connect(lambda _value: self._filter_logs())
+        filters = QHBoxLayout()
+        filters.addWidget(self.log_category)
+        filters.addWidget(self.log_search)
+        journal = QWidget()
+        journal_layout = QVBoxLayout(journal)
+        journal_layout.addLayout(filters)
+        journal_layout.addWidget(self.logs)
+        tabs.addTab(journal, "Journal")
 
         root = QWidget()
         layout = QVBoxLayout(root)
         layout.addWidget(self.status)
         layout.addWidget(tabs)
         self.setCentralWidget(root)
+
+    def _filter_logs(self) -> None:
+        category = self.log_category.currentText()
+        query = self.log_search.text().strip().casefold()
+        for row in range(self.logs.rowCount()):
+            cells = tuple(
+                self.logs.item(row, column).text()
+                for column in range(self.logs.columnCount())
+                if self.logs.item(row, column) is not None
+            )
+            visible = (
+                (category == "Toutes" or (len(cells) > 1 and cells[1] == category))
+                and (not query or any(query in cell.casefold() for cell in cells))
+            )
+            self.logs.setRowHidden(row, not visible)
 
     @property
     def displayed_sequence(self) -> int | None:
@@ -160,6 +197,7 @@ class ControlCenterWindow(QMainWindow):
         _replace_rows(self.agents, agent_rows)
         _replace_rows(self.plugins, plugin_rows)
         _replace_rows(self.logs, log_rows)
+        self._filter_logs()
         self.status.setText(
             f"{state.network} — séquence {state.sequence} — "
             f"{state.pending_external} vérification(s) externe(s) en attente"
