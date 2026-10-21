@@ -151,6 +151,24 @@ class BootstrapAssetsCliTests(unittest.TestCase):
         with self.assertRaisesRegex(BootstrapManifestError, "Duplicate component"):
             read_pinned_manifest(self.manifest, expected_sha256=self.pin())
 
+    def test_v2_manifest_requires_pinned_executable_and_version(self):
+        self.assets[0]["executable"] = "bin/ollama.exe"
+        self.assets[0]["expected_version"] = "1.2"
+        raw = json.dumps({"version": 2, "assets": self.assets}).encode()
+        pins = read_pinned_manifest(
+            self.manifest, expected_sha256=self.pin(raw=raw),
+        )
+        self.assertEqual(pins[0].executable, "bin/ollama.exe")
+        self.assertEqual(pins[0].expected_version, "1.2")
+        self.assets[0]["executable"] = "../unsafe.exe"
+        raw = json.dumps({"version": 2, "assets": self.assets}).encode()
+        with self.assertRaises(BootstrapManifestError):
+            read_pinned_manifest(self.manifest, expected_sha256=self.pin(raw=raw))
+        self.assets[0].pop("expected_version")
+        raw = json.dumps({"version": 2, "assets": self.assets}).encode()
+        with self.assertRaises(BootstrapManifestError):
+            read_pinned_manifest(self.manifest, expected_sha256=self.pin(raw=raw))
+
     def test_bad_sizes_and_unknown_keys_fail_closed(self):
         self.assets[0]["unpacked_bytes"] = -1
         with self.assertRaises(BootstrapManifestError):
