@@ -66,7 +66,7 @@ class WindowsInstalledEngineLaunchTests(unittest.TestCase):
                 verify_installed_engine(self.spec),
                 (str(self.engine), str(self.config)),
             )
-            self.assertEqual(acl.call_count, 6)
+            self.assertEqual(acl.call_count, 7)
             launched = launch_installed_engine(self.spec, approved=True)
         self.assertIsInstance(launched, EngineLaunch)
         self.assertEqual(launched.status, "ENGINE_SPAWNED_HEALTH_PENDING")
