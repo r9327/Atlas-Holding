@@ -18,7 +18,7 @@ import sys
 import tempfile
 from typing import Mapping
 
-from .windows_runtime_payload import verify_runtime_payload
+from .windows_runtime_payload import verify_runtime_payload, verify_pinned_adapter
 from .bootstrap_assets_cli import read_pinned_manifest
 
 _HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
@@ -45,6 +45,8 @@ def build_windows_installer(
     project_root: Path | None = None,
     runtime_directory: Path | None = None,
     runtime_pins: Mapping[str, str] | None = None,
+    adapter_source: Path | None = None,
+    adapter_sha256: str | None = None,
 ) -> WindowsBuildResult:
     """Bundle the pinned setup wizard; native E2E and signing are separate gates."""
     if sys.platform != "win32":
@@ -59,6 +61,12 @@ def build_windows_installer(
     read_pinned_manifest(manifest, expected_sha256=expected_manifest_sha256)
     if (runtime_directory is None) != (runtime_pins is None):
         raise ValueError("Runtime directory and SHA-256 pins must be supplied together")
+    if (adapter_source is None) != (adapter_sha256 is None):
+        raise ValueError("Complete packaged adapter and pinned hash required")
+    if adapter_source is not None and runtime_directory is None:
+        raise ValueError("Agent bundle needs both engine and Control Center")
+    if adapter_source is not None:
+        verify_pinned_adapter(adapter_source, adapter_sha256)
     if runtime_directory is not None:
         verify_runtime_payload(runtime_directory, runtime_pins)
     root = project_root or Path(__file__).resolve().parent.parent
@@ -89,18 +97,29 @@ def build_windows_installer(
             verify_runtime_payload(bundled_runtime, runtime_pins)
             verify_runtime_payload(runtime_directory, runtime_pins)
 
+        bundled_adapter = workspace / "agents" / "AtlasHoldingAgent.exe"
+        if adapter_source is not None:
+            bundled_adapter.parent.mkdir()
+            with adapter_source.open("rb") as reader, bundled_adapter.open("xb") as writer:
+                shutil.copyfileobj(reader, writer, length=1024 * 1024)
+            verify_pinned_adapter(adapter_source, adapter_sha256)
+            verify_pinned_adapter(bundled_adapter, adapter_sha256)
+
         shim = workspace / "atlas_windows_entry.py"
         shim_lines = [
             "from pathlib import Path",
             "import hashlib, sys",
             "from holding.bootstrap_assets_cli import read_pinned_manifest",
             "from holding.windows_setup import main",
-            "from holding.windows_runtime_payload import verify_runtime_payload",
+            "from holding.windows_runtime_payload import verify_runtime_payload, verify_pinned_adapter",
             "from holding.ollama_resume import resume_ollama_at_logon",
             "base = Path(getattr(sys, '_MEIPASS', Path(__file__).parent)).resolve()",
             "manifest = base / 'release-assets.json'",
             f"expected = {expected_manifest_sha256.lower()!r}",
             f"runtime_pins = {dict(runtime_pins) if runtime_pins is not None else None!r}",
+            f"adapter_pin = {adapter_sha256!r}",
+            "if adapter_pin is not None:",
+            "    verify_pinned_adapter(base / 'agents' / 'AtlasHoldingAgent.exe', adapter_pin)",
             "if runtime_pins is not None:",
             "    verify_runtime_payload(base / 'runtime', runtime_pins)",
             "if sys.argv[1:] == ['--self-test']:",
@@ -127,6 +146,11 @@ def build_windows_installer(
             "        '--runtime-viewer-sha256', runtime_pins['AtlasHoldingControlCenter.exe'],",
             "        '--runtime-engine-sha256', runtime_pins['AtlasHoldingEngine.exe'],",
             "    ])",
+            "if adapter_pin is not None:",
+            "    wizard_args.extend([",
+            "        '--adapter-root', str(base / 'agents'),",
+            "        '--adapter-sha256', adapter_pin,",
+            "    ])",
             "raise SystemExit(main(wizard_args))",
         ]
         shim.write_text("\n".join(shim_lines) + "\n", encoding="utf-8")
@@ -149,6 +173,11 @@ def build_windows_installer(
                     "--add-data",
                     str(bundled_runtime / name) + os.pathsep + "runtime",
                 ]
+        if adapter_source is not None:
+            command[-1:-1] = [
+                "--add-data",
+                str(bundled_adapter) + os.pathsep + "agents",
+            ]
         subprocess.run(command, cwd=root, check=True, timeout=900,
                        shell=False)
         built = stage / "AtlasHoldingSetup.exe"
@@ -180,7 +209,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--runtime-directory", type=Path)
     parser.add_argument("--viewer-sha256")
     parser.add_argument("--engine-sha256")
+    parser.add_argument("--adapter-executable", type=Path)
+    parser.add_argument("--adapter-sha256")
     args = parser.parse_args(argv)
+    if (args.adapter_executable is None) != (args.adapter_sha256 is None):
+        parser.error("Full adapter filename and SHA-256 required")
+    if args.adapter_executable is not None and args.runtime_directory is None:
+        parser.error("Adapter needs bundled Control Center and engine")
     choices = (args.runtime_directory, args.viewer_sha256, args.engine_sha256)
     if any(item is not None for item in choices) and not all(
             item is not None for item in choices):
@@ -195,6 +230,8 @@ def main(argv: list[str] | None = None) -> int:
         manifest=args.manifest, expected_manifest_sha256=args.manifest_sha256,
         output_dir=args.output_dir, runtime_directory=args.runtime_directory,
         runtime_pins=pins,
+        adapter_source=args.adapter_executable,
+        adapter_sha256=args.adapter_sha256,
     )
     print(json.dumps(asdict(result), sort_keys=True))
     return 0
