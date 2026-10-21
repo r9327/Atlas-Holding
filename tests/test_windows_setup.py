@@ -60,6 +60,118 @@ class WindowsSetupTests(unittest.TestCase):
         self.assertEqual(summary.status, "CONSENT_REQUIRED")
         self.assertEqual(summary.download_upper_bound_bytes, 0)
 
+    def test_new_ollama_user_models_env_precedes_winget_staging(self):
+        from holding.windows_package_manager import WingetPin
+        from holding.windows_setup import SetupSummary
+        from holding.windows_ollama_environment import UserModelEnvironment
+        chosen = self.install_root / "models"
+        pin = WingetPin("ollama", "Ollama.Ollama", "0.32.8")
+        snapshot = sample(ollama=Component("NOT_FOUND"))
+        report = SetupSummary(
+            "PREFLIGHT", "CONSENT_REQUIRED", "Windows", "AMD64",
+            "", 32 * 1024**3, 100 * 1024**3, 0, (), 0, (),
+        )
+        stage = ProvisionExecution(
+            "PARTIAL_OR_BLOCKED",
+            (ProvisionStep("ollama", "INSTALL",
+                           "INSTALLED_NOT_HEALTHCHECKED"),),
+            ("Unrelated other package failed",),
+        )
+        with patch("holding.windows_setup.preflight_setup",
+                   return_value=(report, (pin,))):
+            with patch("holding.windows_setup.scan",
+                       return_value=snapshot):
+                with patch("holding.windows_setup.restore_pinned_inventory",
+                           return_value=snapshot):
+                    with patch("holding.windows_setup.configure_user_models",
+                               return_value=UserModelEnvironment(
+                                   "USER_MODELS_CREATED", str(chosen),
+                               )) as configure:
+                        with patch("holding.windows_setup.stage_required_dependencies",
+                                   return_value=stage) as install:
+                            with patch("holding.windows_setup.undo_created_user_models") as undo:
+                                _, actual = execute_setup(
+                                    manifest=self.manifest,
+                                    manifest_sha256="b" * 64,
+                                    install_root=self.install_root,
+                                    cache_root=self.cache_root,
+                                    online=True, approved=True, model_root=chosen,
+                                )
+        configure.assert_called_once_with(chosen, authorized=True)
+        self.assertEqual(install.call_args.kwargs["model_root"], chosen)
+        self.assertEqual(actual.steps[-1].result, "USER_MODELS_CREATED")
+        undo.assert_not_called()
+
+    def test_conflicting_user_ollama_variable_blocks_mutating_install(self):
+        from holding.windows_package_manager import WingetPin
+        from holding.windows_setup import SetupSummary
+        from holding.windows_ollama_environment import UserModelEnvironment
+        chosen = self.install_root / "models"
+        pin = WingetPin("ollama", "Ollama.Ollama", "0.32.8")
+        snapshot = sample(ollama=Component("NOT_FOUND"))
+        report = SetupSummary(
+            "PREFLIGHT", "CONSENT_REQUIRED", "Windows", "AMD64",
+            "", 32 * 1024**3, 100 * 1024**3, 0, (), 0, (),
+        )
+        with patch("holding.windows_setup.preflight_setup",
+                   return_value=(report, (pin,))):
+            with patch("holding.windows_setup.scan",
+                       return_value=snapshot):
+                with patch("holding.windows_setup.restore_pinned_inventory",
+                           return_value=snapshot):
+                    with patch("holding.windows_setup.configure_user_models",
+                               return_value=UserModelEnvironment(
+                                   "USER_MODELS_CONFLICT", str(chosen),
+                               )):
+                        with patch("holding.windows_setup.stage_required_dependencies") as install:
+                            _, actual = execute_setup(
+                                manifest=self.manifest, manifest_sha256="b" * 64,
+                                install_root=self.install_root,
+                                cache_root=self.cache_root,
+                                online=True, approved=True, model_root=chosen,
+                            )
+        self.assertEqual(actual.state, "PARTIAL_OR_BLOCKED")
+        self.assertEqual(actual.steps[-1].result, "USER_MODELS_CONFLICT")
+        install.assert_not_called()
+
+    def test_failed_staging_rolls_back_only_fresh_models_variable(self):
+        from holding.windows_package_manager import WingetPin
+        from holding.windows_setup import SetupSummary
+        from holding.windows_ollama_environment import UserModelEnvironment
+        chosen = self.install_root / "models"
+        pin = WingetPin("ollama", "Ollama.Ollama", "0.32.8")
+        snapshot = sample(ollama=Component("NOT_FOUND"))
+        report = SetupSummary(
+            "PREFLIGHT", "CONSENT_REQUIRED", "Windows", "AMD64",
+            "", 32 * 1024**3, 100 * 1024**3, 0, (), 0, (),
+        )
+        with patch("holding.windows_setup.preflight_setup",
+                   return_value=(report, (pin,))):
+            with patch("holding.windows_setup.scan",
+                       return_value=snapshot):
+                with patch("holding.windows_setup.restore_pinned_inventory",
+                           return_value=snapshot):
+                    with patch("holding.windows_setup.configure_user_models",
+                               return_value=UserModelEnvironment(
+                                   "USER_MODELS_CREATED", str(chosen),
+                               )):
+                        with patch("holding.windows_setup.stage_required_dependencies",
+                                   return_value=ProvisionExecution(
+                                       "PARTIAL_OR_BLOCKED", (),
+                                       ("No package installed",),
+                                   )):
+                            with patch("holding.windows_setup.undo_created_user_models",
+                                       return_value="USER_MODELS_ROLLED_BACK") as undo:
+                                _, actual = execute_setup(
+                                    manifest=self.manifest,
+                                    manifest_sha256="b" * 64,
+                                    install_root=self.install_root,
+                                    cache_root=self.cache_root,
+                                    online=True, approved=True, model_root=chosen,
+                                )
+        undo.assert_called_once_with(chosen)
+        self.assertEqual(actual.steps[-1].result, "USER_MODELS_ROLLED_BACK")
+
     def test_second_launch_restores_pinned_cli_before_planning_downloads(self):
         from holding.windows_package_manager import WingetPin
         pin = WingetPin("opencode", "SST.opencode", "1.18.29")
