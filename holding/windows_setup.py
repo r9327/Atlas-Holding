@@ -766,8 +766,10 @@ def main(argv: list[str] | None = None) -> int:
                     output.configure(state=tk.NORMAL)
                     output.insert(tk.END, "\nMoteur Holding : " + status)
                     output.configure(state=tk.DISABLED)
-                    if pid is not None:
-                        activate.state(["disabled"])
+                    # "Configure only" must not strand the wizard; users
+                    # may explicitly approve starting the same pinned engine
+                    # in a second operation.
+                    activate.state(["!disabled"] if pid is None else ["disabled"])
                 elif event[0] == "engine_activation_failed":
                     busy = False
                     check.state(["!disabled"])
