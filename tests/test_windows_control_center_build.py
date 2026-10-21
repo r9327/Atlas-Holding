@@ -7,7 +7,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from holding.windows_control_center_build import (build_windows_control_center, build_windows_engine)
+from holding.windows_control_center_build import (
+    build_windows_control_center, build_windows_engine, build_windows_agent,
+)
 
 
 class ViewerBuildTests(unittest.TestCase):
@@ -84,6 +86,29 @@ class ViewerBuildTests(unittest.TestCase):
         self.assertFalse(result.release_ready)
         self.assertTrue((self.output / "AtlasHoldingEngine.exe").is_file())
         self.assertEqual(len(seen), 1)
+
+    def test_build_frozen_agent_requires_protocol_source_and_real_cli_argv(self):
+        (self.holding / "ollama_protocol.py").write_text(
+            "# trusted agent protocol source\n", encoding="utf-8")
+        def package(command, **options):
+            self.assertIn("--console", command)
+            self.assertNotIn("--windowed", command)
+            self.assertEqual(command[command.index("--name") + 1],
+                             "AtlasHoldingAgent")
+            entry = Path(command[-1]).read_text(encoding="utf-8")
+            self.assertIn("holding.ollama_protocol import main", entry)
+            self.assertIn("main(sys.argv[1:])", entry)
+            dest = Path(command[command.index("--distpath") + 1])
+            dest.mkdir()
+            (dest / "AtlasHoldingAgent.exe").write_bytes(b"A" * 1_000_008)
+        with patch("holding.windows_control_center_build.sys.platform", "win32"), \
+             patch("holding.windows_control_center_build.subprocess.run",
+                   side_effect=package):
+            proof = build_windows_agent(output_dir=self.output, project_root=self.root)
+        self.assertFalse(proof.release_ready)
+        self.assertEqual(proof.bytes, 1_000_008)
+        self.assertEqual(proof.sha256, hashlib.sha256(b"A" * 1_000_008).hexdigest())
+        self.assertTrue((self.output / "AtlasHoldingAgent.exe").is_file())
 
     def test_never_overwrite_or_package_missing_or_relative_sources(self):
         self.output.mkdir()
