@@ -18,7 +18,7 @@ import tempfile
 from typing import Callable
 import zipfile
 
-from .downloads import download_pinned, _target_lock
+from .downloads import download_pinned, _target_lock, _validate_url
 
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 _SHA = re.compile(r"^[a-fA-F0-9]{64}$")
@@ -44,7 +44,8 @@ class PinnedZip:
     unpacked_bytes: int
 
     def validate(self) -> None:
-        if not _NAME.fullmatch(self.component) or not _NAME.fullmatch(self.version):
+        if (not isinstance(self.component, str) or not isinstance(self.version, str)
+                or not _NAME.fullmatch(self.component) or not _NAME.fullmatch(self.version)):
             raise InstallError("Invalid pinned component or version")
         if not isinstance(self.sha256, str) or not _SHA.fullmatch(self.sha256):
             raise InstallError("Invalid asset SHA-256")
@@ -52,6 +53,9 @@ class PinnedZip:
                 or type(self.unpacked_bytes) is not int
                 or not 0 < self.unpacked_bytes <= MAX_UNPACKED_BYTES):
             raise InstallError("Invalid pinned asset size")
+        if not isinstance(self.url, str) or len(self.url) > 2048:
+            raise InstallError("Invalid asset URL")
+        _validate_url(self.url)
 
 
 @dataclass(frozen=True)
@@ -68,7 +72,7 @@ def _no_linked_ancestors(path: Path) -> None:
 
 
 def _safe_relative(raw: str) -> str:
-    if (not raw or raw.startswith("/") or "\\" in raw or
+    if (not isinstance(raw, str) or not raw or raw.startswith("/") or "\\" in raw or
             raw.endswith(" ") or raw.endswith(".") or raw.startswith("//")):
         raise InstallError("Unsafe ZIP entry name")
     parts = raw.rstrip("/").split("/")
