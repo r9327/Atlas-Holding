@@ -26,6 +26,7 @@ from .windows_package_manager import WingetPin
 from .managed_toolchain import resolve_managed_tool
 from .version_evidence import matches_component_version
 from .ollama_setup import ensure_selected_model_volume
+from .ollama_storage import read_model_directory
 
 
 @dataclass(frozen=True)
@@ -230,7 +231,11 @@ def main(argv: list[str] | None = None) -> int:
     current_cache = tk.StringVar(
         value=str(args.cache_root or (args.install_root / "cache"))
     )
-    current_models = tk.StringVar(value=str(args.models_root or (args.install_root / "models")))
+    stored_models = read_model_directory(args.install_root)
+    initial_models = (
+        args.models_root or stored_models.directory or (args.install_root / "models")
+    )
+    current_models = tk.StringVar(value=str(initial_models))
     state_message = tk.StringVar(value="Analyse en attente")
     network_message = tk.StringVar(value="Vérification réseau au démarrage")
     file_progress = tk.StringVar(value="Aucun transfert")
