@@ -55,7 +55,9 @@ class WindowsInstalledEngineLaunchTests(unittest.TestCase):
         return patch("holding.windows_runtime_acl.validate_runtime_acl")
 
     def test_native_preflight_and_process_launch_never_claims_ready(self):
-        with self.native(), self.acl() as acl, \
+        with self.native(), self.acl(), \
+             patch("holding.windows_runtime_launch._interactive_user_session",
+                   return_value=True) as acl, \
              patch("holding.windows_runtime_launch.subprocess.Popen") as spawn:
             process = Mock()
             process.poll.return_value = None
@@ -88,8 +90,19 @@ class WindowsInstalledEngineLaunchTests(unittest.TestCase):
                     launch_installed_engine(self.spec, approved=True)
             spawn.assert_not_called()
 
+    def test_session_zero_denied_before_config_or_process_access(self):
+        with self.native(), \
+             patch("holding.windows_runtime_launch._interactive_user_session",
+                   return_value=False), \
+             patch("holding.windows_runtime_launch.subprocess.Popen") as spawn:
+            with self.assertRaisesRegex(RuntimeLaunchError, "interactive Windows session"):
+                launch_installed_engine(self.spec, approved=True)
+            spawn.assert_not_called()
+
     def test_native_acl_denial_and_modified_engine_block_execution(self):
-        with self.native(), self.acl() as acl, \
+        with self.native(), self.acl(), \
+             patch("holding.windows_runtime_launch._interactive_user_session",
+                   return_value=True) as acl, \
              patch("holding.windows_runtime_launch.subprocess.Popen") as spawn:
             acl.side_effect = ValueError("untrusted DACL")
             with self.assertRaisesRegex(RuntimeLaunchError, "not trusted"):
@@ -102,6 +115,8 @@ class WindowsInstalledEngineLaunchTests(unittest.TestCase):
 
     def test_config_hash_and_viewer_binding_are_mandatory(self):
         with self.native(), self.acl(), \
+             patch("holding.windows_runtime_launch._interactive_user_session",
+                   return_value=True), \
              patch("holding.windows_runtime_launch.subprocess.Popen") as spawn:
             self.config.write_text('{"schema":1}')
             with self.assertRaisesRegex(RuntimeLaunchError, "hash"):
@@ -126,6 +141,8 @@ class WindowsInstalledEngineLaunchTests(unittest.TestCase):
             config_sha256=hashlib.sha256(self.config.read_bytes()).hexdigest(),
         )
         with self.native(), self.acl(), \
+             patch("holding.windows_runtime_launch._interactive_user_session",
+                   return_value=True), \
              patch("holding.windows_runtime_launch.subprocess.Popen") as spawn:
             with self.assertRaisesRegex(RuntimeLaunchError, "duplicate"):
                 launch_installed_engine(replaced, approved=True)
@@ -138,6 +155,8 @@ class WindowsInstalledEngineLaunchTests(unittest.TestCase):
         external.write_bytes(self.config.read_bytes())
         moved = replace(self.spec, config_file=external)
         with self.native(), self.acl(), \
+             patch("holding.windows_runtime_launch._interactive_user_session",
+                   return_value=True), \
              patch("holding.windows_runtime_launch.subprocess.Popen") as spawn:
             with self.assertRaisesRegex(RuntimeLaunchError, "outside selected root"):
                 launch_installed_engine(moved, approved=True)
@@ -145,6 +164,8 @@ class WindowsInstalledEngineLaunchTests(unittest.TestCase):
 
     def test_child_crash_is_not_accepted_as_ready(self):
         with self.native(), self.acl(), \
+             patch("holding.windows_runtime_launch._interactive_user_session",
+                   return_value=True), \
              patch("holding.windows_runtime_launch.subprocess.Popen") as spawn:
             dead = Mock()
             dead.poll.return_value = 2
