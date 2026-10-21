@@ -14,7 +14,6 @@ import json
 import os
 from pathlib import Path
 import re
-import sys
 
 from .dashboard_session import DashboardSessionError, ViewerProgram
 from .git_worktree import GitWorktrees
@@ -164,10 +163,10 @@ class Installation:
         executable = info['executable']
         script = info['script']
         if (not isinstance(executable, str) or len(executable) > 4096
-                or not executable or '\\x00' in executable
+                or not executable or '\x00' in executable
                 or script is not None and (
                     not isinstance(script, str) or not script
-                    or len(script) > 4096 or '\\x00' in script)):
+                    or len(script) > 4096 or '\x00' in script)):
             raise BootstrapError('Invalid dashboard executable path')
         if (not isinstance(info['executable_sha256'], str)
                 or not _DIGEST.fullmatch(info['executable_sha256'])
