@@ -168,6 +168,7 @@ def assess_post_install(
 def execute_setup(
     *, manifest: Path, manifest_sha256: str, install_root: Path,
     cache_root: Path, online: bool, approved: bool,
+    model_root: Path | None = None,
     cancelled: Callable[[], bool] | None = None,
     progress: Callable[[int, int], None] | None = None,
 ) -> tuple[SetupSummary, ProvisionExecution | None]:
