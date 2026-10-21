@@ -7,7 +7,10 @@ from holding.release_evidence import (
 
 
 SHA = "a" * 40
-UPSTREAM = {"pr8": "b" * 40, "pr10": "c" * 40}
+UPSTREAM = {
+    **{f"pr{i}": "b" * 40 for i in range(1, 9)},
+    "pr11": "c" * 40, "pr12": "d" * 40,
+}
 OBSERVED = {
     "AtlasHoldingSetup.exe": ArtifactObservation("d" * 64, 100),
     "AtlasHoldingControlCenter.exe": ArtifactObservation("1" * 64, 200),
@@ -63,6 +66,24 @@ class ReleaseEvidenceTests(unittest.TestCase):
         value = manifest(); value["upstream_shas"]["pr8"] = "0" * 40
         with self.assertRaisesRegex(ReleaseEvidenceError, "stale upstream"):
             validate(value)
+
+    def test_missing_required_integration_or_guardrail_pr_is_not_releasable(self):
+        for missing in ("pr2", "pr3", "pr8", "pr11", "pr12"):
+            payload = manifest()
+            del payload["upstream_shas"][missing]
+            expected = dict(UPSTREAM)
+            del expected[missing]
+            with self.subTest(missing=missing), self.assertRaisesRegex(
+                    ReleaseEvidenceError, "trusted release evidence"):
+                validate_release_manifest(
+                    json.dumps(payload).encode(),
+                    expected_source_sha=SHA,
+                    expected_upstream_shas=expected,
+                    observed_artifacts=OBSERVED,
+                    observed_gate_evidence=GATE_EVIDENCE,
+                    observed_signature_evidence_sha256=None,
+                    required_gates=GATES,
+                )
 
     def test_simulated_windows_evidence_is_rejected(self):
         value = manifest(); value["platform"] = "windows-simulated"
