@@ -65,3 +65,17 @@ L'utilisateur fournit ensuite **uniquement les roadmaps**. Les téléchargements
 - Si un paquet de release correspondant est déjà conforme, il est réutilisé sans téléchargement. Une version corrompue bloque sans effacement, et un échec du 2e composant conserve un état `PARTIAL_OR_BLOCKED` plutôt que de déclarer un succès.
 - Les tests `tests/test_provision_runtime.py` couvrent non-réinstallation, mandat, pins manquants, réutilisation, corruption, plusieurs lots et échec partiel.
 - **Limites explicites :** fichiers préparés ≠ logiciels enregistrés/actifs, réparation PATH/services/native Windows à implémenter ; modèle IA non benchmarké ; premier EXE non construit. La couche d'installateur natif doit appliquer ACL, intégrité du manifeste signé et healthcheck réel avant d'annoncer la Holding opérationnelle.
+
+## Point d'entrée intégré pour le futur setup (21 octobre 2026)
+
+`holding/provision_cli.py` expose une commande d'installation sans choix manuel de modèle :
+
+```powershell
+python -B -m holding.provision_cli --manifest "C:\AtlasRelease\assets.json" --manifest-sha256 "<SHA256 signé/épinglé par la release>" --install-root "D:\Atlas Holding" --cache-root "D:\Atlas Cache" --online-confirmed
+```
+
+L'absence de `--approve-install` produit une prévisualisation `AUTH_REQUIRED` sans mutation ; le futur assistant graphique recueillera l'autorisation initiale puis rappellera **la même commande** avec l'approbation. `--online-confirmed` est un signal du programme de démarrage, pas une preuve réseau indépendante. Manifestes et versions sont des entrées **de confiance provenant de la release**. Aucune sortie « installé » ne vaut healthcheck natif ou benchmark IA.
+
+Le module appelle réellement le scan du matériel, `make_plan()`, la prévalidation des pins et le staging sélectif. Les erreurs restent `BLOCKED` ou `PARTIAL_OR_BLOCKED`, sans exposer de secrets dans le JSON. Les tests `test_provision_cli.py` couvrent l'absence de consentement, un outil manquant, l'absence de modèle hors ligne, le manifeste incorrect et les chemins relatifs.
+
+**Restant pour Windows final :** empaquetage sans Python préinstallé, formulaire de choix disque, catalogues authentifiés de versions réelles, acquisition Ollama des poids IA, ACL et comptes dédiés, healthchecks après installation, redémarrage/réparation et EXE E2E. Ne pas utiliser la CLI de développement comme substitut à `AtlasHoldingSetup.exe`.
