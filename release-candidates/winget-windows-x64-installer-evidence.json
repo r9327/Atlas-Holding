@@ -12,7 +12,7 @@
       "scope": "user",
       "installer_type": "inno",
       "installer_url": "https://github.com/git-for-windows/git/releases/download/v2.55.0.windows.1/Git-2.55.0-64-bit.exe",
-      "installer_sha256": "0c66e4a5875da5a74f9754386de7555ba301503b03bbdcbafa69dc6464e548d",
+      "installer_sha256": "0c66e4a5875da5a74f9754386de7555ba301503b03bbdcdbafa69dc6464e548d",
       "elevation_requirement": "elevatesSelf",
       "manifest_path": "manifests/g/Git/Git/2.55.0/Git.Git.installer.yaml"
     },
