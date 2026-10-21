@@ -55,6 +55,17 @@ Cette PR Draft vérifie ensemble les contrats développés séparément dans :
 
 **Ce canal n'est pas encore le setup Windows final :** son port et son secret doivent être provisionnés par le service d'installation avec ACL natives, identité de processus et stockage protégés. Aucun secret de démonstration ne doit être utilisé en production. Le lancement automatique du viewer, les commandes authentifiées Pause/Reprendre/Stop, les preuves graphiques et le cycle de vie complet de l'EXE restent à intégrer/tester. Il n'existe aucun mode de secours donnant directement SQLite à l'UI.
 
+## Commandes locales authentifiées et états durables (21 octobre 2026)
+
+- `DashboardControlClient` utilise un **secret distinct de la consultation** : HMAC portant sur l'action Pause/Reprendre/Stop, horodatage borné, nonce anti-rejeu mémorisé en quantité limitée et accusé de réception authentifié. Le serveur limite les connexions simultanées, ne rejoue **jamais** automatiquement une commande dont l'effet est ambigu et rejette toutes les autres opérations (notamment Reset Stop, GitHub et exécution de code).
+- `HoldingService.enable_dashboard_ipc(..., control_secret=...)` n'active ce pouvoir **que si le bootstrap installé lui fournit explicitement cette deuxième clé**. Sans clé, le canal demeure strictement en lecture. Le secret de lecture ne peut ni déclencher une mutation, ni devenir la clé d'écriture.
+- Les commandes sont traduites par le serveur trusted en `ControlPlane.pause/resume/request_stop` et donc journalisées par l'état SQLite. STOP ne peut pas être annulé par Resume : seul le chemin trusted prévu pour un nouveau démarrage peut réinitialiser ce verrou.
+- Schéma de projection **v2** : les booléens durables `paused` et `stop_requested` sont observés dans la même transaction que les missions et journaux. L'ancien v1 reste consultable sans inventer une valeur ; les écrans ne rendent les boutons actifs qu'après réception d'un état v2 authentifié et lorsque la commande est légale.
+- L'interface `LiveControlCenterWindow` transmet les commandes sur son exécuteur asynchrone, n'interrompt jamais le thread Qt, exige confirmation explicite avant STOP, et passe en lecture seule pendant une commande ou une déconnexion.
+- Tests réels : `tests/test_dashboard_controls.py`, `tests/test_control_center_live.py`, `tests/test_control_center_state.py` et `tests/test_control_center_projection.py` vérifient la distinction des secrets, l'absence d'accès direct SQLite, les rejets/mutations, l'anti-rejeu, les transitions d'interface et l'ancien protocole.
+
+**Gates de livraison toujours ouverts :** installation native de l'identité Windows/ACL, distribution protégée des deux secrets (jamais via ligne de commande de processus ni dans des logs), bootstrap/launch du viewer installé, scénarios de reboot et arrêt, E2E EXE sur machine propre, RAM process-tree et release certifiée. Un HMAC sur loopback n'isole pas des programmes malveillants lancés sous la même identité Windows.
+
 ## Limites explicites
 
 - Aucun token n'est fourni au coordinateur ou stocké dans SQLite.
@@ -82,9 +93,9 @@ Cette PR Draft vérifie ensemble les contrats développés séparément dans :
   et les ACL dédiées décrites ci-dessus. Le schéma v2 route désormais le credential
   API et le credential Git vers cette frontière, mais l'identité/ACL effective reste
   un prérequis de déploiement natif, pas une propriété prouvable par un test Python.
-- La projection SQLite est maintenant réelle, mais son transport vers le processus
-  PySide6 n'est pas encore le canal IPC authentifié final ; aucune lecture directe
-  de la base par l'UI n'est revendiquée comme architecture de livraison.
+- La projection SQLite et le transport HMAC vers PySide6 sont réels ; l'installation
+  des permissions et secrets natifs Windows de ce canal n'est pas encore finalisée.
+  Aucune lecture directe de la base par l'UI n'est autorisée.
 
 ## Contrats GitHub vérifiés
 
