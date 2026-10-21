@@ -114,6 +114,17 @@ jobs:
           $invalid = Join-Path $PWD "smoke-output/not-registered"
           $p = Start-Process -FilePath $exe -ArgumentList @("--resume-ollama", $invalid) -PassThru -Wait
           if ($p.ExitCode -ne 2) { throw "Missing logon enrollment did not fail closed: $($p.ExitCode)" }
+      - name: Native embedded runtime payload, selected disk and integrity smoke
+        if: matrix.os == 'windows-latest' && (github.event_name == 'push' || github.event.label.name == 'ci:validate')
+        shell: pwsh
+        timeout-minutes: 9
+        run: |
+          $candidate = Join-Path $env:RUNNER_TEMP "Atlas-Holding-dual-portable-candidate.json"
+          if (!(Test-Path $candidate)) { throw "Trusted manifest for runtime bundle is unavailable" }
+          $pin = (Get-FileHash -Algorithm SHA256 $candidate).Hash.ToLowerInvariant()
+          python -B -X utf8 -m holding.native_embedded_setup_smoke --manifest "$candidate" --manifest-sha256 "$pin"
+          if ($LASTEXITCODE -ne 0) { throw "Frozen setup did not verify embedded pinned runtime binaries" }
+          Write-Output "NONRELEASE_SETUP_RUNTIME_BUNDLE_SMOKE_PASS"
       - name: Remove nonrelease EXE and verify checkout
         if: matrix.os == 'windows-latest' && (github.event_name == 'push' || github.event.label.name == 'ci:validate')
         shell: pwsh
