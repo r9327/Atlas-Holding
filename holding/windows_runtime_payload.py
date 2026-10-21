@@ -10,9 +10,8 @@ import hashlib
 import os
 from pathlib import Path
 import re
-import shutil
 import tempfile
-from typing import Mapping
+from typing import Callable, Mapping
 
 
 _RUNTIME_FILES = frozenset({
@@ -74,15 +73,25 @@ class InstalledRuntimePair:
 def install_pinned_runtime_pair(
     source: Path, install_root: Path, expected: Mapping[str, str], *,
     approved: bool,
+    cancelled: Callable[[], bool] | None = None,
 ) -> InstalledRuntimePair:
     """Stage two checked binaries on the selected volume without overwrite."""
     if approved is not True:
         raise RuntimePayloadError("Runtime installation requires explicit setup approval")
+    if cancelled is not None and not callable(cancelled):
+        raise RuntimePayloadError("Invalid runtime cancellation control")
+
+    def ensure_active() -> None:
+        if cancelled is not None and cancelled():
+            raise RuntimePayloadError("Runtime copy cancelled")
+
+    ensure_active()
     if (not isinstance(install_root, Path) or not install_root.is_absolute()
             or install_root.is_symlink() or not install_root.is_dir()
             or install_root.resolve(strict=True) != install_root):
         raise RuntimePayloadError("Verified existing installation root required")
     verify_runtime_payload(source, expected)
+    ensure_active()
     version = expected["AtlasHoldingControlCenter.exe"][:16] + "-" + (
         expected["AtlasHoldingEngine.exe"][:16])
     parent = install_root / "runtime"
@@ -93,6 +102,7 @@ def install_pinned_runtime_pair(
         raise RuntimePayloadError("Runtime parent is not a canonical directory")
     final = parent / version
     if final.exists() or final.is_symlink():
+        ensure_active()
         try:
             verify_runtime_payload(final, expected)
         except RuntimePayloadError as exc:
@@ -101,13 +111,22 @@ def install_pinned_runtime_pair(
     with tempfile.TemporaryDirectory(dir=parent, prefix=".runtime-staging-") as tmp:
         stage = Path(tmp).resolve()
         for name in sorted(_RUNTIME_FILES):
+            ensure_active()
             src = source / name
             if src.is_symlink() or src.resolve(strict=True) != src:
                 raise RuntimePayloadError("Pinned executable replaced during staging")
             with src.open("rb") as reader, (stage / name).open("xb") as writer:
-                shutil.copyfileobj(reader, writer, length=1024 * 1024)
+                while True:
+                    ensure_active()
+                    block = reader.read(1024 * 1024)
+                    if not block:
+                        break
+                    writer.write(block)
+            ensure_active()
         verify_runtime_payload(stage, expected)
+        ensure_active()
         verify_runtime_payload(source, expected)
+        ensure_active()
         if final.exists() or final.is_symlink():
             raise RuntimePayloadError("Runtime destination appeared during staging")
         os.rename(stage, final)
