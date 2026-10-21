@@ -42,7 +42,7 @@ def resume_ollama_at_logon(
         # Cannot attest the existing daemon's storage volume from /api.
         return ResumeResult("EXISTING_SERVER_STORAGE_NOT_ATTESTED",
                             str(record.directory))
-    valid_pins = tuple(pin for pin in pins if isinstance(pin, PinnedZip))
+    valid_pins = pins
     outcome = start_local_ollama(
         inventory, install_root=install_root, model_root=record.directory,
         pins=valid_pins, authorized=True,
