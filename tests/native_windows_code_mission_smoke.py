@@ -202,7 +202,12 @@ def run(agent: Path, *, real_model: Path | None = None) -> None:
                     authorized = AuthorizedGit(store, git, lease)
                     program = AgentProgram(
                         agent, (str(real_model),),
-                        timeout_seconds=120 if actual else 35,
+                        # Live model generation may legitimately take many
+                        # minutes on the operator's machine. The adapter's
+                        # configured bound remains authoritative.
+                        timeout_seconds=(
+                            model_config["timeout"] + 60 if actual else 35
+                        ),
                         pinned_executable_sha256=_sha(agent),
                         pinned_arguments=((str(real_model), _sha(real_model)),),
                     )
