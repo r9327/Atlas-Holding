@@ -215,6 +215,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--manifest-sha256", required=True)
     parser.add_argument("--install-root", type=Path, default=_local_default())
     parser.add_argument("--cache-root", type=Path)
+    parser.add_argument("--models-root", type=Path)
     args = parser.parse_args(argv)
 
     # Do not import Tk/initialize a display during CLI parsing and unit tests.
@@ -229,6 +230,7 @@ def main(argv: list[str] | None = None) -> int:
     current_cache = tk.StringVar(
         value=str(args.cache_root or (args.install_root / "cache"))
     )
+    current_models = tk.StringVar(value=str(args.models_root or (args.install_root / "models")))
     state_message = tk.StringVar(value="Analyse en attente")
     network_message = tk.StringVar(value="Vérification réseau au démarrage")
     file_progress = tk.StringVar(value="Aucun transfert")
@@ -237,7 +239,7 @@ def main(argv: list[str] | None = None) -> int:
     busy = False
     last_summary: SetupSummary | None = None
     last_pins: tuple[PinnedZip | WingetPin, ...] = ()
-    last_paths: tuple[Path, Path] | None = None
+    last_paths: tuple[Path, Path, Path] | None = None
 
     outer = ttk.Frame(root, padding=16)
     outer.pack(fill=tk.BOTH, expand=True)
@@ -253,7 +255,8 @@ def main(argv: list[str] | None = None) -> int:
     paths = ttk.LabelFrame(outer, text="Emplacements", padding=10)
     paths.pack(fill=tk.X)
     for label, variable in (("Application et composants", current_install),
-                            ("Cache des téléchargements", current_cache)):
+                            ("Cache des téléchargements", current_cache),
+                            ("Modèles IA (disque)", current_models)):
         frame = ttk.Frame(paths)
         frame.pack(fill=tk.X, pady=3)
         ttk.Label(frame, text=label, width=25).pack(side=tk.LEFT)
