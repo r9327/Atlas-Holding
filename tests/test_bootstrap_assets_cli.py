@@ -13,7 +13,7 @@ from unittest.mock import patch
 from holding.bootstrap_assets_cli import (
     BootstrapManifestError, main, read_pinned_manifest,
 )
-from holding.staged_install import InstallError, InstallResult
+from holding.staged_install import InstallError, InstallResult, InstallInspection
 
 
 class BootstrapAssetsCliTests(unittest.TestCase):
@@ -58,6 +58,40 @@ class BootstrapAssetsCliTests(unittest.TestCase):
         self.assertEqual(payload["assets"][0]["status"], "AWAITING_APPROVAL")
         self.assertFalse(self.install.exists())
         self.assertFalse(self.cache.exists())
+
+    def test_preview_shows_verified_payload_without_installer_execution(self):
+        digest = self.pin()
+        verified = InstallInspection("VERIFIED_PAYLOAD", self.install, 3)
+        output = io.StringIO()
+        with patch("holding.bootstrap_assets_cli.inspect_versioned_zip",
+                   return_value=verified):
+            with patch("holding.bootstrap_assets_cli.install_versioned_zip") as install:
+                with redirect_stdout(output):
+                    code = main(self.args(digest))
+        self.assertEqual(code, 0)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["assets"][0]["installation_state"],
+                         "VERIFIED_PAYLOAD")
+        self.assertEqual(payload["assets"][0]["download_bytes"], 0)
+        self.assertEqual(payload["assets"][0]["file_count"], 3)
+        install.assert_not_called()
+
+    def test_invalid_existing_install_blocks_preview_without_installing(self):
+        digest = self.pin()
+        output = io.StringIO()
+        invalid = InstallInspection("BLOCKED_INVALID", self.install, 0)
+        with patch("holding.bootstrap_assets_cli.inspect_versioned_zip",
+                   return_value=invalid):
+            with patch("holding.bootstrap_assets_cli.install_versioned_zip") as install:
+                with redirect_stdout(output):
+                    code = main(self.args(digest))
+        self.assertEqual(code, 2)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["state"], "PREVIEW_BLOCKED")
+        self.assertEqual(payload["assets"][0]["status"], "BLOCKED")
+        self.assertEqual(payload["assets"][0]["installation_state"],
+                         "BLOCKED_INVALID")
+        install.assert_not_called()
 
     def test_explicit_approval_installs_only_pinned_asset(self):
         digest = self.pin()
