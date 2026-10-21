@@ -33,6 +33,8 @@ class LiveControlCenterWindow(ControlCenterWindow):
         self._control_pending: Future | None = None
         self._control_name: str | None = None
         self._connected = False
+        self._paused: bool | None = None
+        self._stopped: bool | None = None
         self._control_report: str | None = None
         self.control_panel = QWidget(self)
         self.control_panel.setObjectName("controlPanel")
@@ -64,8 +66,11 @@ class LiveControlCenterWindow(ControlCenterWindow):
         enabled = (not self._closing and self._connected
                    and self._control is not None
                    and self._control_pending is None)
-        for button in (self.pause_button, self.resume_button, self.stop_button):
-            button.setEnabled(enabled)
+        self.pause_button.setEnabled(
+            enabled and self._paused is False and self._stopped is False)
+        self.resume_button.setEnabled(
+            enabled and self._paused is True and self._stopped is False)
+        self.stop_button.setEnabled(enabled and self._stopped is False)
 
     def _request_command(self, name: str) -> None:
         if (self._closing or not self._connected or self._control is None
@@ -133,6 +138,8 @@ class LiveControlCenterWindow(ControlCenterWindow):
             self.status.setText("État indisponible — dernière vue non actualisée")
         else:
             self._connected = True
+            self._paused = state.paused
+            self._stopped = state.stop_requested
             if self.displayed_sequence is not None and (
                     state.sequence == self.displayed_sequence):
                 # Same durable state; connection was authenticated again.
@@ -141,6 +148,10 @@ class LiveControlCenterWindow(ControlCenterWindow):
                     f"{state.pending_external} vérification(s) externe(s) en attente")
             else:
                 self.render_state(state)
+            if state.stop_requested is True:
+                self.status.setText("ARRÊT DEMANDÉ — " + self.status.text())
+            elif state.paused is True:
+                self.status.setText("EN PAUSE — " + self.status.text())
             if self._control_report is not None:
                 self.status.setText(self._control_report)
                 self._control_report = None
