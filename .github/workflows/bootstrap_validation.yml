@@ -67,6 +67,14 @@ jobs:
           $exe = Join-Path $PWD "smoke-output/AtlasHoldingSetup.exe"
           $p = Start-Process -FilePath $exe -ArgumentList "--self-test" -PassThru -Wait
           if ($p.ExitCode -ne 0) { throw "Packaged self-test failed: $($p.ExitCode)" }
+      - name: Verify packaged logon resume refuses missing enrollment without UI
+        if: matrix.os == 'windows-latest' && (github.event_name == 'push' || github.event.label.name == 'ci:validate')
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD "smoke-output/AtlasHoldingSetup.exe"
+          $invalid = Join-Path $PWD "smoke-output/not-registered"
+          $p = Start-Process -FilePath $exe -ArgumentList @("--resume-ollama", $invalid) -PassThru -Wait
+          if ($p.ExitCode -ne 2) { throw "Missing logon enrollment did not fail closed: $($p.ExitCode)" }
       - name: Remove nonrelease EXE and verify checkout
         if: matrix.os == 'windows-latest' && (github.event_name == 'push' || github.event.label.name == 'ci:validate')
         shell: pwsh
