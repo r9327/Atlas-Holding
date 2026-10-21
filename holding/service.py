@@ -77,6 +77,7 @@ class HoldingService:
         self._qa_repair = None
         self._git = recovery_git
         self._github_health = None
+        self._dashboard_ipc = None
 
     @classmethod
     def from_local_agent(cls, settings: ServiceSettings, *, program,
@@ -230,6 +231,26 @@ class HoldingService:
             self._recovery_seen = {}
         return quarantined
 
+    def enable_dashboard_ipc(self, *, secret: bytes, engine_id: str) -> int:
+        """Trusted host only: expose sanitised state, never engine commands.
+
+        The installation supervisor owns and provisions the secret. It MUST
+        enforce native Windows ACLs before passing a key to this method.
+        """
+        if not self._started or self._dashboard_ipc is not None:
+            raise RuntimeError("Dashboard may be enabled once after service start")
+        from .dashboard_ipc import DashboardIpcServer
+        server = DashboardIpcServer.for_database(
+            self.settings.database, secret=secret, engine_id=engine_id,
+        )
+        try:
+            server.start()
+        except BaseException:
+            server.close()
+            raise
+        self._dashboard_ipc = server
+        return server.port
+
     def request_shutdown(self) -> None:
         """Cooperative shutdown: no DB operations inside a signal handler."""
         self._stop.set()
@@ -301,6 +322,9 @@ class HoldingService:
         return Tick("STOPPED", None, "Shutdown requested")
 
     def close(self) -> None:
+        if self._dashboard_ipc is not None:
+            self._dashboard_ipc.close()
+            self._dashboard_ipc = None
         self.engine.close()
         self._started = False
 
