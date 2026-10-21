@@ -363,7 +363,6 @@ def configure_and_launch_engine(
     may be enrolled. A copied EXE is not evidence of a working agent; actual
     engine health and the complete roadmap remain unverified after launch.
     """
-    import hashlib
     import re
     from .windows_engine_enrollment import _require_native_windows
     if approved is not True or type(launch_approved) is not bool:
@@ -396,9 +395,11 @@ def configure_and_launch_engine(
             or not agent.is_file() or not agent_folder.is_dir()
             or agent.resolve(strict=True) != agent):
         raise EngineEnrollmentError("Pinned installed agent adapter unavailable")
-    digest = hashlib.sha256(agent.read_bytes()).hexdigest()
-    if digest != adapter_sha256:
-        raise EngineEnrollmentError("Installed agent does not match trusted release pin")
+    try:
+        verify_pinned_adapter(agent, adapter_sha256)
+    except RuntimePayloadError as exc:
+        raise EngineEnrollmentError(
+            "Installed agent does not match trusted release pin") from exc
     # Root ACL modifications are separately approved in the first-run dialog.
     # They are never attempted against a drive or user profile root.
     protect_approved_install_root(install_root, approved=True)
