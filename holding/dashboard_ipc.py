@@ -186,6 +186,10 @@ class DashboardIpcClient:
         self._engine_id = engine_id
         self._last_sequence: int | None = None
 
+    @property
+    def engine_id(self) -> str:
+        return self._engine_id
+
     def fetch(self, *, now_epoch: int | None = None) -> DashboardState:
         nonce = secrets.token_bytes(32)
         mac = hmac.new(self._secret, b"request" + nonce, hashlib.sha256).digest()
