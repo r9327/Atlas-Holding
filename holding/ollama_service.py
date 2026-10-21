@@ -19,6 +19,8 @@ from typing import Callable
 from .inventory import Inventory, _api_json, _existing_disk
 from .managed_toolchain import resolve_managed_tool
 from .staged_install import PinnedZip, _no_linked_ancestors
+from .windows_package_manager import WingetPin
+from .winget_binary import discover_winget_binary
 
 _OWNED_PROCESSES: list[subprocess.Popen] = []
 
@@ -62,7 +64,7 @@ def _minimal_ollama_environment(model_root: Path) -> dict[str, str]:
 
 def start_local_ollama(
     snapshot: Inventory, *, install_root: Path, model_root: Path,
-    pins: tuple[PinnedZip, ...] = (), authorized: bool,
+    pins: tuple[PinnedZip | WingetPin, ...] = (), authorized: bool,
     cancelled: Callable[[], bool] | None = None,
     startup_seconds: float = 15.0,
 ) -> OllamaLaunch:
@@ -98,11 +100,16 @@ def start_local_ollama(
         executable = snapshot.ollama.path
     if not executable:
         for pin in pins:
-            if not isinstance(pin, PinnedZip) or pin.component != "ollama":
+            if pin.component != "ollama":
                 continue
-            managed = resolve_managed_tool(pin, install_root=install_root)
-            if managed.state == "VERIFIED_EXECUTABLE":
-                executable = managed.executable
+            if isinstance(pin, PinnedZip):
+                managed = resolve_managed_tool(pin, install_root=install_root)
+                if managed.state == "VERIFIED_EXECUTABLE":
+                    executable = managed.executable
+            elif isinstance(pin, WingetPin):
+                installed = discover_winget_binary(pin)
+                if installed.state == "EXACT_BINARY_VERIFIED":
+                    executable = installed.executable
             break
     if not executable:
         return OllamaLaunch("OLLAMA_EXECUTABLE_NOT_FOUND", str(target))
