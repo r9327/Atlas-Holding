@@ -207,6 +207,7 @@ def main(argv: list[str] | None = None) -> int:
     busy = False
     last_summary: SetupSummary | None = None
     last_pins: tuple[PinnedZip | WingetPin, ...] = ()
+    last_paths: tuple[Path, Path] | None = None
 
     outer = ttk.Frame(root, padding=16)
     outer.pack(fill=tk.BOTH, expand=True)
@@ -297,7 +298,8 @@ def main(argv: list[str] | None = None) -> int:
                     )
                     executed = None
                     events.put(("pins", pins))
-                events.put(("result", summary, executed))
+                events.put(("result", summary, executed,
+                            (current_target, current_storage)))
             except (OSError, ValueError, TypeError) as exc:
                 # Never dump exception text: a URL or credential may occur in it.
                 events.put(("error", type(exc).__name__))
@@ -305,7 +307,7 @@ def main(argv: list[str] | None = None) -> int:
         threading.Thread(target=worker, daemon=True).start()
 
     def drain() -> None:
-        nonlocal busy, last_summary, last_pins
+        nonlocal busy, last_summary, last_pins, last_paths
         try:
             while True:
                 event = events.get_nowait()
@@ -324,6 +326,7 @@ def main(argv: list[str] | None = None) -> int:
                     busy = False
                     last_summary = event[1]
                     executed = event[2]
+                    last_paths = event[3]
                     check.state(["!disabled"])
                     cancel.state(["disabled"])
                     lines = [
@@ -375,6 +378,10 @@ def main(argv: list[str] | None = None) -> int:
 
     def approve_install() -> None:
         if last_summary is None or last_summary.status != "CONSENT_REQUIRED":
+            return
+        if last_paths != selected_paths():
+            state_message.set("Emplacements modifiés : nouvelle analyse nécessaire")
+            start(False)
             return
         if not messagebox.askyesno(
             "Autoriser l'installation",
