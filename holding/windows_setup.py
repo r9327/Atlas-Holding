@@ -32,6 +32,9 @@ from .windows_ollama_environment import configure_user_models, undo_created_user
 from .model_volume import inspect_model_volume
 from .winget_binary import discover_winget_binary
 from .pinned_inventory import restore_pinned_inventory
+from .windows_runtime_payload import (
+    install_pinned_runtime_pair, verify_runtime_payload, RuntimePayloadError,
+)
 
 
 @dataclass(frozen=True)
@@ -208,8 +211,15 @@ def execute_setup(
     model_root: Path | None = None,
     cancelled: Callable[[], bool] | None = None,
     progress: Callable[[int, int], None] | None = None,
+    runtime_root: Path | None = None,
+    runtime_pins: dict[str, str] | None = None,
 ) -> tuple[SetupSummary, ProvisionExecution | None]:
     """Recheck every premise before any authorized staging operation."""
+    if (runtime_root is None) != (runtime_pins is None):
+        raise ValueError("Complete pinned runtime pair required")
+    if runtime_root is not None:
+        # Refuse mutations before checking the two real binaries.
+        verify_runtime_payload(runtime_root, runtime_pins)
     if model_root is not None:
         if not isinstance(model_root, Path) or not model_root.is_absolute():
             raise ValueError("Absolute model-storage destination required")
@@ -282,6 +292,32 @@ def execute_setup(
         result = assess_post_install(
             result, observed, pins, install_root=install_root,
         )
+    if runtime_root is not None and result.state == (
+            "TOOLCHAIN_HEALTHY_MODEL_BENCHMARK_PENDING"):
+        try:
+            installed = install_pinned_runtime_pair(
+                runtime_root, install_root, runtime_pins, approved=True,
+            )
+            result = ProvisionExecution(
+                "RUNTIME_STAGED_ENGINE_CONFIG_PENDING",
+                result.steps + (
+                    ProvisionStep(
+                        "holding-runtime", "STAGE_VERIFIED_PAIR",
+                        installed.state,
+                    ),
+                ), result.blockers,
+            )
+        except (RuntimePayloadError, OSError, ValueError):
+            result = ProvisionExecution(
+                "PARTIAL_OR_BLOCKED",
+                result.steps + (
+                    ProvisionStep(
+                        "holding-runtime", "STAGE_VERIFIED_PAIR",
+                        "RUNTIME_STAGE_FAILED",
+                    ),
+                ),
+                result.blockers + ("Pinned runtime staging failed",),
+            )
     return report, result
 
 
@@ -299,7 +335,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--install-root", type=Path, default=_local_default())
     parser.add_argument("--cache-root", type=Path)
     parser.add_argument("--models-root", type=Path)
+    parser.add_argument("--runtime-root", type=Path)
+    parser.add_argument("--runtime-viewer-sha256")
+    parser.add_argument("--runtime-engine-sha256")
     args = parser.parse_args(argv)
+    runtime_fields = (
+        args.runtime_root, args.runtime_viewer_sha256, args.runtime_engine_sha256,
+    )
+    if any(x is not None for x in runtime_fields) and not all(
+            x is not None for x in runtime_fields):
+        parser.error("Trusted runtime root and both pinned SHA-256 hashes required")
+    bundled_runtime_pins = None
+    if args.runtime_root is not None:
+        bundled_runtime_pins = {
+            "AtlasHoldingControlCenter.exe": args.runtime_viewer_sha256,
+            "AtlasHoldingEngine.exe": args.runtime_engine_sha256,
+        }
+        verify_runtime_payload(args.runtime_root, bundled_runtime_pins)
 
     # Do not import Tk/initialize a display during CLI parsing and unit tests.
     import tkinter as tk
@@ -410,6 +462,8 @@ def main(argv: list[str] | None = None) -> int:
                         model_root=model_directory,
                         cancelled=abort.is_set,
                         progress=lambda done, size: events.put(("progress", done, size)),
+                        runtime_root=args.runtime_root,
+                        runtime_pins=bundled_runtime_pins,
                     )
                 else:
                     summary, pins = preflight_setup(
@@ -481,7 +535,9 @@ def main(argv: list[str] | None = None) -> int:
                         state_message.set(
                             "Paquets préparés — contrôles logiciels et IA encore nécessaires"
                             if executed.state == "TOOLCHAIN_HEALTHY_MODEL_BENCHMARK_PENDING"
-                            else "Installation partielle ou bloquée"
+                            else ("Moteur et interface copiés — configuration et ACL encore nécessaires"
+                                  if executed.state == "RUNTIME_STAGED_ENGINE_CONFIG_PENDING"
+                                  else "Installation partielle ou bloquée")
                         )
                     else:
                         lines += list(last_summary.blockers)
