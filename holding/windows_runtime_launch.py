@@ -62,9 +62,10 @@ def _sha(path: Path) -> str:
 
 
 def _validate_paths(spec: InstalledEngineSpec) -> None:
+    if not isinstance(spec, InstalledEngineSpec):
+        raise RuntimeLaunchError("Pinned Windows runtime identity required")
     paths = (spec.install_root, spec.runtime_directory, spec.config_file)
-    if (not isinstance(spec, InstalledEngineSpec)
-            or any(not isinstance(path, Path) or not path.is_absolute()
+    if (any(not isinstance(path, Path) or not path.is_absolute()
                    or ".." in path.parts or path.is_symlink()
                    for path in paths)
             or any(type(value) is not str or not _HEX.fullmatch(value)
@@ -163,7 +164,7 @@ def launch_installed_engine(
             shell=False,
             close_fds=True,
             env=safe,
-            creationflags=subprocess.CREATE_NO_WINDOW,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except OSError as exc:
         raise RuntimeLaunchError("Installed engine cannot start") from exc
