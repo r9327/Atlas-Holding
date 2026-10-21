@@ -216,6 +216,22 @@ json.dump({'schema_version':1,'request_id':r['request_id'],'status':'OK',
         # Selftest must not be an alternative way to run untrusted config.
         self.assertEqual(main(['--self-test', '--config', str(self.config)]), 2)
 
+    def test_native_frozen_engine_ipc_mode_refuses_config_and_other_modes(self):
+        from holding.daemon_entry import main, _native_ipc_smoke
+        from unittest.mock import patch
+        with patch("holding.daemon_entry._native_ipc_smoke",
+                   return_value=0) as native:
+            self.assertEqual(main(["--native-ipc-smoke"]), 0)
+            native.assert_called_once_with()
+            self.assertEqual(main(["--native-ipc-smoke", "--self-test"]), 2)
+            self.assertEqual(main([
+                "--native-ipc-smoke", "--config", str(self.config),
+            ]), 2)
+            native.assert_called_once_with()
+        # The endpoint has no Linux fallback that could fake native Windows.
+        if __import__("os").name != "nt":
+            self.assertEqual(_native_ipc_smoke(), 2)
+
     def test_unpinned_inline_code_refused(self):
         self.data['arguments']=['-c','print(123)']
         self.data['argument_sha256']={}
