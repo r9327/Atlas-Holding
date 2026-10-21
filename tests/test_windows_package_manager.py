@@ -48,12 +48,12 @@ class WindowsPackageManagerTests(unittest.TestCase):
                 with patch("holding.windows_package_manager.os.path.isabs",
                            return_value=True):
                     with patch("holding.windows_package_manager.run_probe",
-                               side_effect=[result, result]) as runner:
+                               side_effect=[result, result, result]) as runner:
                         installed = install_pinned_winget(
                             self.pin, authorized=True, online=True,
                         )
         self.assertEqual(installed.state, "INSTALLED_NOT_HEALTHCHECKED")
-        self.assertEqual(runner.call_count, 2)
+        self.assertEqual(runner.call_count, 3)
         args = runner.call_args.args[0]
         self.assertEqual(args[1:5], ["install", "--exact", "--id", "Git.Git"])
         self.assertIn("2.55.0", args)
@@ -66,6 +66,30 @@ class WindowsPackageManagerTests(unittest.TestCase):
         self.assertTrue(runner.call_args.kwargs["timeout"] <= 900)
         self.assertNotIn("GITHUB_TOKEN",
                          runner.call_args.kwargs["environment"])
+
+    def test_unavailable_exact_user_scope_package_refuses_install(self):
+        healthy = subprocess.CompletedProcess([], 0, "v1.0", "")
+        absent = subprocess.CompletedProcess([], 1, "", "version missing")
+        with patch("holding.windows_package_manager.platform.system",
+                   return_value="Windows"):
+            with patch("holding.windows_package_manager.shutil.which",
+                       return_value="C:\\Windows\\System32\\winget.exe"):
+                with patch("holding.windows_package_manager.os.path.isabs",
+                           return_value=True):
+                    with patch("holding.windows_package_manager.run_probe",
+                               side_effect=[healthy, absent]) as runner:
+                        state = install_pinned_winget(
+                            self.pin, authorized=True, online=True,
+                        )
+        self.assertEqual(state.state, "PINNED_USER_PACKAGE_UNAVAILABLE")
+        self.assertEqual(runner.call_count, 2)
+        show = runner.call_args.args[0]
+        self.assertIn("show", show)
+        self.assertIn("2.55.0", show)
+        self.assertIn("--architecture", show)
+        self.assertIn("x64", show)
+        self.assertIn("--scope", show)
+        self.assertEqual(show[show.index("--scope") + 1], "user")
 
     def test_manager_missing_or_unsupported_os_does_not_install(self):
         with patch("holding.windows_package_manager.platform.system",
@@ -101,7 +125,7 @@ class WindowsPackageManagerTests(unittest.TestCase):
                                 [], 0, "v1.0", "",
                             )
                             with patch("holding.windows_package_manager.run_probe",
-                                       side_effect=[preflight, failure]):
+                                       side_effect=[preflight, preflight, failure]):
                                 got = install_pinned_winget(
                                     self.pin, authorized=True, online=True,
                                 )
