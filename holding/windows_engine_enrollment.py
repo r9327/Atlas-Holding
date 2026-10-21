@@ -80,6 +80,12 @@ def _validate(request: EngineEnrollmentRequest) -> None:
     )
     for directory in directories:
         _canonical(directory, directory=True)
+    # A path that merely exists is not enough: starting this service with a
+    # non-checkout would fail at GitWorktrees.inspect_canonical() on first boot.
+    git_marker = request.canonical_root / ".git"
+    if (git_marker.is_symlink() or not
+            (git_marker.is_dir() or git_marker.is_file())):
+        raise EngineEnrollmentError("Canonical target must be an existing Git checkout")
     if request.runtime_directory.parent != request.install_root / "runtime":
         raise EngineEnrollmentError("Runtime must be installed on selected disk")
     if (not isinstance(request.repository, str) or not _REPO.fullmatch(request.repository)
@@ -94,11 +100,21 @@ def _validate(request: EngineEnrollmentRequest) -> None:
             or set(request.agent_argument_pins) != set(map(str, request.agent_arguments))):
         raise EngineEnrollmentError("Every trusted agent argument must be pinned")
     _canonical(request.agent_executable, directory=False)
+    # Code that an agent may modify must never become the trusted worker
+    # executable (or an executable argument) on the next service start.
+    mutable = (request.canonical_root, request.workspace)
+    def in_mutable_checkout(path: Path) -> bool:
+        return any(path == directory or directory in path.parents
+                   for directory in mutable)
+    if in_mutable_checkout(request.agent_executable):
+        raise EngineEnrollmentError("Agent executable is inside a mutable checkout")
     if (type(request.agent_sha256) is not str or not _HEX.fullmatch(request.agent_sha256)
             or _sha(request.agent_executable) != request.agent_sha256):
         raise EngineEnrollmentError("Trusted agent executable changed")
     for path in request.agent_arguments:
         _canonical(path, directory=False)
+        if in_mutable_checkout(path):
+            raise EngineEnrollmentError("Pinned agent argument is inside a mutable checkout")
         digest = request.agent_argument_pins[str(path)]
         if type(digest) is not str or not _HEX.fullmatch(digest) or _sha(path) != digest:
             raise EngineEnrollmentError("Trusted agent argument changed")
