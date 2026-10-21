@@ -113,6 +113,29 @@ class ProvisionRuntimeTests(unittest.TestCase):
         self.assertEqual(result.state, "PARTIAL_OR_BLOCKED")
         self.assertEqual(result.steps[-1].result, "BINARY_VERSION_MISMATCH")
 
+    def test_v3_winget_package_routes_without_zip_unpack(self):
+        from holding.windows_package_manager import WingetPin, WingetResult
+        pin = WingetPin("opencode", "SST.opencode", "1.18.29")
+        with patch("holding.provision_runtime.install_pinned_winget",
+                   return_value=WingetResult("opencode", "INSTALLED_NOT_HEALTHCHECKED")
+                   ) as manager:
+            with patch("holding.provision_runtime.install_versioned_zip") as unpack:
+                result = self.run_plan(pins=(pin,), approved=True)
+        self.assertEqual(result.state, "PAYLOADS_STAGED_NOT_VALIDATED")
+        self.assertEqual(result.steps[-1].result, "INSTALLED_NOT_HEALTHCHECKED")
+        self.assertEqual(manager.call_args.args, (pin,))
+        unpack.assert_not_called()
+
+    def test_v3_winget_package_failure_blocks_recovery(self):
+        from holding.windows_package_manager import WingetPin, WingetResult
+        pin = WingetPin("opencode", "SST.opencode", "1.18.29")
+        with patch("holding.provision_runtime.install_pinned_winget",
+                   return_value=WingetResult("opencode", "WINGET_UNAVAILABLE")):
+            result = self.run_plan(pins=(pin,), approved=True)
+        self.assertEqual(result.state, "PARTIAL_OR_BLOCKED")
+        self.assertIn("package manager", result.blockers[0])
+        self.assertEqual(result.steps[-1].result, "WINGET_UNAVAILABLE")
+
     def test_tampered_version_blocks_no_replacement(self):
         with patch(
             "holding.provision_runtime.inspect_versioned_zip",
