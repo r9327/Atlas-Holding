@@ -104,6 +104,30 @@ class EngineEnrollmentTests(unittest.TestCase):
             [p.name for p in (self.root / "config").iterdir()], ["engine.json"],
         )
 
+    def test_enrolled_config_is_accepted_by_real_installed_engine_preflight(self):
+        from holding.windows_runtime_launch import (
+            InstalledEngineSpec, verify_installed_engine,
+        )
+
+        self.create_roots()
+        enrolled = self.enroll()
+        spec = InstalledEngineSpec(
+            self.root, self.runtime, enrolled.config_path,
+            self.request.viewer_sha256,
+            self.request.engine_sha256,
+            enrolled.config_sha256,
+        )
+        # Only OS rights are stubbed; config parsing and EXE SHA validation
+        # run unchanged from the native production preflight contract.
+        with patch("holding.windows_runtime_launch.sys.platform", "win32"), \
+             patch("holding.windows_runtime_acl.validate_runtime_acl") as rights:
+            self.assertEqual(
+                verify_installed_engine(spec),
+                (str(self.engine), str(enrolled.config_path)),
+            )
+            self.assertEqual(rights.call_count, 6)
+        self.assertFalse(enrolled.engine_healthy)
+
     def test_without_setup_approval_neither_folder_nor_config_is_created(self):
         with self.assertRaisesRegex(EngineEnrollmentError, "approval"):
             prepare_protected_engine_roots(self.root, approved=False)
