@@ -92,6 +92,14 @@ Cette PR Draft vérifie ensemble les contrats développés séparément dans :
 
 Il s'agit uniquement du **GUI compilé non-release**. La publication `AtlasHoldingSetup.exe`, le provisioning initial, les vraies ACL/identités Windows, le lancement intégré GUI+démon sur un poste vierge, les modèles IA et l'E2E de développement autonome restent des blocages de release.
 
+## Paire de binaires Windows + preuve IPC native (21 octobre 2026)
+
+- Le même packager Windows épinglé construit désormais **deux EXE distincts depuis le même checkout** : `AtlasHoldingControlCenter.exe` (Qt) et `AtlasHoldingEngine.exe` (moteur console/autonome). Une seule commande `python -m holding.windows_control_center_build --kind both --output-dir ...` partage les contrôles d'intégrité, évite les implémentations dupliquées et renvoie SHA-256/taille observés pour chaque fichier. Aucune release n'est publiée.
+- L'EXE moteur possède `--self-test` : vrai chargement du code du moteur et création/lecture d'une base SQLite temporaire **sans config, secret, modification durable ni Internet**. `--self-test --config` est refusé. Ce n'est pas une simulation de cycle multi-IA.
+- L'EXE GUI possède `--probe --readonly --port ... --engine-id ...` : vérification **réelle** d'un snapshot émis par le serveur IPC de test. La clé vient exclusivement du pipe privé stdin (jamais des arguments), et un mauvais secret est refusé. Sur Windows `--windowed`, le fallback est un handle standard natif **de type pipe seulement** lorsque `sys.stdin` est indisponible ; pas de fichier, terminal ni variable d'environnement.
+- `tests/native_windows_runtime_smoke.py` lance les deux binaires Windows compilés, connecte la GUI à une vraie base SQLite sur loopback avec clé HMAC reçue par pipe, vérifie l'échec d'une fausse clé et teste l'EXE moteur hors ligne. La CI finale doit afficher `NONRELEASE_AUTHENTICATED_GUI_ENGINE_RUNTIME_PASS` en plus de l'autotest Qt.
+- Il s'agit d'une **paire de binaires non-release**. Le setup final, sa signature ou l'avertissement SmartScreen, le compte/ACL Windows sécurisé, l'installation, la reprise et le vrai cycle de développement d'Atlas restent à intégrer et certifier sur machine propre.
+
 ## Limites explicites
 
 - Aucun token n'est fourni au coordinateur ou stocké dans SQLite.
