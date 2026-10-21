@@ -183,6 +183,37 @@ class EngineEnrollmentTests(unittest.TestCase):
             self.enroll()
         self.assertFalse((self.root / "config").exists())
 
+    @unittest.skipUnless(os.name == "nt", "Requires native Windows ACLs")
+    def test_real_windows_acl_enrollment_and_cross_module_launch_preflight(self):
+        from holding.windows_runtime_acl import (
+            secure_runtime_acl, validate_runtime_acl,
+        )
+        from holding.windows_runtime_launch import (
+            InstalledEngineSpec, verify_installed_engine,
+        )
+
+        for path in (
+            self.runtime.parent, self.runtime, self.viewer, self.engine,
+        ):
+            secure_runtime_acl(path)
+            validate_runtime_acl(path)
+        data, config = prepare_protected_engine_roots(self.root, approved=True)
+        validate_runtime_acl(data)
+        validate_runtime_acl(config)
+        enrolled = enroll_pinned_engine(self.request, approved=True)
+        self.assertFalse(enrolled.engine_healthy)
+        self.assertEqual(enrolled.status, "CONFIGURED_ENGINE_HEALTH_PENDING")
+        validate_runtime_acl(enrolled.config_path)
+        spec = InstalledEngineSpec(
+            self.root, self.runtime, enrolled.config_path,
+            self.request.viewer_sha256, self.request.engine_sha256,
+            enrolled.config_sha256,
+        )
+        self.assertEqual(
+            verify_installed_engine(spec),
+            (str(self.engine), str(enrolled.config_path)),
+        )
+
     def test_native_enrollment_guard_fails_closed_elsewhere(self):
         if os.name == "nt":
             self.skipTest("Native Windows boundary is covered by Windows CI")
