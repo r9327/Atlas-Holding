@@ -42,6 +42,8 @@ class PinnedZip:
     sha256: str
     download_bytes: int
     unpacked_bytes: int
+    executable: str | None = None
+    expected_version: str | None = None
 
     def validate(self) -> None:
         if (not isinstance(self.component, str) or not isinstance(self.version, str)
@@ -56,6 +58,15 @@ class PinnedZip:
         if not isinstance(self.url, str) or len(self.url) > 2048:
             raise InstallError("Invalid asset URL")
         _validate_url(self.url)
+        if (self.executable is None) != (self.expected_version is None):
+            raise InstallError("Executable and version pin must be specified together")
+        if self.executable is not None:
+            relative = _safe_relative(self.executable)
+            if (not relative.lower().endswith(".exe")
+                    or not isinstance(self.expected_version, str)
+                    or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,79}",
+                                        self.expected_version)):
+                raise InstallError("Invalid native runtime health pin")
 
 
 @dataclass(frozen=True)
