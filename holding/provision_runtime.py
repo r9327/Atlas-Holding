@@ -16,6 +16,7 @@ from .provision_plan import make_plan
 from .staged_install import (InstallError, PinnedZip, inspect_versioned_zip,
                              install_versioned_zip)
 from .downloads import DownloadError
+from .native_health import check_staged_binary
 
 
 @dataclass(frozen=True)
@@ -97,7 +98,17 @@ def stage_required_dependencies(
                 ("Existing pinned payload is corrupt or unsafe: " + action.name,),
             )
         if existing.status == "VERIFIED_PAYLOAD":
-            steps.append(ProvisionStep(action.name, action.action, "STAGED_VERIFIED"))
+            status = "STAGED_VERIFIED"
+            if spec.executable is not None:
+                health = check_staged_binary(spec, install_root=install_root)
+                if health.state != "BINARY_VERSION_PROBED":
+                    steps.append(ProvisionStep(action.name, action.action, health.state))
+                    return ProvisionExecution(
+                        "PARTIAL_OR_BLOCKED", tuple(steps),
+                        ("Native binary health check failed: " + action.name,),
+                    )
+                status = "STAGED_NATIVE_PROBED"
+            steps.append(ProvisionStep(action.name, action.action, status))
             continue
         try:
             published = install_versioned_zip(
@@ -111,8 +122,17 @@ def stage_required_dependencies(
                 ("Dependency staging failed for " + action.name
                  + " (" + type(exc).__name__ + ")",),
             )
-        steps.append(ProvisionStep(action.name, action.action,
-                                   "STAGED_" + published.status))
+        status = "STAGED_" + published.status
+        if spec.executable is not None:
+            health = check_staged_binary(spec, install_root=install_root)
+            if health.state != "BINARY_VERSION_PROBED":
+                steps.append(ProvisionStep(action.name, action.action, health.state))
+                return ProvisionExecution(
+                    "PARTIAL_OR_BLOCKED", tuple(steps),
+                    ("Native binary health check failed: " + action.name,),
+                )
+            status = "STAGED_NATIVE_PROBED"
+        steps.append(ProvisionStep(action.name, action.action, status))
 
     # No native PATH registration, service health, model test or release gate
     # has been satisfied. Even the all-REUSE case must benchmark its model.
