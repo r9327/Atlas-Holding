@@ -263,7 +263,13 @@ class HoldingService:
     def launch_dashboard(self, program, *, readonly: bool = False) -> int:
         """Trusted UI host startup, independent of daemon work loop."""
         if self._dashboard_session is not None:
-            raise RuntimeError("Dashboard viewer already launched")
+            if self._dashboard_session.is_running():
+                raise RuntimeError("Dashboard viewer already launched")
+            # A user may close the window while the engine keeps running.
+            # Retire the old listener and both keys before re-enrollment.
+            self._dashboard_session.close()
+            self._dashboard_session = None
+            self.disable_dashboard_ipc()
         from .dashboard_session import start_dashboard_session
         session = start_dashboard_session(self, program, readonly=readonly)
         self._dashboard_session = session
