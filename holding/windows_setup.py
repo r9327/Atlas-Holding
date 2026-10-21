@@ -35,6 +35,12 @@ from .pinned_inventory import restore_pinned_inventory
 from .windows_runtime_payload import (
     install_pinned_runtime_pair, verify_runtime_payload, RuntimePayloadError,
 )
+from .windows_engine_enrollment import (
+    EngineEnrollmentError, EngineEnrollmentRequest,
+    prepare_protected_engine_roots, enroll_pinned_engine,
+    launch_enrolled_engine,
+)
+from .windows_runtime_acl import validate_runtime_acl, secure_runtime_acl
 
 
 @dataclass(frozen=True)
@@ -322,6 +328,91 @@ def execute_setup(
     return report, result
 
 
+
+def configure_and_launch_engine(
+    *, install_root: Path, atlas_root: Path, runtime_pins: dict[str, str],
+    adapter_sha256: str, approved: bool, launch_approved: bool,
+):
+    """Explicit first-run GUI handoff. No model/adapter is silently invented.
+
+    Only an agent pinned by the packaged setup at agents/AtlasHoldingAgent.exe
+    may be enrolled. A copied EXE is not evidence of a working agent; actual
+    engine health and the complete roadmap remain unverified after launch.
+    """
+    import hashlib
+    import re
+    from .windows_engine_enrollment import _require_native_windows
+    if approved is not True or type(launch_approved) is not bool:
+        raise EngineEnrollmentError("Explicit engine configuration consent required")
+    _require_native_windows()
+    if (not isinstance(install_root, Path) or not install_root.is_absolute()
+            or not isinstance(atlas_root, Path) or not atlas_root.is_absolute()
+            or not isinstance(adapter_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", adapter_sha256) is None
+            or not isinstance(runtime_pins, dict)
+            or set(runtime_pins) != {
+                "AtlasHoldingControlCenter.exe", "AtlasHoldingEngine.exe",
+            }):
+        raise EngineEnrollmentError("Trusted first-run installation inputs required")
+    if (install_root.is_symlink() or install_root.resolve(strict=True) != install_root
+            or atlas_root.is_symlink()
+            or atlas_root.resolve(strict=True) != atlas_root
+            or install_root == atlas_root or install_root in atlas_root.parents
+            or atlas_root in install_root.parents):
+        raise EngineEnrollmentError("Atlas checkout and installation must be isolated")
+    # Exact versioned pair published by install_pinned_runtime_pair(), not
+    # arbitrary executable paths supplied by a roadmap or UI.
+    version = (runtime_pins["AtlasHoldingControlCenter.exe"][:16] + "-"
+               + runtime_pins["AtlasHoldingEngine.exe"][:16])
+    runtime = install_root / "runtime" / version
+    verify_runtime_payload(runtime, runtime_pins)
+    agent_folder = install_root / "agents"
+    agent = agent_folder / "AtlasHoldingAgent.exe"
+    if (agent_folder.is_symlink() or agent.is_symlink()
+            or not agent.is_file() or not agent_folder.is_dir()
+            or agent.resolve(strict=True) != agent):
+        raise EngineEnrollmentError("Pinned installed agent adapter unavailable")
+    digest = hashlib.sha256(agent.read_bytes()).hexdigest()
+    if digest != adapter_sha256:
+        raise EngineEnrollmentError("Installed agent does not match trusted release pin")
+    # All of the installed code, including the local adapter, must be protected
+    # *before* creating any configuration or launching a subprocess.
+    for path in (install_root, agent_folder, agent):
+        validate_runtime_acl(path)
+    # Unrelated user data is never silently ACL-repaired. Data roots may be
+    # added only under the already-protected approved installation root.
+    prepare_protected_engine_roots(install_root, approved=True)
+    for name in ("workspaces", "health"):
+        folder = install_root / name
+        if folder.is_symlink():
+            raise EngineEnrollmentError("Linked Holding state directory")
+        if folder.exists():
+            if not folder.is_dir() or folder.resolve(strict=True) != folder:
+                raise EngineEnrollmentError("Unsafe Holding state directory")
+            validate_runtime_acl(folder)
+        else:
+            folder.mkdir()
+            secure_runtime_acl(folder)
+    request = EngineEnrollmentRequest(
+        install_root=install_root,
+        runtime_directory=runtime,
+        viewer_sha256=runtime_pins["AtlasHoldingControlCenter.exe"],
+        engine_sha256=runtime_pins["AtlasHoldingEngine.exe"],
+        repository="r9327/Dof-Atlas",
+        canonical_root=atlas_root,
+        workspace=install_root / "workspaces",
+        health_directory=install_root / "health",
+        agent_executable=agent,
+        agent_sha256=adapter_sha256,
+        agent_argument_pins={},
+    )
+    receipt = enroll_pinned_engine(request, approved=True)
+    if not launch_approved:
+        return receipt.status, None
+    child = launch_enrolled_engine(request, receipt, approved=True)
+    return child.status, child.process.pid
+
+
 def _local_default() -> Path:
     local = os.environ.get("LOCALAPPDATA")
     if local:
@@ -339,6 +430,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--runtime-root", type=Path)
     parser.add_argument("--runtime-viewer-sha256")
     parser.add_argument("--runtime-engine-sha256")
+    # Only the trusted installer builder may pin a bundled, protocol-compatible
+    # AtlasHoldingAgent.exe; OpenCode/Ollama must not be passed as the adapter.
+    parser.add_argument("--adapter-sha256")
     args = parser.parse_args(argv)
     runtime_fields = (
         args.runtime_root, args.runtime_viewer_sha256, args.runtime_engine_sha256,
@@ -360,8 +454,8 @@ def main(argv: list[str] | None = None) -> int:
 
     root = tk.Tk()
     root.title("Atlas Holding — Installation Windows")
-    root.geometry("780x570")
-    root.minsize(670, 480)
+    root.geometry("820x660")
+    root.minsize(700, 540)
     current_install = tk.StringVar(value=str(args.install_root))
     current_cache = tk.StringVar(
         value=str(args.cache_root or (args.install_root / "cache"))
@@ -371,6 +465,7 @@ def main(argv: list[str] | None = None) -> int:
         args.models_root or stored_models.directory or (args.install_root / "models")
     )
     current_models = tk.StringVar(value=str(initial_models))
+    current_atlas = tk.StringVar(value="")
     state_message = tk.StringVar(value="Analyse en attente")
     network_message = tk.StringVar(value="Vérification réseau au démarrage")
     file_progress = tk.StringVar(value="Aucun transfert")
@@ -380,6 +475,7 @@ def main(argv: list[str] | None = None) -> int:
     last_summary: SetupSummary | None = None
     last_pins: tuple[PinnedZip | WingetPin, ...] = ()
     last_paths: tuple[Path, Path, Path] | None = None
+    runtime_staged = False
 
     outer = ttk.Frame(root, padding=16)
     outer.pack(fill=tk.BOTH, expand=True)
@@ -407,6 +503,18 @@ def main(argv: list[str] | None = None) -> int:
                 var.set(chosen)
         ttk.Button(frame, text="Parcourir", command=pick).pack(side=tk.LEFT, padx=(8, 0))
 
+    atlas_row = ttk.Frame(paths)
+    atlas_row.pack(fill=tk.X, pady=3)
+    ttk.Label(atlas_row, text="Clone Git Dof-Atlas", width=25).pack(side=tk.LEFT)
+    ttk.Entry(atlas_row, textvariable=current_atlas).pack(
+        side=tk.LEFT, fill=tk.X, expand=True)
+    def select_atlas() -> None:
+        chosen = filedialog.askdirectory(title="Choisir le clone Git r9327/Dof-Atlas")
+        if chosen:
+            current_atlas.set(chosen)
+    ttk.Button(atlas_row, text="Parcourir", command=select_atlas).pack(
+        side=tk.LEFT, padx=(8, 0))
+
     ttk.Label(outer, textvariable=network_message).pack(anchor="w", pady=(12, 2))
     ttk.Label(outer, textvariable=state_message).pack(anchor="w", pady=(2, 8))
     output = tk.Text(outer, height=12, wrap=tk.WORD, state=tk.DISABLED)
@@ -420,10 +528,13 @@ def main(argv: list[str] | None = None) -> int:
     check = ttk.Button(bottom, text="Analyser mon PC")
     approve = ttk.Button(bottom, text="Installer les composants nécessaires")
     cancel = ttk.Button(bottom, text="Annuler le transfert")
+    activate = ttk.Button(bottom, text="Configurer / lancer le moteur")
     check.pack(side=tk.LEFT)
     approve.pack(side=tk.LEFT, padx=8)
+    activate.pack(side=tk.LEFT)
     cancel.pack(side=tk.RIGHT)
     approve.state(["disabled"])
+    activate.state(["disabled"])
     cancel.state(["disabled"])
 
     def write(lines: str) -> None:
@@ -438,10 +549,12 @@ def main(argv: list[str] | None = None) -> int:
                 Path(current_models.get()).expanduser())
 
     def start(install: bool) -> None:
-        nonlocal busy
+        nonlocal busy, runtime_staged
         if busy:
             return
         busy = True
+        runtime_staged = False
+        activate.state(["disabled"])
         abort.clear()
         check.state(["disabled"])
         approve.state(["disabled"])
@@ -486,7 +599,7 @@ def main(argv: list[str] | None = None) -> int:
         threading.Thread(target=worker, daemon=True).start()
 
     def drain() -> None:
-        nonlocal busy, last_summary, last_pins, last_paths
+        nonlocal busy, last_summary, last_pins, last_paths, runtime_staged
         try:
             while True:
                 event = events.get_nowait()
@@ -506,6 +619,12 @@ def main(argv: list[str] | None = None) -> int:
                     last_summary = event[1]
                     executed = event[2]
                     last_paths = event[3]
+                    runtime_staged = bool(
+                        executed is not None and
+                        executed.state == "RUNTIME_STAGED_ENGINE_CONFIG_PENDING"
+                    )
+                    if runtime_staged and args.adapter_sha256 is not None:
+                        activate.state(["!disabled"])
                     check.state(["!disabled"])
                     cancel.state(["disabled"])
                     lines = [
@@ -584,6 +703,26 @@ def main(argv: list[str] | None = None) -> int:
                             threading.Thread(
                                 target=enroll_worker, daemon=True,
                             ).start()
+                elif event[0] == "engine_activation":
+                    busy = False
+                    check.state(["!disabled"])
+                    cancel.state(["disabled"])
+                    status, pid = event[1:]
+                    state_message.set(
+                        "Moteur lancé — santé et autonomie non certifiées"
+                        if pid is not None else
+                        "Moteur configuré — test de démarrage encore nécessaire")
+                    output.configure(state=tk.NORMAL)
+                    output.insert(tk.END, "\nMoteur Holding : " + status)
+                    output.configure(state=tk.DISABLED)
+                    if pid is not None:
+                        activate.state(["disabled"])
+                elif event[0] == "engine_activation_failed":
+                    busy = False
+                    check.state(["!disabled"])
+                    cancel.state(["disabled"])
+                    activate.state(["!disabled"])
+                    state_message.set("Enrôlement bloqué : " + event[1])
                 elif event[0] == "logon_enrolled":
                     status = event[1]
                     output.configure(state=tk.NORMAL)
@@ -627,7 +766,49 @@ def main(argv: list[str] | None = None) -> int:
             return
         start(True)
 
+    def activate_engine() -> None:
+        nonlocal busy
+        if (busy or not runtime_staged or not bundled_runtime_pins
+                or args.adapter_sha256 is None or last_paths is None):
+            return
+        if selected_paths() != last_paths:
+            state_message.set("Emplacements modifiés : nouvelle analyse nécessaire")
+            return
+        chosen = current_atlas.get().strip()
+        if not chosen:
+            state_message.set("Choisir le clone Git de Dof-Atlas")
+            return
+        if not messagebox.askyesno(
+            "Configuration du moteur",
+            "Configurer le moteur local avec l'adaptateur fourni et vérifié ? "
+            "Le dépôt Atlas doit être un vrai clone Git. Les dossiers de "
+            "configuration seront protégés, sans fusion GitHub automatique.",
+        ):
+            return
+        run_it = messagebox.askyesno(
+            "Démarrer le moteur",
+            "Lancer le moteur vérifié après son inscription ? "
+            "L'autonomie IA et la santé du moteur restent à confirmer.",
+        )
+        busy = True
+        activate.state(["disabled"])
+        check.state(["disabled"])
+        def worker() -> None:
+            try:
+                status, pid = configure_and_launch_engine(
+                    install_root=last_paths[0], atlas_root=Path(chosen),
+                    runtime_pins=bundled_runtime_pins,
+                    adapter_sha256=args.adapter_sha256,
+                    approved=True, launch_approved=run_it,
+                )
+                events.put(("engine_activation", status, pid))
+            except (OSError, ValueError, TypeError,
+                    RuntimePayloadError, EngineEnrollmentError) as exc:
+                events.put(("engine_activation_failed", type(exc).__name__))
+        threading.Thread(target=worker, daemon=True).start()
+
     check.configure(command=lambda: start(False))
+    activate.configure(command=activate_engine)
     approve.configure(command=approve_install)
     cancel.configure(command=abort.set)
     root.after(150, drain)
