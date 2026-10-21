@@ -58,6 +58,30 @@ class ProvisionRuntimeTests(unittest.TestCase):
         install.assert_not_called()
         self.assertFalse(self.root.exists())
 
+    def test_stopped_ollama_requires_consent_but_never_reinstalls_it(self):
+        broken = sample(
+            models=(),
+            ollama=Component(
+                "FOUND_BROKEN", path="C:/Program Files/Ollama/ollama.exe",
+                version="0.12",
+                reason="Ollama installed but local API is not healthy",
+            ),
+        )
+        with patch("holding.provision_runtime.install_versioned_zip") as zip_install:
+            with patch("holding.provision_runtime.install_pinned_winget") as winget:
+                before = self.run_plan(broken, (), approved=False, online=False)
+                after = self.run_plan(broken, (), approved=True, online=False)
+        self.assertEqual(before.state, "AUTH_REQUIRED")
+        self.assertTrue(any(row.action == "START_SERVICE" and
+                            row.result == "AWAITING_APPROVAL"
+                            for row in before.steps))
+        self.assertEqual(after.state, "PAYLOADS_STAGED_NOT_VALIDATED")
+        self.assertTrue(any(row.action == "START_SERVICE" and
+                            row.result == "SERVICE_START_PENDING"
+                            for row in after.steps))
+        zip_install.assert_not_called()
+        winget.assert_not_called()
+
     def test_missing_dependency_stages_only_one_pinned_payload(self):
         with patch(
             "holding.provision_runtime.inspect_versioned_zip",
