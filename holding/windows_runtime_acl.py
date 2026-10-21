@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 
 
-class RuntimeAclError(RuntimeError):
+class RuntimeAclError(ValueError):
     pass
 
 
