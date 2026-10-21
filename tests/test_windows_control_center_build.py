@@ -58,7 +58,7 @@ class ViewerBuildTests(unittest.TestCase):
 
     def test_engine_and_viewer_share_one_safe_windows_packager(self):
         for name in ("daemon_entry.py", "service.py", "state_store.py"):
-            (self.holding / name).write_text("# test source\\n", encoding="utf-8")
+            (self.holding / name).write_text("# test source\n", encoding="utf-8")
         seen = []
         def package(command, **options):
             self.assertFalse(options["shell"])
@@ -73,7 +73,7 @@ class ViewerBuildTests(unittest.TestCase):
             stage.mkdir()
             (stage / "AtlasHoldingEngine.exe").write_bytes(b"E" * 1_000_101)
             seen.append(command)
-        with patch("holding.windows_control_center_build.sys.platform", "win32"), \\
+        with patch("holding.windows_control_center_build.sys.platform", "win32"), \
              patch("holding.windows_control_center_build.subprocess.run",
                    side_effect=package):
             result = build_windows_engine(
