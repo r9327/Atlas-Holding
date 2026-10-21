@@ -8,6 +8,7 @@ import unittest
 
 from holding.windows_runtime_payload import (
     RuntimePayloadError, install_pinned_runtime_pair, verify_runtime_payload,
+    install_pinned_adapter, verify_pinned_adapter,
 )
 
 
@@ -29,6 +30,37 @@ class EmbeddedRuntimeTests(unittest.TestCase):
             name: hashlib.sha256((self.source / name).read_bytes()).hexdigest()
             for name in FILES
         }
+
+    def test_pinned_adapter_is_staged_reused_and_never_overwritten(self):
+        adapter = self.source / "AtlasHoldingAgent.exe"
+        adapter.write_bytes(b"trusted fixture adapter")
+        pin = hashlib.sha256(adapter.read_bytes()).hexdigest()
+        self.assertEqual(verify_pinned_adapter(adapter, pin), pin)
+        staged = install_pinned_adapter(
+            adapter, self.install_root, pin, approved=True)
+        self.assertEqual(staged, "STAGED_PINNED_ADAPTER_HEALTH_PENDING")
+        target = self.install_root / "agents" / "AtlasHoldingAgent.exe"
+        self.assertEqual(target.read_bytes(), adapter.read_bytes())
+        reused = install_pinned_adapter(
+            adapter, self.install_root, pin, approved=True)
+        self.assertEqual(reused, "REUSED_PINNED_ADAPTER_HEALTH_PENDING")
+        target.write_bytes(b"modified by another process")
+        with self.assertRaises(RuntimePayloadError):
+            install_pinned_adapter(adapter, self.install_root, pin, approved=True)
+        self.assertEqual(target.read_bytes(), b"modified by another process")
+
+    def test_adapter_refuses_incomplete_pin_and_never_creates_folder(self):
+        adapter = self.source / "AtlasHoldingAgent.exe"
+        adapter.write_bytes(b"trusted fixture adapter")
+        pin = hashlib.sha256(adapter.read_bytes()).hexdigest()
+        with self.assertRaises(RuntimePayloadError):
+            install_pinned_adapter(adapter, self.install_root, pin, approved=False)
+        with self.assertRaises(RuntimePayloadError):
+            install_pinned_adapter(adapter, self.install_root, "0" * 64,
+                                   approved=True)
+        with self.assertRaises(RuntimePayloadError):
+            verify_pinned_adapter(self.source / "foreign.exe", pin)
+        self.assertFalse((self.install_root / "agents").exists())
 
     def test_two_native_binaries_staged_and_reused_without_overwrite(self):
         self.assertEqual(verify_runtime_payload(self.source, self.pins),
