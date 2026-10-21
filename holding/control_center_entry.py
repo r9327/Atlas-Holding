@@ -42,6 +42,62 @@ def read_capabilities(stream: BinaryIO, *, readonly: bool) -> tuple[bytes, bytes
     return read_key, write_key
 
 
+def _windows_private_pipe(readonly: bool) -> BinaryIO:
+    """Read an inherited anonymous Windows pipe without a console.
+
+    PyInstaller --windowed may set sys.stdin = None. GetStdHandle still
+    addresses the actual private pipe inherited from our trusted parent.
+    Reject terminals, regular files and absent/invalid handles.
+    """
+    import io
+    import os
+    if os.name != "nt":
+        raise ViewerEnrollmentError("Private enrollment stdin unavailable")
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.GetStdHandle.argtypes = [wintypes.DWORD]
+    kernel.GetStdHandle.restype = wintypes.HANDLE
+    kernel.GetFileType.argtypes = [wintypes.HANDLE]
+    kernel.GetFileType.restype = wintypes.DWORD
+    kernel.ReadFile.argtypes = [
+        wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p,
+    ]
+    kernel.ReadFile.restype = wintypes.BOOL
+    handle = kernel.GetStdHandle(0xFFFFFFF6)  # STD_INPUT_HANDLE (-10)
+    if (not handle or handle == ctypes.c_void_p(-1).value
+            or kernel.GetFileType(handle) != 3):  # FILE_TYPE_PIPE
+        raise ViewerEnrollmentError("Trusted Windows pipe not available")
+    expected = 32 if readonly else 64
+    data = bytearray()
+    while len(data) <= expected:
+        size = expected + 1 - len(data)
+        buffer = ctypes.create_string_buffer(size)
+        received = wintypes.DWORD()
+        if not kernel.ReadFile(
+                handle, buffer, size, ctypes.byref(received), None):
+            # Broken pipe after parent EOF is normal. All other conditions
+            # fail closed; no console or disk fallback is attempted.
+            if ctypes.get_last_error() == 109:
+                break
+            raise ViewerEnrollmentError("Private Windows pipe read failed")
+        if not received.value:
+            break
+        data.extend(buffer.raw[:received.value])
+    return io.BytesIO(bytes(data))
+
+
+def _enrollment_input(*, readonly: bool, injected: BinaryIO | None) -> BinaryIO:
+    if injected is not None:
+        return injected
+    source = getattr(sys.stdin, "buffer", None)
+    if source is not None:
+        return source
+    return _windows_private_pipe(readonly)
+
+
 def _run_gui(
     reader: DashboardIpcClient,
     controller: DashboardControlClient | None,
@@ -85,7 +141,7 @@ def main(argv: list[str] | None = None, *, input_stream: BinaryIO | None = None)
         parser.error("--port and --engine-id are required outside self-test")
     try:
         read_key, write_key = read_capabilities(
-            sys.stdin.buffer if input_stream is None else input_stream,
+            _enrollment_input(readonly=args.readonly, injected=input_stream),
             readonly=args.readonly,
         )
         reader = DashboardIpcClient(
@@ -96,7 +152,8 @@ def main(argv: list[str] | None = None, *, input_stream: BinaryIO | None = None)
             if write_key is not None else None
         )
     except (ViewerEnrollmentError, DashboardIpcError):
-        print("Control Center: trusted enrollment unavailable", file=sys.stderr)
+        if sys.stderr is not None:
+            print("Control Center: trusted enrollment unavailable", file=sys.stderr)
         return 2
     if args.probe:
         # Test the actual authenticated frozen protocol, not an unauthenticated
