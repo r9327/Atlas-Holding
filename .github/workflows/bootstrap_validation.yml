@@ -38,3 +38,44 @@ jobs:
       - name: Require clean checkout after tests
         shell: bash
         run: 'test -z "$(git status --porcelain --untracked-files=normal)"'
+
+  windows-exe:
+    if: >-
+      github.head_ref == 'feat/02-windows-bootstrap' &&
+      github.event.label.name == 'ci:package-smoke'
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Configure Python 3.13
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Install fixed packaging tool
+        run: python -m pip install --disable-pip-version-check --only-binary=:all: "pyinstaller==6.22.3"
+      - name: Build EXE from test-only fixture (never publish)
+        shell: pwsh
+        run: |
+          $fixture = (Resolve-Path "tests/fixtures/bootstrap_smoke_assets.json").Path
+          $pin = (Get-FileHash -Algorithm SHA256 $fixture).Hash.ToLowerInvariant()
+          $destination = (Join-Path $PWD "smoke-output")
+          python -B -m holding.windows_build --manifest "$fixture" --manifest-sha256 "$pin" --output-dir "$destination"
+          if ($LASTEXITCODE -ne 0) { throw "Packaging failed" }
+          $exe = Join-Path $destination "AtlasHoldingSetup.exe"
+          if (!(Test-Path $exe)) { throw "Installer artifact missing" }
+          if ((Get-Item $exe).Length -lt 1000000) { throw "Executable is suspiciously small" }
+          Write-Output "Windows PE built from non-installable smoke fixture; NOT A RELEASE."
+          Write-Output "SHA256: $((Get-FileHash -Algorithm SHA256 $exe).Hash.ToLowerInvariant())"
+      - name: Check EXE verifies embedded manifest without launching setup
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD "smoke-output/AtlasHoldingSetup.exe"
+          $child = Start-Process -FilePath $exe -ArgumentList "--self-test" -PassThru -Wait
+          if ($child.ExitCode -ne 0) { throw "EXE manifest self-test failed: $($child.ExitCode)" }
+      - name: Check source remains unchanged
+        shell: bash
+        run: 'test -z "$(git status --porcelain --untracked-files=normal -- . :!smoke-output/)"'
