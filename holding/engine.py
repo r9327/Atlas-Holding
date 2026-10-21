@@ -88,8 +88,19 @@ class HoldingEngine:
         if self._stop.is_set() or self._stop_requested():
             return Tick('STOPPED', None, 'Stop requested')
         self.lease.assert_owned()
+        # A persisted Pause/STOP must not initiate any reachability probe.
+        # The atomic claim repeats this check under SQLite's writer lock.
+        if self.store.background_suspended():
+            return Tick('WAIT', None, 'Holding paused or stopped')
         try:
-            choice = self.store.claim_next(online=bool(self.online()), lease_owner=self.lease.owner,
+            # A broken network detector must not take down offline coding.
+            # Only an actual bool True can authorize external-required work.
+            try:
+                observed_online = self.online()
+            except (OSError, TimeoutError, ValueError):
+                observed_online = False
+            online = observed_online is True
+            choice = self.store.claim_next(online=online, lease_owner=self.lease.owner,
                                            supported_operations=self.supported_operations)
         except StoreError as exc:
             if str(exc) == 'DAEMON_LEASE_LOST':
