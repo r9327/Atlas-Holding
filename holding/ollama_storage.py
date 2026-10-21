@@ -26,6 +26,7 @@ _SOURCES = frozenset({
 class StoredModelDirectory:
     status: str
     directory: Path | None = None
+    source: str = ""
 
 
 def read_model_directory(install_root: Path) -> StoredModelDirectory:
@@ -52,7 +53,9 @@ def read_model_directory(install_root: Path) -> StoredModelDirectory:
         _no_linked_ancestors(path)
         if not path.is_dir():
             return StoredModelDirectory("MISSING_MODEL_VOLUME", path)
-        return StoredModelDirectory("STORED_PREFERENCE_NOT_RUNTIME_ATTESTED", path)
+        return StoredModelDirectory(
+            "STORED_PREFERENCE_NOT_RUNTIME_ATTESTED", path, raw["source"],
+        )
     except (OSError, ValueError, TypeError, UnicodeError, json.JSONDecodeError):
         return StoredModelDirectory("BLOCKED_INVALID")
 
@@ -111,4 +114,4 @@ def store_model_directory(
         if temp_name is not None:
             Path(temp_name).unlink(missing_ok=True)
     return StoredModelDirectory("STORED_PREFERENCE_NOT_RUNTIME_ATTESTED",
-                                model_root)
+                                model_root, source)
