@@ -140,6 +140,21 @@ def run(frozen_directory: Path) -> None:
                 raise RuntimeError("Foreign checkout caused state enrollment")
             _git("-C", str(canonical), "remote", "set-url", "origin",
                  "https://github.com/r9327/Dof-Atlas.git")
+            dirty = canonical / "UNTRACKED.tmp"
+            dirty.write_text("uncommitted code should never be targeted\n")
+            try:
+                configure_and_launch_engine(
+                    install_root=installed, atlas_root=canonical,
+                    runtime_pins=expected, adapter_sha256=agent_pin,
+                    model_name=_MODEL, approved=True, launch_approved=False,
+                )
+            except EngineEnrollmentError:
+                pass
+            else:
+                raise RuntimeError("Dirty canonical checkout was accepted")
+            if (installed / "config").exists() or (installed / "data").exists():
+                raise RuntimeError("Dirty checkout caused state enrollment")
+            dirty.unlink()
             status, pid = configure_and_launch_engine(
                 install_root=installed, atlas_root=canonical,
                 runtime_pins=expected, adapter_sha256=agent_pin,
