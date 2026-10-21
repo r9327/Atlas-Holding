@@ -100,16 +100,29 @@ def install_pinned_runtime_pair(
     parent.mkdir(exist_ok=True)
     if parent.resolve(strict=True) != parent:
         raise RuntimePayloadError("Runtime parent is not a canonical directory")
+    if os.name == "nt":
+        from .windows_runtime_acl import secure_runtime_acl
+        # Apply a protected native ACL before any executable bytes are copied.
+        secure_runtime_acl(parent)
     final = parent / version
     if final.exists() or final.is_symlink():
         ensure_active()
         try:
             verify_runtime_payload(final, expected)
-        except RuntimePayloadError as exc:
+            if os.name == "nt":
+                from .windows_runtime_acl import validate_runtime_acl
+                validate_runtime_acl(parent)
+                validate_runtime_acl(final)
+                for name in sorted(_RUNTIME_FILES):
+                    validate_runtime_acl(final / name)
+        except (RuntimePayloadError, OSError) as exc:
             raise RuntimePayloadError("Existing runtime is damaged; explicit repair required") from exc
         return InstalledRuntimePair("REUSED_BINARIES_SECURITY_PENDING", final)
     with tempfile.TemporaryDirectory(dir=parent, prefix=".runtime-staging-") as tmp:
         stage = Path(tmp).resolve()
+        if os.name == "nt":
+            from .windows_runtime_acl import secure_runtime_acl
+            secure_runtime_acl(stage)
         for name in sorted(_RUNTIME_FILES):
             ensure_active()
             src = source / name
@@ -122,6 +135,8 @@ def install_pinned_runtime_pair(
                     if not block:
                         break
                     writer.write(block)
+            if os.name == "nt":
+                secure_runtime_acl(stage / name)
             ensure_active()
         verify_runtime_payload(stage, expected)
         ensure_active()
@@ -131,4 +146,10 @@ def install_pinned_runtime_pair(
             raise RuntimePayloadError("Runtime destination appeared during staging")
         os.rename(stage, final)
     verify_runtime_payload(final, expected)
+    if os.name == "nt":
+        from .windows_runtime_acl import validate_runtime_acl
+        validate_runtime_acl(parent)
+        validate_runtime_acl(final)
+        for name in sorted(_RUNTIME_FILES):
+            validate_runtime_acl(final / name)
     return InstalledRuntimePair("STAGED_BINARIES_SECURITY_PENDING", final)
