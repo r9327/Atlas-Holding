@@ -40,6 +40,7 @@ def stage_required_dependencies(
     install_root: Path, cache_root: Path,
     cancelled: Callable[[], bool] | None = None,
     progress: Callable[[int, int], None] | None = None,
+    model_root: Path | None = None,
 ) -> ProvisionExecution:
     """Only stage unhealthy/missing dependencies; never auto-promote readiness.
 
@@ -51,7 +52,10 @@ def stage_required_dependencies(
             or not isinstance(pins, tuple) or type(online) is not bool
             or type(authorized) is not bool
             or not isinstance(install_root, Path) or not install_root.is_absolute()
-            or not isinstance(cache_root, Path) or not cache_root.is_absolute()):
+            or not isinstance(cache_root, Path) or not cache_root.is_absolute()
+            or (model_root is not None and (
+                not isinstance(model_root, Path) or not model_root.is_absolute()
+            ))):
         raise ValueError("Invalid trusted provision request")
     plan = make_plan(snapshot, online=online)
     if plan.blockers:
@@ -94,8 +98,12 @@ def stage_required_dependencies(
             )
         spec = manifest[action.name]
         if isinstance(spec, WingetPin):
+            arguments = (
+                {"model_root": model_root}
+                if action.name == "ollama" and model_root is not None else {}
+            )
             installed = install_pinned_winget(
-                spec, authorized=True, online=online,
+                spec, authorized=True, online=online, **arguments,
             )
             steps.append(ProvisionStep(action.name, action.action, installed.state))
             if installed.state != "INSTALLED_NOT_HEALTHCHECKED":
