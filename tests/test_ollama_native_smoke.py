@@ -127,6 +127,75 @@ class NativeOllamaSmokeTests(unittest.TestCase):
         self.assertTrue(start.call_args.kwargs["authorized"])
         self.assertEqual(start.call_args.kwargs["pins"][0].version, "0.32.8")
 
+    def test_winget_installer_auto_starts_server_without_storage_claim(self):
+        no_server = sample(ollama=Component("NOT_FOUND"), models=())
+        binary = WingetBinary(
+            "EXACT_BINARY_VERIFIED",
+            str(self.root / "ollama.exe"), "ollama 0.32.8",
+        )
+        with patch("holding.ollama_native_smoke._runner_gate"):
+            with patch("holding.ollama_native_smoke.scan",
+                       return_value=no_server):
+                with patch("holding.ollama_native_smoke._local_api_alive",
+                           side_effect=[False, True]):
+                    with patch("holding.ollama_native_smoke.discover_winget_binary",
+                               side_effect=[
+                                   WingetBinary("NO_PINNED_BINARY_FOUND"),
+                                   binary,
+                               ]):
+                        with patch("holding.ollama_native_smoke.install_pinned_winget",
+                                   return_value=WingetResult(
+                                       "ollama", "INSTALLED_NOT_HEALTHCHECKED",
+                                   )):
+                            with patch("holding.ollama_native_smoke.start_local_ollama") as launch:
+                                with patch("holding.ollama_native_smoke._api_json",
+                                           side_effect=[
+                                               {"version": "0.32.8"},
+                                               {"models": []},
+                                           ]):
+                                    result = verify_real_ollama()
+        self.assertEqual(
+            result["state"],
+            "OLLAMA_WINDOWS_AUTOSTART_API_PASS_STORAGE_UNVERIFIED",
+        )
+        self.assertEqual(result["model_volume"], "NOT_ATTESTED")
+        launch.assert_not_called()
+
+    def test_port_race_with_new_external_daemon_never_claims_owned(self):
+        no_server = sample(ollama=Component("NOT_FOUND"), models=())
+        with patch("holding.ollama_native_smoke._runner_gate"):
+            with patch("holding.ollama_native_smoke.scan",
+                       return_value=no_server):
+                with patch("holding.ollama_native_smoke._local_api_alive",
+                           return_value=False):
+                    with patch("holding.ollama_native_smoke.discover_winget_binary",
+                               side_effect=[
+                                   WingetBinary("NO_PINNED_BINARY_FOUND"),
+                                   WingetBinary(
+                                       "EXACT_BINARY_VERIFIED",
+                                       str(self.root / "ollama.exe"), "ollama 0.32.8",
+                                   ),
+                               ]):
+                        with patch("holding.ollama_native_smoke.install_pinned_winget",
+                                   return_value=WingetResult(
+                                       "ollama", "INSTALLED_NOT_HEALTHCHECKED",
+                                   )):
+                            with patch("holding.ollama_native_smoke.start_local_ollama",
+                                       return_value=OllamaLaunch(
+                                           "EXISTING_API_STORAGE_UNVERIFIED",
+                                           str(self.root), None,
+                                       )):
+                                with patch("holding.ollama_native_smoke._api_json",
+                                           side_effect=[
+                                               {"version": "0.32.8"},
+                                               {"models": []},
+                                           ]):
+                                    result = verify_real_ollama()
+        self.assertEqual(
+            result["state"],
+            "OLLAMA_WINDOWS_AUTOSTART_API_PASS_STORAGE_UNVERIFIED",
+        )
+
     def test_wrong_api_version_blocks_and_kills_our_child_only(self):
         no_server = sample(ollama=Component("NOT_FOUND"), models=())
         child = Child()
