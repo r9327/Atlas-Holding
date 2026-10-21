@@ -292,8 +292,10 @@ def main(argv: list[str] | None = None) -> int:
         output.insert("1.0", lines)
         output.configure(state=tk.DISABLED)
 
-    def selected_paths() -> tuple[Path, Path]:
-        return Path(current_install.get()).expanduser(), Path(current_cache.get()).expanduser()
+    def selected_paths() -> tuple[Path, Path, Path]:
+        return (Path(current_install.get()).expanduser(),
+                Path(current_cache.get()).expanduser(),
+                Path(current_models.get()).expanduser())
 
     def start(install: bool) -> None:
         nonlocal busy
@@ -305,7 +307,7 @@ def main(argv: list[str] | None = None) -> int:
         approve.state(["disabled"])
         cancel.state(["!disabled"] if install else ["disabled"])
         state_message.set("Installation en cours" if install else "Inventaire en cours")
-        current_target, current_storage = selected_paths()
+        current_target, current_storage, model_directory = selected_paths()
 
         def worker() -> None:
             try:
@@ -318,6 +320,7 @@ def main(argv: list[str] | None = None) -> int:
                         install_root=current_target,
                         cache_root=current_storage,
                         online=online, approved=True,
+                        model_root=model_directory,
                         cancelled=abort.is_set,
                         progress=lambda done, size: events.put(("progress", done, size)),
                     )
@@ -332,7 +335,8 @@ def main(argv: list[str] | None = None) -> int:
                     executed = None
                     events.put(("pins", pins))
                 events.put(("result", summary, executed,
-                            (current_target, current_storage)))
+                            (current_target, current_storage,
+                             model_directory)))
             except (OSError, ValueError, TypeError) as exc:
                 # Never dump exception text: a URL or credential may occur in it.
                 events.put(("error", type(exc).__name__))
@@ -366,6 +370,7 @@ def main(argv: list[str] | None = None) -> int:
                         f"Plateforme : {last_summary.os_name} {last_summary.architecture}",
                         f"GPU : {last_summary.gpu or 'Non détecté'}",
                         f"Modèles locaux trouvés : {last_summary.installed_models}",
+                        f"Dossier choisi pour les futurs modèles : {last_paths[2]}",
                         f"Archives ZIP à prévoir (maximum) : "
                         f"{last_summary.download_upper_bound_bytes / 1024**2:.1f} Mio",
                         (
