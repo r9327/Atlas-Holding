@@ -33,6 +33,23 @@ class MinGitCandidateTests(unittest.TestCase):
         with patch("holding.mingit_candidate.MINGIT_SHA256", self.digest):
             return prepare_mingit_candidate(self.zip)
 
+    def test_publisher_evidence_pins_release_and_never_fabricates_sizes(self):
+        import json
+        from holding.mingit_candidate import MINGIT_SHA256
+        evidence = json.loads((
+            Path(__file__).resolve().parent.parent / "release-candidates" /
+            "mingit-2.56.0.2-x64-evidence.json"
+        ).read_text(encoding="utf-8"))
+        self.assertEqual(evidence["sha256"], MINGIT_SHA256)
+        self.assertEqual(evidence["url"], MINGIT_URL)
+        self.assertEqual(evidence["package_version"], MINGIT_PACKAGE_VERSION)
+        self.assertEqual(evidence["native_git_version"],
+                         MINGIT_NATIVE_GIT_VERSION)
+        self.assertEqual(evidence["expected_executable"],
+                         MINGIT_EXECUTABLE)
+        self.assertIsNone(evidence["compressed_bytes"])
+        self.assertIsNone(evidence["unpacked_bytes"])
+
     def test_exact_zip_sizes_and_sha_pin_are_derived_not_guessed(self):
         pins = self.prepare()
         self.assertEqual(len(pins), 3)
