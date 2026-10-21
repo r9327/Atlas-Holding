@@ -43,6 +43,117 @@ class WindowsSetupTests(unittest.TestCase):
                         online=online,
                     )
 
+    def test_engine_activation_does_not_run_without_consent_or_release_pin(self):
+        from holding.windows_setup import configure_and_launch_engine
+        from holding.windows_engine_enrollment import EngineEnrollmentError
+        import hashlib
+        self.install_root.mkdir()
+        atlas = self.install_root.parent / "atlas"
+        atlas.mkdir()
+        with patch("holding.windows_setup.protect_approved_install_root") as protect:
+            with self.assertRaisesRegex(EngineEnrollmentError, "consent"):
+                configure_and_launch_engine(
+                    install_root=self.install_root, atlas_root=atlas,
+                    runtime_pins={}, adapter_sha256="a" * 64,
+                    approved=False, launch_approved=False,
+                )
+            with self.assertRaisesRegex(EngineEnrollmentError, "installation inputs"):
+                configure_and_launch_engine(
+                    install_root=self.install_root, atlas_root=atlas,
+                    runtime_pins={}, adapter_sha256="a" * 64,
+                    approved=True, launch_approved=False,
+                )
+            protect.assert_not_called()
+
+    def test_engine_activation_enforces_bundled_adapter_hash_before_acl_mutation(self):
+        import hashlib
+        from holding.windows_setup import configure_and_launch_engine
+        from holding.windows_engine_enrollment import EngineEnrollmentError
+        self.install_root.mkdir()
+        atlas = self.install_root.parent / "atlas"
+        atlas.mkdir()
+        agents = self.install_root / "agents"
+        agents.mkdir()
+        agent = agents / "AtlasHoldingAgent.exe"
+        agent.write_bytes(b"installed test adapter")
+        pins = {
+            "AtlasHoldingControlCenter.exe": "a" * 64,
+            "AtlasHoldingEngine.exe": "b" * 64,
+        }
+        with patch("holding.windows_engine_enrollment._require_native_windows"), patch(
+                "holding.windows_setup.verify_runtime_payload"
+        ), patch("holding.windows_setup.protect_approved_install_root") as protect:
+            with self.assertRaisesRegex(EngineEnrollmentError, "release pin"):
+                configure_and_launch_engine(
+                    install_root=self.install_root, atlas_root=atlas,
+                    runtime_pins=pins, adapter_sha256="f" * 64,
+                    approved=True, launch_approved=False,
+                )
+            protect.assert_not_called()
+
+    def test_engine_activation_prepares_pinned_config_then_launches_with_consent(self):
+        import hashlib
+        from unittest.mock import Mock
+        from holding.windows_setup import configure_and_launch_engine
+        from holding.windows_engine_enrollment import EngineEnrollment
+        self.install_root.mkdir()
+        atlas = self.install_root.parent / "atlas"
+        atlas.mkdir()
+        agent_dir = self.install_root / "agents"
+        agent_dir.mkdir()
+        agent = agent_dir / "AtlasHoldingAgent.exe"
+        agent.write_bytes(b"pinned trusted fixture")
+        pin = hashlib.sha256(agent.read_bytes()).hexdigest()
+        runtime = self.install_root / "runtime" / ("a" * 16 + "-" + "b" * 16)
+        runtime.mkdir(parents=True)
+        pins = {
+            "AtlasHoldingControlCenter.exe": "a" * 64,
+            "AtlasHoldingEngine.exe": "b" * 64,
+        }
+        receipt = EngineEnrollment(
+            self.install_root / "config" / "engine.json", "c" * 64,
+            "CONFIGURED_ENGINE_HEALTH_PENDING",
+        )
+        with patch("holding.windows_engine_enrollment._require_native_windows"), patch(
+                "holding.windows_setup.verify_runtime_payload"
+        ) as binaries, patch(
+                "holding.windows_setup.protect_approved_install_root"
+        ) as protect, patch(
+                "holding.windows_setup.validate_runtime_acl"
+        ) as rights, patch(
+                "holding.windows_setup.secure_runtime_acl"
+        ) as secure, patch(
+                "holding.windows_setup.prepare_protected_engine_roots"
+        ) as folders, patch(
+                "holding.windows_setup.enroll_pinned_engine", return_value=receipt
+        ) as enroll, patch(
+                "holding.windows_setup.launch_enrolled_engine"
+        ) as launch:
+            status, pid = configure_and_launch_engine(
+                install_root=self.install_root, atlas_root=atlas,
+                runtime_pins=pins, adapter_sha256=pin,
+                approved=True, launch_approved=False,
+            )
+            self.assertEqual(status, receipt.status)
+            self.assertIsNone(pid)
+            launch.assert_not_called()
+            self.assertEqual(binaries.call_args.args, (runtime, pins))
+            protect.assert_called_with(self.install_root, approved=True)
+            folders.assert_called_with(self.install_root, approved=True)
+            request = enroll.call_args.args[0]
+            self.assertEqual(request.agent_executable, agent)
+            self.assertEqual(request.canonical_root, atlas)
+            self.assertEqual(request.agent_argument_pins, {})
+            launch.return_value = Mock(status="ENGINE_SPAWNED_HEALTH_PENDING",
+                                       process=Mock(pid=7380))
+            status, pid = configure_and_launch_engine(
+                install_root=self.install_root, atlas_root=atlas,
+                runtime_pins=pins, adapter_sha256=pin,
+                approved=True, launch_approved=True,
+            )
+            self.assertEqual((status, pid), ("ENGINE_SPAWNED_HEALTH_PENDING", 7380))
+            launch.assert_called_once_with(request, receipt, approved=True)
+
     def test_first_install_preflight_is_read_only_and_reports_bytes(self):
         summary, pins = self.call_preflight()
         self.assertEqual(summary.phase, "PREFLIGHT")
