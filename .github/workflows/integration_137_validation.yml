@@ -76,6 +76,8 @@ jobs:
           & $engine --self-test --config invalid
           if ($LASTEXITCODE -ne 2) { throw "Frozen engine accepted conflicting self-test args" }
           Write-Output "NONRELEASE_GUI_QT_SMOKE_PASS"
+          python -B -X utf8 tests/native_windows_runtime_smoke.py --viewer "$exe" --engine "$engine"
+          if ($LASTEXITCODE -ne 0) { throw "Frozen GUI-to-engine native private-pipe smoke failed" }
           Write-Output "NONRELEASE_ENGINE_SQLITE_SMOKE_PASS"
           Write-Output "Viewer SHA256: $((Get-FileHash -Algorithm SHA256 $exe).Hash.ToLowerInvariant())"
           Write-Output "Engine SHA256: $((Get-FileHash -Algorithm SHA256 $engine).Hash.ToLowerInvariant())"
