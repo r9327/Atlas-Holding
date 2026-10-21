@@ -111,8 +111,11 @@ class McpStdioTests(unittest.TestCase):
         self.assertEqual(
             response(self.server, nonfinite)["error"]["code"], -32700)
         deeply_nested = b"[" * 2500 + b"0" + b"]" * 2500 + b"\n"
-        self.assertEqual(
-            response(self.server, deeply_nested)["error"]["code"], -32700)
+        # Python JSON decoder depth limits vary by runtime. Whether decoding
+        # fails (-32700) or succeeds with a non-object (-32600), reject safely.
+        self.assertIn(
+            response(self.server, deeply_nested)["error"]["code"],
+            (-32700, -32600))
         self.assertEqual(
             response(self.server, request("tools/list"))["result"]["tools"][0]["name"],
             "holding.health",
