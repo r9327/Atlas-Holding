@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from .inventory import Inventory
 from .provision_plan import make_plan
@@ -35,6 +36,8 @@ def stage_required_dependencies(
     snapshot: Inventory, pins: tuple[PinnedZip, ...], *,
     online: bool, authorized: bool,
     install_root: Path, cache_root: Path,
+    cancelled: Callable[[], bool] | None = None,
+    progress: Callable[[int, int], None] | None = None,
 ) -> ProvisionExecution:
     """Only stage unhealthy/missing dependencies; never auto-promote readiness.
 
@@ -81,6 +84,10 @@ def stage_required_dependencies(
         return ProvisionExecution("AUTH_REQUIRED", tuple(steps), ())
 
     for action in needed:
+        if cancelled is not None and cancelled():
+            return ProvisionExecution(
+                "PARTIAL_OR_BLOCKED", tuple(steps), ("Installation cancelled",),
+            )
         spec = manifest[action.name]
         existing = inspect_versioned_zip(spec, install_root=install_root)
         if existing.status == "BLOCKED_INVALID":
@@ -95,7 +102,7 @@ def stage_required_dependencies(
         try:
             published = install_versioned_zip(
                 spec, install_root=install_root, cache_root=cache_root,
-                authorized=True,
+                authorized=True, cancelled=cancelled, progress=progress,
             )
         except (InstallError, DownloadError, OSError) as exc:
             steps.append(ProvisionStep(action.name, action.action, "BLOCKED"))
