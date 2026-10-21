@@ -76,7 +76,7 @@ def _invoke(agent: Path, config: Path, action: str, payload: dict) -> subprocess
     return subprocess.run(
         [str(agent), str(config)], input=request,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        timeout=45, check=False, shell=False,
+        timeout=45, check=False, shell=False, cwd=str(config.parent),
     )
 
 
