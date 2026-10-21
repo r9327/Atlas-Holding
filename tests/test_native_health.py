@@ -58,6 +58,20 @@ class NativeHealthTests(unittest.TestCase):
                 result = check_staged_binary(self.pin, install_root=self.root)
         self.assertEqual(result.state, "BINARY_VERSION_MISMATCH")
 
+    def test_longer_versions_cannot_impersonate_exact_release(self):
+        for output in ("git version 2.470", "git version 12.47",
+                       "git version 2.47-rc1", "git version 2.47.1"):
+            with self.subTest(output=output):
+                with patch("holding.native_health.inspect_versioned_zip",
+                           return_value=self.verified):
+                    with patch("holding.native_health.run_probe",
+                               return_value=subprocess.CompletedProcess(
+                                   [], 0, output, "")):
+                        result = check_staged_binary(
+                            self.pin, install_root=self.root,
+                        )
+                self.assertEqual(result.state, "BINARY_VERSION_MISMATCH")
+
     def test_timeout_and_runner_error_fail_closed(self):
         for failure in (
             subprocess.TimeoutExpired(["git.exe"], 2),
