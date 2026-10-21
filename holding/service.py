@@ -78,6 +78,7 @@ class HoldingService:
         self._git = recovery_git
         self._github_health = None
         self._dashboard_ipc = None
+        self._dashboard_session = None
 
     @classmethod
     def from_local_agent(cls, settings: ServiceSettings, *, program,
@@ -253,6 +254,21 @@ class HoldingService:
         self._dashboard_ipc = server
         return server.port
 
+    def disable_dashboard_ipc(self) -> None:
+        """Close the dashboard listener; never touch work or durable STOP."""
+        if self._dashboard_ipc is not None:
+            self._dashboard_ipc.close()
+            self._dashboard_ipc = None
+
+    def launch_dashboard(self, program, *, readonly: bool = False) -> int:
+        """Trusted UI host startup, independent of daemon work loop."""
+        if self._dashboard_session is not None:
+            raise RuntimeError("Dashboard viewer already launched")
+        from .dashboard_session import start_dashboard_session
+        session = start_dashboard_session(self, program, readonly=readonly)
+        self._dashboard_session = session
+        return session.pid
+
     def request_shutdown(self) -> None:
         """Cooperative shutdown: no DB operations inside a signal handler."""
         self._stop.set()
@@ -324,9 +340,10 @@ class HoldingService:
         return Tick("STOPPED", None, "Shutdown requested")
 
     def close(self) -> None:
-        if self._dashboard_ipc is not None:
-            self._dashboard_ipc.close()
-            self._dashboard_ipc = None
+        if self._dashboard_session is not None:
+            self._dashboard_session.close()
+            self._dashboard_session = None
+        self.disable_dashboard_ipc()
         self.engine.close()
         self._started = False
 
