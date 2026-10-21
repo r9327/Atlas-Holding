@@ -240,8 +240,12 @@ def main(args: list[str]) -> int:
     if args == ['--self-test']:
         # Frozen-binary and protocol contract test only. No LLM, model
         # inventory, credentials, filesystem mutation or roadmap execution.
+        # Production uses port 11434; tests may bind an ephemeral loopback
+        # port. Never accept a non-loopback endpoint or an external proxy.
+        endpoint = re.fullmatch(r'http://127\.0\.0\.1:([0-9]{1,5})', BASE)
         return 0 if (_SCHEMA['required'] == ['files', 'commit_message']
-                     and BASE == 'http://127.0.0.1:11434') else 2
+                     and endpoint is not None
+                     and 1 <= int(endpoint.group(1)) <= 65535) else 2
     if len(args) != 1 or args[0].startswith('--'):
         return 2
     try:
