@@ -77,6 +77,35 @@ class EmbeddedRuntimeTests(unittest.TestCase):
                 approved=True)
         self.assertFalse((self.install_root / "runtime").exists())
 
+    def test_cancel_before_first_file_does_not_install(self):
+        with self.assertRaisesRegex(RuntimePayloadError, "cancelled"):
+            install_pinned_runtime_pair(
+                self.source, self.install_root, self.pins, approved=True,
+                cancelled=lambda: True)
+        self.assertFalse((self.install_root / "runtime").exists())
+
+    def test_cancel_during_second_chunk_cleans_partial_staging(self):
+        calls = 0
+        def stop_during_copy():
+            nonlocal calls
+            calls += 1
+            return calls >= 5
+        with self.assertRaisesRegex(RuntimePayloadError, "cancelled"):
+            install_pinned_runtime_pair(
+                self.source, self.install_root, self.pins, approved=True,
+                cancelled=stop_during_copy)
+        parent = self.install_root / "runtime"
+        if parent.exists():
+            self.assertEqual(list(parent.iterdir()), [])
+
+    def test_cancel_after_existing_pair_does_not_report_reused(self):
+        install_pinned_runtime_pair(
+            self.source, self.install_root, self.pins, approved=True)
+        with self.assertRaisesRegex(RuntimePayloadError, "cancelled"):
+            install_pinned_runtime_pair(
+                self.source, self.install_root, self.pins, approved=True,
+                cancelled=lambda: True)
+
     def test_runtime_rejects_linked_binary(self):
         backup = self.source / "AtlasHoldingEngine.original"
         (self.source / FILES[1]).rename(backup)
