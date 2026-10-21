@@ -1,0 +1,23 @@
+{
+  "version": 3,
+  "assets": [
+    {
+      "kind": "winget",
+      "component": "git",
+      "package_id": "Git.Git",
+      "version": "2.55.0"
+    },
+    {
+      "kind": "winget",
+      "component": "ollama",
+      "package_id": "Ollama.Ollama",
+      "version": "0.32.8"
+    },
+    {
+      "kind": "winget",
+      "component": "opencode",
+      "package_id": "SST.opencode",
+      "version": "1.18.29"
+    }
+  ]
+}
