@@ -15,6 +15,7 @@ from .bootstrap_assets_cli import BootstrapManifestError, read_pinned_manifest
 from .inventory import scan
 from .provision_runtime import stage_required_dependencies
 from .staged_install import InstallError
+from .windows_setup import assess_post_install
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -39,9 +40,16 @@ def main(argv: list[str] | None = None) -> int:
             online=args.online_confirmed, authorized=args.approve_install,
             install_root=args.install_root, cache_root=args.cache_root,
         )
+        if args.approve_install and result.state == "PAYLOADS_STAGED_NOT_VALIDATED":
+            # CLI and GUI must not diverge: a successful unpack/winget exit
+            # is never proof that the native toolchain really works.
+            result = assess_post_install(
+                result, scan(args.install_root), pins,
+                install_root=args.install_root,
+            )
         print(json.dumps(asdict(result), sort_keys=True, ensure_ascii=True))
         return 0 if result.state in {
-            "AUTH_REQUIRED", "PAYLOADS_STAGED_NOT_VALIDATED",
+            "AUTH_REQUIRED", "TOOLCHAIN_HEALTHY_MODEL_BENCHMARK_PENDING",
         } else 2
     except (BootstrapManifestError, InstallError, ValueError, OSError) as exc:
         # No raw exception messages or URL tokens in user-facing/error logs.
