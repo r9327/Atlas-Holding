@@ -404,6 +404,13 @@ def configure_and_launch_engine(
     except RuntimePayloadError as exc:
         raise EngineEnrollmentError(
             "Installed agent does not match trusted release pin") from exc
+    # Reject an absent/unselected model BEFORE modifying any ACL or folder.
+    # The model identity is verified again during pin publication to detect
+    # changes between inventory and enrollment.
+    if not model_name:
+        raise EngineEnrollmentError("An installed Ollama model must be selected")
+    if model_name not in dict(discover_local_models()):
+        raise EngineEnrollmentError("The chosen Ollama model is not installed")
     # Root ACL modifications are separately approved in the first-run dialog.
     # They are never attempted against a drive or user profile root.
     protect_approved_install_root(install_root, approved=True)
@@ -423,8 +430,6 @@ def configure_and_launch_engine(
         else:
             folder.mkdir()
             secure_runtime_acl(folder)
-    if not model_name:
-        raise EngineEnrollmentError("An installed Ollama model must be selected")
     selected = enroll_local_model(
         install_root, selected_model=model_name, approved=True)
     request = EngineEnrollmentRequest(
