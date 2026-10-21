@@ -115,7 +115,7 @@ def install_pinned_runtime_pair(
                 validate_runtime_acl(final)
                 for name in sorted(_RUNTIME_FILES):
                     validate_runtime_acl(final / name)
-        except (RuntimePayloadError, OSError) as exc:
+        except (RuntimePayloadError, OSError, ValueError) as exc:
             raise RuntimePayloadError("Existing runtime is damaged; explicit repair required") from exc
         return InstalledRuntimePair("REUSED_BINARIES_SECURITY_PENDING", final)
     with tempfile.TemporaryDirectory(dir=parent, prefix=".runtime-staging-") as tmp:
