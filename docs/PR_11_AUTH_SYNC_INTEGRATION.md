@@ -73,6 +73,16 @@ Cette PR Draft vérifie ensemble les contrats développés séparément dans :
 - `tests/test_control_center_entry.py` couvre le parsing strict des capacités, l'absence de divulgation des secrets, le mode lecture seule et les erreurs pré-Qt.
 - **Prochaine étape à ne pas confondre avec ce lot :** le setup natif doit démarrer les processus de confiance avec un pipe OS protégé, générer des clés aléatoires fraîches à chaque session, contrôler ACL et identité de l'utilisateur, leur distribuer les capacités, puis tester l'EXE sans Python préinstallé.
 
+## Pont lanceur installé → service → GUI (21 octobre 2026)
+
+- `holding/dashboard_session.py` établit une **session locale réelle** : vérification SHA-256 juste avant exécution de l'exécutable GUI installé (et d'un éventuel script explicitement épinglé pour les tests), lancement via `subprocess.Popen(shell=False, close_fds=True)` sans identifiant dans les arguments / variables d'environnement, clés aléatoires uniques par session, transmission par un pipe stdin anonyme et fermé immédiatement après l'envoi.
+- `HoldingService.launch_dashboard()` lie le démarrage GUI au démon qui détient déjà son lease et son port IPC, sans interférer avec la boucle d'agents ; `HoldingService.close()` termine proprement l'enfant borné puis le serveur. Si l'exécutable a été altéré ou l'envoi échoue, la session est bloquée et l'écouteur est fermé ; aucune fausse preuve de lancement.
+- `Installation.load()` accepte maintenant le **schéma v3 opt-in** avec objet `dashboard` strict : `executable`, `executable_sha256`, `script`, `script_sha256`, `readonly`. Le dépôt cible, les politiques et les clés GitHub ne proviennent jamais des roadmaps. Les schémas v1 local et v2 broker GitHub restent compatibles ; v3 peut désactiver GitHub explicitement sans désactiver le Control Center.
+- `daemon_entry.main()` lance la fenêtre vérifiée après démarrage du moteur, uniquement dans une session utilisateur Windows interactive (Session 0 rejetée). Cela n'est pas un démarrage de bureau depuis un service Windows Session 0.
+- `tests/test_dashboard_session.py` teste un vrai sous-processus Python autonome qui authentifie le serveur IPC et effectue Pause via la clé reçue sur stdin, le mode lecture seule, une substitution de script, un binaire altéré et le nettoyage à la fermeture. `tests/test_daemon_entry.py` teste le câblage du schéma v3 et l'exécution de l'enfant.
+
+**Toujours interdit d'annoncer une release** : aucun compte Windows/service séparé et ACL native ne sont établis par le pont Python, les clés ne sont protégées qu'à l'intérieur de la session du lanceur, et le binaire Windows final de la GUI / l'installateur / parcours Windows vierge ne sont pas encore certifiés. Les scripts Python sont réservés aux harness/tests : le mode release doit livrer et épingler un véritable exécutable Windows signé ou explicitement non signé, puis valider son lancement interactif réel.
+
 ## Limites explicites
 
 - Aucun token n'est fourni au coordinateur ou stocké dans SQLite.
