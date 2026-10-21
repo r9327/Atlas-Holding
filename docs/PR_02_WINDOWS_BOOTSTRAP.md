@@ -1,4 +1,4 @@
-# PR 02 — Installation et réparation Windows (SPECIFICATION, NON IMPLEMENTEE)
+# PR 02 — Installation et réparation Windows (IMPLÉMENTATION PARTIELLE)
 
 **But utilisateur :** depuis une Release GitHub, télécharger un `AtlasHoldingSetup.exe`, double-cliquer et obtenir les dépendances et les modèles préparés avec un assistant visuel. Zéro achat imposé.
 
@@ -36,3 +36,11 @@ L'installateur ne doit **pas** demander « Quel modèle voulez-vous ? » ni impo
 
 ## Passage sans intervention récurrente
 L'utilisateur fournit ensuite **uniquement les roadmaps**. Les téléchargements et la sélection des modèles se font dans les autorisations initiales ; les permissions de GitHub sont également consenties une fois pour le dépôt exact. Suivre le contrat `docs/USER_AUTONOMY_PROFILE.md` de la PR #1, sans plafond mobile ni choix de modèles par nom. Cette exigence est à tester, pas déjà implémentée.
+
+## Lot réel : assets ZIP versionnés et manifestes (21 octobre 2026)
+
+- `holding/staged_install.py` : installation sous `components/<nom>/<version>-<SHA>` des **archives ZIP de runtime déjà approuvées**, après téléchargement/reprise SHA-256, vérification de la taille exacte et contrôle strict de chaque entrée ZIP (traversée, symlinks, fichiers spéciaux, doublons insensibles à la casse, noms Windows réservés, collisions fichier/dossier, limite de volume). Répertoire intermédiaire, publication finale par renommage, nettoyage en cas d'échec. Une version déjà installée est intégralement revérifiée avant réutilisation ; une version corrompue est refusée, **jamais écrasée ni réparée implicitement**.
+- `holding/bootstrap_assets_cli.py` : prévisualisation **sans mutation** par défaut ; manifeste JSON de release limité, dont le SHA-256 doit venir d'une source indépendante fiable (installateur/répertoire de publication), URL HTTPS, budget des téléchargements, approbation explicite `--approve-install`. Le résumé `PAYLOADS_STAGED_NOT_VALIDATED` n'atteste pas l'état READY des exécutables.
+- `tests/test_staged_install.py` et `tests/test_bootstrap_assets_cli.py` : cas de version réutilisée, archive malveillante, contenu modifié, autorisation, manif illisible/mal épinglé, échec partiel et annulation.
+- **Frontière de sécurité :** le manifeste ne doit jamais provenir d'une roadmap ou d'une réponse de modèle sans pin de release validé. L'installation sous une identité Windows dédiée et ACL de répertoires sécurisées reste du ressort du vrai installateur.
+- **Reste bloquant :** construire l'EXE, les intégrations natives Git/Ollama/OpenCode/Qt et leurs healthchecks après déploiement, la sélection des modèles par benchmarks #4, l'UI guidée/disque choisi et le scénario complet sur Windows propre. Les ZIP sont de simples données versionnées ; aucune commande téléchargée n'est exécutée par ce lot.
