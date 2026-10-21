@@ -139,6 +139,63 @@ class WindowsBuildTests(unittest.TestCase):
         self.assertEqual(result.sha256, hashlib.sha256(
             Path(result.artifact).read_bytes()).hexdigest())
 
+    def test_builder_embeds_pinned_adapter_only_with_complete_native_pair(self):
+        runtime = (self.project.parent / "approved-runtime").resolve()
+        runtime.mkdir()
+        names = ("AtlasHoldingControlCenter.exe", "AtlasHoldingEngine.exe")
+        for i, name in enumerate(names):
+            (runtime / name).write_bytes(bytes([73 + i]) * 1_000_101)
+        pins = {name: hashlib.sha256((runtime / name).read_bytes()).hexdigest()
+                for name in names}
+        adapter_dir = self.project.parent / "approved-agent"
+        adapter_dir.mkdir()
+        agent = adapter_dir / "AtlasHoldingAgent.exe"
+        agent.write_bytes(b"known verified adapter candidate")
+        pin = hashlib.sha256(agent.read_bytes()).hexdigest()
+        inspected = []
+        def package(command, *, cwd, check, timeout, shell):
+            resources = [
+                command[i + 1] for i, part in enumerate(command[:-1])
+                if part == "--add-data"
+            ]
+            self.assertEqual(len(resources), 4)
+            staged = [v for v in resources if "AtlasHoldingAgent.exe" in v]
+            self.assertEqual(len(staged), 1)
+            candidate = Path(staged[0].rsplit(os.pathsep, 1)[0])
+            self.assertEqual(hashlib.sha256(candidate.read_bytes()).hexdigest(), pin)
+            shim = Path(command[-1]).read_text(encoding="utf-8")
+            self.assertIn("--adapter-root", shim)
+            self.assertIn("--adapter-sha256", shim)
+            self.assertIn(pin, shim)
+            stage = Path(command[command.index("--distpath") + 1])
+            stage.mkdir()
+            (stage / "AtlasHoldingSetup.exe").write_bytes(b"MZ" + b"0" * 1600)
+            inspected.append(True)
+        with patch("holding.windows_build.sys.platform", "win32"), patch(
+                "holding.windows_build.subprocess.run", side_effect=package):
+            result = build_windows_installer(
+                manifest=self.manifest, expected_manifest_sha256=self.digest,
+                output_dir=self.output, project_root=self.project,
+                runtime_directory=runtime, runtime_pins=pins,
+                adapter_source=agent, adapter_sha256=pin,
+            )
+        self.assertTrue(inspected)
+        self.assertTrue(Path(result.artifact).is_file())
+
+    def test_builder_does_not_bundle_unpinned_adapter(self):
+        agent = self.project.parent / "AtlasHoldingAgent.exe"
+        agent.write_bytes(b"agent")
+        with patch("holding.windows_build.sys.platform", "win32"), patch(
+                "holding.windows_build.subprocess.run") as package:
+            with self.assertRaises(ValueError):
+                build_windows_installer(
+                    manifest=self.manifest,
+                    expected_manifest_sha256=self.digest,
+                    output_dir=self.output, project_root=self.project,
+                    adapter_source=agent, adapter_sha256="0" * 64,
+                )
+            package.assert_not_called()
+
     def test_runtime_tampering_or_partial_pins_refuse_packaging(self):
         runtime = (self.project.parent / "approved-runtime").resolve()
         runtime.mkdir()
