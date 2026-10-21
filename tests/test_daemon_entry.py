@@ -132,12 +132,12 @@ json.dump({'schema_version':1,'request_id':r['request_id'],'status':'OK',
     def _enable_dashboard(self, *, readonly=False):
         script = self.root / 'viewer.py'
         script.write_text(
-            "import pathlib,sys,time\\n"
-            "data=sys.stdin.buffer.read(65)\\n"
-            "assert len(data)==(32 if '--readonly' in sys.argv else 64)\\n"
+            "import pathlib,sys,time\n"
+            "data=sys.stdin.buffer.read(65)\n"
+            "assert len(data)==(32 if '--readonly' in sys.argv else 64)\n"
             "pathlib.Path(" + repr(str(self.root / 'viewer-started')) +
-            ").write_text('authenticated-pipe-delivered')\\n"
-            "time.sleep(15)\\n"
+            ").write_text('authenticated-pipe-delivered')\n"
+            "time.sleep(15)\n"
         )
         self.data['schema'] = 3
         self.data['github'] = None
