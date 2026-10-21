@@ -171,11 +171,43 @@ class WindowsSetupTests(unittest.TestCase):
                 )
             protect.assert_not_called()
 
+    def test_engine_activation_does_not_enroll_without_installed_model(self):
+        import hashlib
+        from holding.windows_setup import configure_and_launch_engine
+        from holding.windows_engine_enrollment import EngineEnrollmentError
+        self.install_root.mkdir()
+        atlas = self.install_root.parent / "atlas"
+        atlas.mkdir()
+        agent_dir = self.install_root / "agents"
+        agent_dir.mkdir()
+        agent = agent_dir / "AtlasHoldingAgent.exe"
+        agent.write_bytes(b"adapter code")
+        pin = hashlib.sha256(agent.read_bytes()).hexdigest()
+        runtime = self.install_root / "runtime" / ("a" * 16 + "-" + "b" * 16)
+        runtime.mkdir(parents=True)
+        with patch("holding.windows_engine_enrollment._require_native_windows"), patch(
+                "holding.windows_setup.verify_runtime_payload"), patch(
+                "holding.windows_setup.protect_approved_install_root"), patch(
+                "holding.windows_setup.validate_runtime_acl"), patch(
+                "holding.windows_setup.prepare_protected_engine_roots"), patch(
+                "holding.windows_setup.enroll_pinned_engine") as enroll:
+            with self.assertRaisesRegex(EngineEnrollmentError, "model"):
+                configure_and_launch_engine(
+                    install_root=self.install_root, atlas_root=atlas,
+                    runtime_pins={
+                        "AtlasHoldingControlCenter.exe": "a" * 64,
+                        "AtlasHoldingEngine.exe": "b" * 64,
+                    },
+                    adapter_sha256=pin, approved=True, launch_approved=False,
+                )
+            enroll.assert_not_called()
+
     def test_engine_activation_prepares_pinned_config_then_launches_with_consent(self):
         import hashlib
         from unittest.mock import Mock
         from holding.windows_setup import configure_and_launch_engine
         from holding.windows_engine_enrollment import EngineEnrollment
+        from holding.windows_model_enrollment import PinnedModel
         self.install_root.mkdir()
         atlas = self.install_root.parent / "atlas"
         atlas.mkdir()
@@ -207,12 +239,20 @@ class WindowsSetupTests(unittest.TestCase):
         ) as folders, patch(
                 "holding.windows_setup.enroll_pinned_engine", return_value=receipt
         ) as enroll, patch(
+                "holding.windows_setup.enroll_local_model",
+                return_value=PinnedModel(
+                    self.install_root / "agents" / "AtlasHoldingModel.json",
+                    "d" * 64, "atlas-test:Q4", "e" * 64,
+                    "MODEL_PINNED_HEALTH_PENDING",
+                ),
+        ) as model, patch(
                 "holding.windows_setup.launch_enrolled_engine"
         ) as launch:
             status, pid = configure_and_launch_engine(
                 install_root=self.install_root, atlas_root=atlas,
                 runtime_pins=pins, adapter_sha256=pin,
                 approved=True, launch_approved=False,
+                model_name="atlas-test:Q4",
             )
             self.assertEqual(status, receipt.status)
             self.assertIsNone(pid)
@@ -223,13 +263,18 @@ class WindowsSetupTests(unittest.TestCase):
             request = enroll.call_args.args[0]
             self.assertEqual(request.agent_executable, agent)
             self.assertEqual(request.canonical_root, atlas)
-            self.assertEqual(request.agent_argument_pins, {})
+            model_path = self.install_root / "agents" / "AtlasHoldingModel.json"
+            self.assertEqual(request.agent_arguments, (model_path,))
+            self.assertEqual(request.agent_argument_pins, {str(model_path): "d" * 64})
+            model.assert_called_with(
+                self.install_root, selected_model="atlas-test:Q4", approved=True)
             launch.return_value = Mock(status="ENGINE_SPAWNED_HEALTH_PENDING",
                                        process=Mock(pid=7380))
             status, pid = configure_and_launch_engine(
                 install_root=self.install_root, atlas_root=atlas,
                 runtime_pins=pins, adapter_sha256=pin,
                 approved=True, launch_approved=True,
+                model_name="atlas-test:Q4",
             )
             self.assertEqual((status, pid), ("ENGINE_SPAWNED_HEALTH_PENDING", 7380))
             launch.assert_called_once_with(request, receipt, approved=True)
