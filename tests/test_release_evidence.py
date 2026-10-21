@@ -1,8 +1,12 @@
+import hashlib
 import json
+from pathlib import Path
+import tempfile
 import unittest
 
 from holding.release_evidence import (
     ArtifactObservation, ReleaseEvidenceError, validate_release_manifest,
+    observe_native_release_files,
 )
 
 
@@ -161,6 +165,52 @@ class ReleaseEvidenceTests(unittest.TestCase):
             validate(value, signature_evidence="2" * 64)
         candidate = validate(value, signature_evidence="1" * 64)
         self.assertTrue(candidate.signed)
+
+    def test_release_observation_hashes_three_real_files_not_claims(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            data = {
+                "AtlasHoldingSetup.exe": b"S" * 27,
+                "AtlasHoldingControlCenter.exe": b"G" * 37,
+                "AtlasHoldingEngine.exe": b"E" * 41,
+            }
+            for name, content in data.items():
+                (root / name).write_bytes(content)
+            observed = observe_native_release_files(root)
+            self.assertEqual(set(observed), set(data))
+            for name, content in data.items():
+                self.assertEqual(
+                    observed[name],
+                    ArtifactObservation(hashlib.sha256(content).hexdigest(),
+                                        len(content)),
+                )
+            (root / "AtlasHoldingEngine.exe").write_bytes(b"MODIFIED")
+            self.assertNotEqual(
+                observe_native_release_files(root)["AtlasHoldingEngine.exe"],
+                observed["AtlasHoldingEngine.exe"],
+            )
+
+    def test_release_observation_fails_if_runtime_file_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            (root / "AtlasHoldingSetup.exe").write_bytes(b"setup")
+            with self.assertRaises(ReleaseEvidenceError):
+                observe_native_release_files(root)
+            with self.assertRaises(ReleaseEvidenceError):
+                observe_native_release_files(Path("relative"))
+
+    def test_release_observation_does_not_follow_symlinked_exe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            for name in ("AtlasHoldingSetup.exe", "AtlasHoldingEngine.exe"):
+                (root / name).write_bytes(b"some bytes")
+            link = root / "AtlasHoldingControlCenter.exe"
+            try:
+                link.symlink_to(root / "AtlasHoldingEngine.exe")
+            except (OSError, NotImplementedError):
+                self.skipTest("Symlink creation disabled")
+            with self.assertRaises(ReleaseEvidenceError):
+                observe_native_release_files(root)
 
     def test_duplicate_manifest_keys_are_rejected(self):
         raw = b'{"schema_version":1,"schema_version":1}'
