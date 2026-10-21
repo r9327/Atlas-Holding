@@ -123,3 +123,13 @@ La version et les hashes réels doivent provenir de la release approuvée avant 
 - `windows_setup.execute_setup` refait un inventaire **après** l'installation et `assess_post_install` exige Git/Ollama/OpenCode/Python en état `FOUND_VALID` avec une **version réellement épinglée pour chaque composant ajouté**. Les états `POST_INSTALL_RECHECK_REQUIRED` et `TOOLCHAIN_HEALTHY_MODEL_BENCHMARK_PENDING` ne peuvent être confondus avec un LLM certifié et fonctionnel.
 - Un exécutable Ollama installé mais dont l'API est arrêtée ne déclenche plus une seconde installation par défaut : le plan retourne `INSPECT` et demande le diagnostic du service. La sélection de disque dans l'interface est attachée au préflight : tout changement après présentation invalide l'accord jusqu'à une nouvelle analyse.
 - Bloquant pour la PR complète : confirmer cette nouvelle CI, intégrer un manifeste de distribution **officiel**, valider les divers scopes installateurs winget, activer le vrai service Ollama et les modèles, reprendre au reboot et exécuter un E2E Windows propre. Tous les tests automatisés restent distincts de la certification utilisateur.
+
+## Résolution native des outils gérés, sans modification du PATH — lot complémentaire
+
+`holding/managed_toolchain.py` résout Git/OpenCode/Ollama depuis les dossiers ZIP versionnés de la Holding : chemin **absolu** uniquement si le manifeste épinglé, tous les octets du paquet, l'exécutable et la sortie `--version` passent les vérifications, avec une seconde lecture d'intégrité après la sonde. Le binding reste une preuve **instantanée** : un futur lanceur doit revérifier avant chaque exécution.
+
+`holding/windows_setup.py` prend maintenant en compte ces binaires contrôlés lors du **post-install de Git et OpenCode**. Ils peuvent ainsi fonctionner sans second installateur ni modification de `PATH` ; la seule extraction d'un ZIP ou une sonde de version Ollama **ne suffit jamais** à confirmer le service Ollama, qui doit répondre correctement sur son API loopback.
+
+`holding/version_evidence.py` centralise l'identification **exacte** de la version attendue entre sonde native et inventaire post-install : une demande de `2.55.0` n'accepte pas `2.55.01`, `12.55.0`, `2.55.0-beta` ni `2.55.0.1` ; seul le suffixe officiel `.windows.N` est toléré pour Git.
+
+Enfin, `holding/provision_cli.py` réalise lui aussi l'inventaire post-install, et ne retourne le code 0 pour une installation validée que si **l'outillage réel est sain** (statut `TOOLCHAIN_HEALTHY_MODEL_BENCHMARK_PENDING`). Un service encore arrêté ou un exécutable non découvert bloque proprement. Le benchmark modèle et l'E2E Windows restent obligatoires ; aucun statut `READY` n'est émis.
