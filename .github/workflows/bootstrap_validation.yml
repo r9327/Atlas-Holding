@@ -4,6 +4,9 @@ on:
   pull_request:
     branches: [main]
     types: [ready_for_review, labeled]
+  push:
+    branches: [feat/02-windows-bootstrap]
+    paths: [.ci/bootstrap-validation.trigger]
 
 permissions:
   contents: read
@@ -11,9 +14,11 @@ permissions:
 jobs:
   bootstrap-tests:
     if: >-
-      github.head_ref == 'feat/02-windows-bootstrap' &&
-      (github.event.action == 'ready_for_review' ||
-       github.event.label.name == 'ci:validate')
+      (github.event_name == 'push' && github.ref_name == 'feat/02-windows-bootstrap') ||
+      (github.event_name == 'pull_request' &&
+       github.head_ref == 'feat/02-windows-bootstrap' &&
+       (github.event.action == 'ready_for_review' ||
+        github.event.label.name == 'ci:validate'))
     name: Bootstrap unittest on ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -25,7 +30,7 @@ jobs:
       - name: Checkout exact candidate SHA
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Python 3.13
         uses: actions/setup-python@v7
@@ -39,10 +44,10 @@ jobs:
         shell: bash
         run: 'test -z "$(git status --porcelain --untracked-files=normal)"'
       - name: Install pinned Windows build packager
-        if: matrix.os == 'windows-latest' && github.event.label.name == 'ci:validate'
+        if: matrix.os == 'windows-latest' && (github.event_name == 'push' || github.event.label.name == 'ci:validate')
         run: python -m pip install --disable-pip-version-check --only-binary=:all: "pyinstaller==6.22.3"
       - name: Package nonrelease Windows EXE with fixed unusable manifest
-        if: matrix.os == 'windows-latest' && github.event.label.name == 'ci:validate'
+        if: matrix.os == 'windows-latest' && (github.event_name == 'push' || github.event.label.name == 'ci:validate')
         shell: pwsh
         run: |
           $fixture = (Resolve-Path "tests/fixtures/bootstrap_smoke_assets.json").Path
@@ -55,14 +60,14 @@ jobs:
           Write-Output "NONRELEASE: test asset cannot install real dependencies"
           Write-Output "SHA256: $((Get-FileHash -Algorithm SHA256 $exe).Hash.ToLowerInvariant())"
       - name: Execute packaged Windows manifest self-test
-        if: matrix.os == 'windows-latest' && github.event.label.name == 'ci:validate'
+        if: matrix.os == 'windows-latest' && (github.event_name == 'push' || github.event.label.name == 'ci:validate')
         shell: pwsh
         run: |
           $exe = Join-Path $PWD "smoke-output/AtlasHoldingSetup.exe"
           $p = Start-Process -FilePath $exe -ArgumentList "--self-test" -PassThru -Wait
           if ($p.ExitCode -ne 0) { throw "Packaged self-test failed: $($p.ExitCode)" }
       - name: Remove nonrelease EXE and verify checkout
-        if: matrix.os == 'windows-latest' && github.event.label.name == 'ci:validate'
+        if: matrix.os == 'windows-latest' && (github.event_name == 'push' || github.event.label.name == 'ci:validate')
         shell: pwsh
         run: |
           Remove-Item -Force -Recurse "smoke-output"
