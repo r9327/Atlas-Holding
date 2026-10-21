@@ -1,6 +1,8 @@
 """End-to-end local loopback tests with real durable SQLite projections."""
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 from pathlib import Path
 import socket
@@ -15,6 +17,7 @@ from holding.control_center_projection import project_dashboard_snapshot
 from holding.dashboard_ipc import (
     DashboardIpcClient, DashboardIpcError, DashboardIpcServer,
 )
+from holding.service import HoldingService, ServiceSettings
 from holding.state_store import StateStore
 
 
@@ -75,6 +78,51 @@ class DashboardIpcTests(unittest.TestCase):
             self.assertFalse(status.stop_requested)
             self.assertFalse(status.paused)
         self.assertEqual(self.client().fetch().tasks[0].state, "READY")
+
+    def test_authenticated_frame_replay_is_rejected(self):
+        nonce = b"n" * 32
+        message = b"AH01" + nonce + hmac.new(
+            KEY, b"request" + nonce, hashlib.sha256).digest()
+        with socket.create_connection(("127.0.0.1", self.server.port),
+                                      timeout=2) as sock:
+            sock.sendall(message)
+            self.assertEqual(sock.recv(4), b"AH01")
+        with socket.create_connection(("127.0.0.1", self.server.port),
+                                      timeout=2) as sock:
+            sock.settimeout(2)
+            sock.sendall(message)
+            self.assertEqual(sock.recv(4), b"")
+        self.assertEqual(self.client().fetch().engine_id, ENGINE)
+
+    def test_service_owns_ipc_lifecycle_independent_of_window(self):
+        class IdleWorker:
+            def ready(self):
+                return True
+
+            def __call__(self, _mission):
+                raise AssertionError("Dashboard did not request code execution")
+
+        service = HoldingService(
+            ServiceSettings(self.path, idle_seconds=0.05),
+            IdleWorker(), online=lambda: False)
+        try:
+            with self.assertRaises(RuntimeError):
+                service.enable_dashboard_ipc(secret=KEY, engine_id=ENGINE)
+            service.start()
+            port = service.enable_dashboard_ipc(
+                secret=b"r" * 32, engine_id="service-engine")
+            with self.assertRaises(RuntimeError):
+                service.enable_dashboard_ipc(
+                    secret=b"r" * 32, engine_id="service-engine")
+            client = DashboardIpcClient(
+                port=port, secret=b"r" * 32, engine_id="service-engine")
+            self.assertEqual(client.fetch().tasks[0].state, "READY")
+            self.assertEqual(service.run(max_ticks=1).action, "COMPLETE")
+            self.assertEqual(client.fetch().engine_id, "service-engine")
+        finally:
+            service.close()
+        with self.assertRaises(DashboardIpcError):
+            client.fetch()
 
     def test_invalid_key_port_and_missing_database_never_bind(self):
         for invalid in (b"short", "not-bytes", b"x" * 129):
