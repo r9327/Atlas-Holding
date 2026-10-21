@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from holding.model_volume import ModelVolumeInspection
 from holding.windows_ollama_environment import (
-    configure_user_models, undo_created_user_models,
+    configure_user_models, undo_created_user_models, inspect_user_models,
 )
 
 
@@ -79,6 +79,45 @@ class UserOllamaEnvironmentTests(unittest.TestCase):
                    return_value="Windows"):
             with patch.dict(sys.modules, {"winreg": self.registry}):
                 return undo_created_user_models(self.root)
+
+    def inspected(self):
+        with patch("holding.windows_ollama_environment.platform.system",
+                   return_value="Windows"):
+            with patch.dict(sys.modules, {"winreg": self.registry}):
+                with patch("holding.windows_ollama_environment.inspect_model_volume",
+                           return_value=ModelVolumeInspection(
+                               "VOLUME_AVAILABLE", 20 * 1024**3,
+                           )):
+                    return inspect_user_models(self.root)
+
+    def test_read_only_exact_user_volume_inspection(self):
+        self.assertEqual(self.inspected().status, "USER_MODELS_NOT_CONFIGURED")
+        self.configured()
+        before = self.registry.writes
+        self.assertEqual(self.inspected().status, "USER_MODELS_MATCH")
+        self.assertEqual(self.registry.writes, before)
+
+    def test_read_only_inspection_refuses_mismatch_and_expanded_values(self):
+        self.registry.storage["OLLAMA_MODELS"] = (
+            str(self.root), self.registry.REG_EXPAND_SZ,
+        )
+        self.assertEqual(self.inspected().status, "USER_MODELS_CONFLICT")
+        self.registry.storage["OLLAMA_MODELS"] = (
+            "D:/Other", self.registry.REG_SZ,
+        )
+        self.assertEqual(self.inspected().status, "USER_MODELS_CONFLICT")
+
+    def test_missing_drive_cannot_claim_registered_path_is_usable(self):
+        self.configured()
+        with patch("holding.windows_ollama_environment.platform.system",
+                   return_value="Windows"):
+            with patch.dict(sys.modules, {"winreg": self.registry}):
+                with patch("holding.windows_ollama_environment.inspect_model_volume",
+                           return_value=ModelVolumeInspection(
+                               "VOLUME_UNAVAILABLE",
+                           )):
+                    state = inspect_user_models(self.root)
+        self.assertEqual(state.status, "MODEL_VOLUME_UNAVAILABLE")
 
     def test_no_consent_never_reads_or_writes_registry(self):
         result = self.configured(authorized=False)
