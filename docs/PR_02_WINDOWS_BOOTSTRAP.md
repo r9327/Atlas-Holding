@@ -57,3 +57,11 @@ L'utilisateur fournit ensuite **uniquement les roadmaps**. Les téléchargements
 - `bootstrap_assets_cli` renvoie ces observations dans le `PREVIEW_ONLY` avec un volume réseau prévu de **0 octet** si les fichiers correspondent déjà exactement au manifeste. Une installation corrompue produit `PREVIEW_BLOCKED` et un code de sortie d'échec ; aucune réparation silencieuse, ni suppression de données.
 - La prévisualisation peut devenir périmée : avant tout réemploi, le téléchargement/installer recontrôle le paquet sous verrou. `VERIFIED_PAYLOAD` signifie uniquement **fichiers installés conformes**, jamais `READY` du programme tant que son healthcheck réel n'est pas passé.
 - Testé par les nouvelles régressions de découverte sans mutation, état corrompu/symlink et indicateurs du CLI. **Dépendance restante** : brancher ces états à la GUI Windows et aux vraies vérifications Git/Ollama/OpenCode, avec des ACL natives.
+
+## Exécution ciblée du plan de provisionnement (21 octobre 2026)
+
+- `holding/provision_runtime.py` raccorde **l'inventaire mesuré** (`inventory.py`), les décisions `REUSE / INSTALL / REPAIR` (`provision_plan.py`) et les archives de release vérifiées (`staged_install.py`). Les composants `FOUND_VALID` sont **préservés** ; seuls les éléments INSTALL/REPAIR disposent d'un chemin de staging versionné.
+- Avant toute mutation, le runner vérifie la compatibilité Windows/disque/réseau, les pins disponibles pour **tous** les composants requis et l'autorisation globale. Pas de pin ou de permission : `BLOCKED` / `AUTH_REQUIRED` sans installer un composant sur la base d'une simple supposition.
+- Si un paquet de release correspondant est déjà conforme, il est réutilisé sans téléchargement. Une version corrompue bloque sans effacement, et un échec du 2e composant conserve un état `PARTIAL_OR_BLOCKED` plutôt que de déclarer un succès.
+- Les tests `tests/test_provision_runtime.py` couvrent non-réinstallation, mandat, pins manquants, réutilisation, corruption, plusieurs lots et échec partiel.
+- **Limites explicites :** fichiers préparés ≠ logiciels enregistrés/actifs, réparation PATH/services/native Windows à implémenter ; modèle IA non benchmarké ; premier EXE non construit. La couche d'installateur natif doit appliquer ACL, intégrité du manifeste signé et healthcheck réel avant d'annoncer la Holding opérationnelle.
