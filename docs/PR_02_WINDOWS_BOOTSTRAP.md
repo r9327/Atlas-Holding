@@ -434,3 +434,30 @@ recontrôlent 7 cibles ACL à chaque préflight de lancement.
 `launch_enrolled_engine` impose un consentement supplémentaire, revalide le reçu
 v3 et les EXE puis appelle le vrai lanceur. Le résultat ne revendique que
 `ENGINE_SPAWNED_HEALTH_PENDING` : ni un agent sain ni une release certifiée.
+
+### Parcours wizard → adaptateur embarqué → moteur natif (22 octobre 2026)
+
+Le wizard demande le clone Git existant de `r9327/Dof-Atlas` et n'autorise
+« Configurer / lancer le moteur » que si les deux EXE et
+`AtlasHoldingAgent.exe` ont été installés avec des SHA-256 correspondant
+aux ressources du setup. Les étapes restent explicitement séparées :
+
+1. Le packager peut embarquer `AtlasHoldingAgent.exe` avec son SHA-256, mais
+   **aucun binaire d'agent fonctionnel n'est fourni ni certifié par ce lot**.
+2. Après consentement, le setup copie l'adaptateur sous `agents/`, le
+   protège par ACL native et refuse de remplacer un binaire endommagé.
+3. Le premier lancement peut protéger le dossier d'application dédié, mais
+   refuse les racines de disque, profils et répertoires système. Les ACL d'un
+   autre dossier de données ne sont jamais corrigées automatiquement.
+4. Le wizard inscrit `engine.json` puis demande séparément l'autorisation
+   de lancer le processus moteur. Le choix « Configurer uniquement » permet
+   de revenir plus tard lancer sans perdre l'inscription.
+5. Les reçus portent `CONFIGURED_ENGINE_HEALTH_PENDING` ou
+   `ENGINE_SPAWNED_HEALTH_PENDING`, jamais `READY` sans preuve d'exécution.
+
+Le setup de test sans adaptateur embarqué garde l'activation **désactivée**.
+OpenCode/Ollama ne sont pas arbitrairement substitués à l'adaptateur JSON v1.
+Reste : produire l'adaptateur réellement compatible, intégrer la paire
+GUI+moteur depuis la PR #11 sur un SHA commun, valider le protocole de santé,
+les permissions Windows réelles, l'E2E machine propre et la certification
+avant release.
