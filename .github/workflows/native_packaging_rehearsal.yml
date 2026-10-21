@@ -58,5 +58,5 @@ jobs:
         shell: pwsh
         run: |
           $dirty = git status --porcelain --untracked-files=normal
-          $unexpected = @($dirty | Where-Object { $_ -notmatch '^\\?\\? _native/' })
+          $unexpected = @($dirty | Where-Object { $_ -and -not $_.StartsWith('?? _native/') })
           if ($unexpected.Count -gt 0) { throw "Native rehearsal modified release candidate source: $unexpected" }
