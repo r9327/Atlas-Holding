@@ -92,6 +92,59 @@ class WindowsSetupTests(unittest.TestCase):
         self.assertEqual(summary.status, "BLOCKED")
         self.assertTrue(summary.blockers)
 
+    def test_stopped_ollama_preflight_requires_consent_offline(self):
+        snapshot = sample(
+            models=(),
+            ollama=Component(
+                "FOUND_BROKEN", path="C:/Tools/ollama.exe",
+                version="0.12",
+                reason="Ollama installed but local API is not healthy",
+            ),
+        )
+        summary, pins = self.call_preflight(
+            snapshot=snapshot, online=False, pins=(),
+        )
+        self.assertEqual(summary.status, "CONSENT_REQUIRED")
+        self.assertEqual(summary.download_upper_bound_bytes, 0)
+        self.assertFalse(summary.blockers)
+        self.assertTrue(any(action == "START_SERVICE"
+                            for _, action, _ in summary.dependency_actions))
+
+    def test_execute_setup_starts_ollama_before_postcheck(self):
+        from holding.provision_runtime import ProvisionExecution
+        before = sample(
+            ollama=Component(
+                "FOUND_BROKEN", path="C:/Tools/ollama.exe",
+                version="0.12",
+                reason="Ollama installed but local API is not healthy",
+            ),
+        )
+        after = sample()
+        summary = self.call_preflight(snapshot=before, pins=())[0]
+        stage = ProvisionExecution(
+            "PAYLOADS_STAGED_NOT_VALIDATED",
+            (ProvisionStep("ollama", "START_SERVICE", "SERVICE_START_PENDING"),),
+            (),
+        )
+        models = self.install_root / "models"
+        with patch("holding.windows_setup.preflight_setup",
+                   return_value=(summary, ())):
+            with patch("holding.windows_setup.scan", return_value=before):
+                with patch("holding.windows_setup.stage_required_dependencies",
+                           return_value=stage):
+                    with patch("holding.windows_setup.ensure_selected_model_volume",
+                               return_value=(stage, after)) as run:
+                        result_summary, checked = execute_setup(
+                            manifest=self.manifest, manifest_sha256="b" * 64,
+                            install_root=self.install_root,
+                            cache_root=self.cache_root,
+                            online=False, approved=True, model_root=models,
+                        )
+        self.assertEqual(result_summary, summary)
+        self.assertEqual(checked.state,
+                         "TOOLCHAIN_HEALTHY_MODEL_BENCHMARK_PENDING")
+        self.assertEqual(run.call_args.kwargs["model_root"], models)
+
     def test_no_approval_cannot_call_staging(self):
         with patch("holding.windows_setup.preflight_setup",
                    return_value=self.call_preflight()):
