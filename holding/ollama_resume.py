@@ -14,6 +14,7 @@ from .inventory import scan
 from .ollama_service import start_local_ollama
 from .ollama_storage import read_model_directory
 from .staged_install import PinnedZip
+from .post_ollama_inventory import scan_ollama_with_pins
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,6 @@ def resume_ollama_at_logon(
     if outcome.state != "OWNED_API_HEALTHY":
         return ResumeResult("RESUME_" + outcome.state, str(record.directory))
     # Re-probe; a successful spawn alone is not a healthy installed service.
-    if scan(install_root).ollama.status != "FOUND_VALID":
+    if scan_ollama_with_pins(install_root, valid_pins).ollama.status != "FOUND_VALID":
         return ResumeResult("POST_RESUME_API_UNHEALTHY", str(record.directory))
     return ResumeResult("OWNED_SERVICE_RESUMED", str(record.directory))
