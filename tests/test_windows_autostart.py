@@ -184,6 +184,36 @@ class AutostartTests(unittest.TestCase):
         )
         self.assertEqual(self.registry.writes, 0)
 
+    def test_orchestrator_requires_persisted_model_volume_before_copy(self):
+        from holding.ollama_storage import StoredModelDirectory
+        with patch("holding.windows_autostart.read_model_directory",
+                   return_value=StoredModelDirectory("BLOCKED_INVALID")):
+            with patch("holding.windows_autostart.install_frozen_agent") as copy:
+                state = target.configure_logon_resume(
+                    self.install, authorized=True,
+                )
+        self.assertEqual(state, "MODEL_VOLUME_BLOCKED_INVALID")
+        copy.assert_not_called()
+
+    def test_orchestrator_registers_only_after_verified_frozen_host(self):
+        from holding.ollama_storage import StoredModelDirectory
+        with patch("holding.windows_autostart.read_model_directory",
+                   return_value=StoredModelDirectory(
+                       "STORED_PREFERENCE_NOT_RUNTIME_ATTESTED",
+                       self.base,
+                   )):
+            with patch("holding.windows_autostart.platform.system",
+                       return_value="Windows"):
+                with patch.object(target.sys, "frozen", True, create=True):
+                    with patch.object(target.sys, "executable",
+                                      str(self.source)):
+                        with patch.dict(sys.modules, {"winreg": self.registry}):
+                            state = target.configure_logon_resume(
+                                self.install, authorized=True,
+                            )
+        self.assertEqual(state, "LOGON_RESUME_ENROLLED")
+        self.assertEqual(self.registry.writes, 1)
+
     def test_oversized_run_command_is_refused(self):
         long_root = self.base / ("very-long-folder-name" * 15)
         with self.assertRaises(ValueError):
