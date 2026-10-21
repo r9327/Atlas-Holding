@@ -156,7 +156,11 @@ def start_dashboard_session(
         session = DashboardSession(child)
         return session
     except BaseException:
-        if child is not None:
-            DashboardSession(child).close()
-        service.disable_dashboard_ipc()
+        # The child may refuse termination after a broken enrollment pipe.
+        # Never leave its old authenticated listener reachable on that path.
+        try:
+            if child is not None:
+                DashboardSession(child).close()
+        finally:
+            service.disable_dashboard_ipc()
         raise
