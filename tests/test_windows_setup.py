@@ -60,6 +60,36 @@ class WindowsSetupTests(unittest.TestCase):
         self.assertEqual(summary.status, "CONSENT_REQUIRED")
         self.assertEqual(summary.download_upper_bound_bytes, 0)
 
+    def test_second_launch_restores_pinned_cli_before_planning_downloads(self):
+        from holding.windows_package_manager import WingetPin
+        pin = WingetPin("opencode", "SST.opencode", "1.18.29")
+        restored = sample(opencode=Component(
+            "FOUND_VALID", path=str(self.install_root / "opencode.exe"),
+            version="opencode 1.18.29",
+        ))
+        with patch("holding.windows_setup.read_pinned_manifest",
+                   return_value=(pin,)):
+            with patch("holding.windows_setup.scan",
+                       return_value=self.snapshot):
+                with patch("holding.windows_setup.restore_pinned_inventory",
+                           return_value=restored) as recover:
+                    with patch("holding.windows_setup.inspect_versioned_zip") as inspect:
+                        report, found_pins = preflight_setup(
+                            manifest=self.manifest,
+                            manifest_sha256="b" * 64,
+                            install_root=self.install_root,
+                            cache_root=self.cache_root,
+                            online=True,
+                        )
+        self.assertEqual(report.status, "BENCHMARK_REQUIRED")
+        self.assertEqual(report.unestimated_package_downloads, 0)
+        self.assertEqual(report.download_upper_bound_bytes, 0)
+        recover.assert_called_once_with(
+            self.snapshot, (pin,), install_root=self.install_root,
+        )
+        inspect.assert_not_called()
+        self.assertEqual(found_pins, (pin,))
+
     def test_winget_download_size_is_explicitly_unknown(self):
         from holding.windows_package_manager import WingetPin
         pin = WingetPin("opencode", "SST.opencode", "1.18.29")
