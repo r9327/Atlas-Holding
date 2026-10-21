@@ -32,9 +32,13 @@ class WindowsUserSessionTests(unittest.TestCase):
             self.assertEqual(info_kind, 1)
             if not station_ok:
                 return False
-            ctypes.cast(
-                flags, ctypes.POINTER(ctypes.c_uint32),
-            )[2] = 1 if visible else 0
+            # On Linux ctypes.wintypes.BOOL may occupy 8 bytes, whereas
+            # Win32 BOOL is 4. Target the structure field's true offset.
+            address = ctypes.cast(flags, ctypes.c_void_p).value
+            offset = 2 * ctypes.sizeof(wintypes.BOOL)
+            ctypes.c_uint32.from_address(address + offset).value = (
+                1 if visible else 0
+            )
             return True
 
         kernel.ProcessIdToSessionId.side_effect = session_lookup
