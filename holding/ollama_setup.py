@@ -11,6 +11,8 @@ from typing import Callable
 from .inventory import Inventory, scan
 from .ollama_service import start_local_ollama
 from .ollama_storage import store_model_directory
+from .staged_install import _no_linked_ancestors
+from .windows_ollama_environment import inspect_user_models
 from .post_ollama_inventory import scan_ollama_with_pins
 from .provision_runtime import ProvisionExecution, ProvisionStep
 from .staged_install import PinnedZip
@@ -27,12 +29,55 @@ def ensure_selected_model_volume(
     if not model_root.is_absolute():
         raise ValueError("Absolute models storage path required")
     if inventory.ollama.status == "FOUND_VALID":
-        step = ProvisionStep(
-            "ollama", "MODEL_STORAGE",
-            "EXISTING_SERVER_STORAGE_NOT_ATTESTED",
-        )
+        # Ollama Desktop's Inno installer often starts a server before Atlas
+        # can launch its own. Preserve the user's *configured* volume after
+        # verifying the native HKCU key, but do not claim the already running
+        # process inherited it. Do not kill or restart another user's server.
+        configured = inspect_user_models(model_root)
+        if configured.status != "USER_MODELS_MATCH":
+            step = ProvisionStep(
+                "ollama", "MODEL_STORAGE",
+                "EXISTING_SERVER_STORAGE_NOT_ATTESTED",
+            )
+            return ProvisionExecution(
+                execution.state,
+                execution.steps + (
+                    ProvisionStep(
+                        "ollama", "USER_MODEL_ENVIRONMENT", configured.status,
+                    ),
+                    step,
+                ), execution.blockers,
+            ), inventory
+        try:
+            _no_linked_ancestors(model_root)
+            model_root.mkdir(parents=True, exist_ok=True)
+            _no_linked_ancestors(model_root)
+            recorded = store_model_directory(
+                install_root, model_root, authorized=True,
+                source="consented_user_ollama_environment",
+            )
+        except (OSError, ValueError):
+            recorded = None
+        if recorded is None or (
+            recorded.status != "STORED_PREFERENCE_NOT_RUNTIME_ATTESTED"
+        ):
+            step = ProvisionStep(
+                "ollama", "MODEL_STORAGE",
+                "USER_ENV_PREFERENCE_SAVE_BLOCKED" if recorded is None
+                else recorded.status,
+            )
+            return ProvisionExecution(
+                "PARTIAL_OR_BLOCKED", execution.steps + (step,),
+                execution.blockers +
+                ("User model directory preference could not be retained",),
+            ), inventory
         return ProvisionExecution(
-            execution.state, execution.steps + (step,), execution.blockers,
+            execution.state, execution.steps + (
+                ProvisionStep("ollama", "USER_MODEL_ENVIRONMENT",
+                              "USER_MODELS_MATCH"),
+                ProvisionStep("ollama", "MODEL_STORAGE",
+                              "USER_ENV_CONFIGURED_API_STORAGE_UNATTESTED"),
+            ), execution.blockers,
         ), inventory
     session = start_local_ollama(
         inventory, install_root=install_root, model_root=model_root,
