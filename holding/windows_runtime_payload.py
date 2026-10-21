@@ -5,9 +5,13 @@ installation, invent a release verdict or provision Windows ACLs.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hashlib
+import os
 from pathlib import Path
 import re
+import shutil
+import tempfile
 from typing import Mapping
 
 
@@ -56,3 +60,56 @@ def verify_runtime_payload(
         return observations
     except OSError as exc:
         raise RuntimePayloadError("Runtime payload files unavailable") from exc
+
+
+@dataclass(frozen=True)
+class InstalledRuntimePair:
+    state: str
+    directory: Path
+    # Staging is NEVER readiness: account ACLs, engine config and real
+    # roadmap execution must be certified separately.
+    ready: bool = False
+
+
+def install_pinned_runtime_pair(
+    source: Path, install_root: Path, expected: Mapping[str, str], *,
+    approved: bool,
+) -> InstalledRuntimePair:
+    """Stage two checked binaries on the selected volume without overwrite."""
+    if approved is not True:
+        raise RuntimePayloadError("Runtime installation requires explicit setup approval")
+    if (not isinstance(install_root, Path) or not install_root.is_absolute()
+            or install_root.is_symlink() or not install_root.is_dir()
+            or install_root.resolve(strict=True) != install_root):
+        raise RuntimePayloadError("Verified existing installation root required")
+    verify_runtime_payload(source, expected)
+    version = expected["AtlasHoldingControlCenter.exe"][:16] + "-" + (
+        expected["AtlasHoldingEngine.exe"][:16])
+    parent = install_root / "runtime"
+    if parent.is_symlink():
+        raise RuntimePayloadError("Runtime parent cannot be a link")
+    parent.mkdir(exist_ok=True)
+    if parent.resolve(strict=True) != parent:
+        raise RuntimePayloadError("Runtime parent is not a canonical directory")
+    final = parent / version
+    if final.exists() or final.is_symlink():
+        try:
+            verify_runtime_payload(final, expected)
+        except RuntimePayloadError as exc:
+            raise RuntimePayloadError("Existing runtime is damaged; explicit repair required") from exc
+        return InstalledRuntimePair("REUSED_BINARIES_SECURITY_PENDING", final)
+    with tempfile.TemporaryDirectory(dir=parent, prefix=".runtime-staging-") as tmp:
+        stage = Path(tmp)
+        for name in sorted(_RUNTIME_FILES):
+            src = source / name
+            if src.is_symlink() or src.resolve(strict=True) != src:
+                raise RuntimePayloadError("Pinned executable replaced during staging")
+            with src.open("rb") as reader, (stage / name).open("xb") as writer:
+                shutil.copyfileobj(reader, writer, length=1024 * 1024)
+        verify_runtime_payload(stage, expected)
+        verify_runtime_payload(source, expected)
+        if final.exists() or final.is_symlink():
+            raise RuntimePayloadError("Runtime destination appeared during staging")
+        os.rename(stage, final)
+    verify_runtime_payload(final, expected)
+    return InstalledRuntimePair("STAGED_BINARIES_SECURITY_PENDING", final)
