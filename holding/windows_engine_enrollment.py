@@ -146,6 +146,34 @@ def _native_security(paths: tuple[Path, ...]) -> None:
         validate_runtime_acl(path)
 
 
+def protect_approved_install_root(
+    install_root: Path, *, approved: bool,
+) -> None:
+    """Explicitly secure a dedicated Holding root, never a drive/profile root."""
+    if approved is not True:
+        raise EngineEnrollmentError("Separate Windows root permission consent required")
+    _canonical(install_root, directory=True)
+    _require_native_windows()
+    from .windows_runtime_acl import (
+        validate_runtime_acl, secure_runtime_acl, RuntimeAclError,
+    )
+    # An installer may secure its chosen app folder, not an entire disk,
+    # user's home, Windows directory or the containing Programs directory.
+    root = Path(install_root.anchor)
+    home = Path.home().resolve()
+    prohibited = {root, home, home.parent}
+    protected_names = {"windows", "users", "program files",
+                       "program files (x86)", "programdata"}
+    if (install_root in prohibited or len(install_root.parts) < 3
+            or install_root.name.casefold() in protected_names):
+        raise EngineEnrollmentError("Refusing broad Windows folder permission changes")
+    try:
+        validate_runtime_acl(install_root)
+    except RuntimeAclError:
+        secure_runtime_acl(install_root)
+        validate_runtime_acl(install_root)
+
+
 def prepare_protected_engine_roots(
     install_root: Path, *, approved: bool,
 ) -> tuple[Path, Path]:
