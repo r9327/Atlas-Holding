@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -64,6 +65,10 @@ def build_windows_installer(
         stage = workspace / "dist"
         # This digest comes from a trusted build input, not a self-reported
         # value inside the JSON assets manifest.
+        pinned_manifest = workspace / "release-assets.json"
+        shutil.copyfile(manifest, pinned_manifest)
+        if _sha256(pinned_manifest) != expected_manifest_sha256.lower():
+            raise ValueError("Release manifest changed while preparing Windows build")
         shim = workspace / "atlas_windows_entry.py"
         shim.write_text(
             "from pathlib import Path\\n"
@@ -85,7 +90,7 @@ def build_windows_installer(
             "--distpath", str(stage),
             "--workpath", str(workspace / "work"),
             "--specpath", str(workspace / "spec"),
-            "--add-data", str(manifest) + os.pathsep + "release-assets.json",
+            "--add-data", str(pinned_manifest) + os.pathsep + ".",
             str(shim),
         ]
         subprocess.run(command, cwd=root, check=True, timeout=900,
@@ -95,11 +100,18 @@ def build_windows_installer(
             raise RuntimeError("PyInstaller did not produce a valid setup artifact")
         digest = _sha256(built)
         # The final destination is created only after a complete build.
-        with built.open("rb") as reader, path.open("xb") as writer:
-            for chunk in iter(lambda: reader.read(1024 * 1024), b""):
-                writer.write(chunk)
-            writer.flush()
-            os.fsync(writer.fileno())
+        try:
+            with built.open("rb") as reader, path.open("xb") as writer:
+                for chunk in iter(lambda: reader.read(1024 * 1024), b""):
+                    writer.write(chunk)
+                writer.flush()
+                os.fsync(writer.fileno())
+            if _sha256(path) != digest:
+                raise RuntimeError("Published executable differs from built bytes")
+        except BaseException:
+            if path.exists() and not path.is_symlink():
+                path.unlink()
+            raise
     return WindowsBuildResult(str(path), digest,
                               expected_manifest_sha256.lower(), path.stat().st_size)
 
