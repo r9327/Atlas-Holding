@@ -83,6 +83,15 @@ Cette PR Draft vérifie ensemble les contrats développés séparément dans :
 
 **Toujours interdit d'annoncer une release** : aucun compte Windows/service séparé et ACL native ne sont établis par le pont Python, les clés ne sont protégées qu'à l'intérieur de la session du lanceur, et le binaire Windows final de la GUI / l'installateur / parcours Windows vierge ne sont pas encore certifiés. Les scripts Python sont réservés aux harness/tests : le mode release doit livrer et épingler un véritable exécutable Windows signé ou explicitement non signé, puis valider son lancement interactif réel.
 
+## Premier binaire Windows du Control Center (21 octobre 2026)
+
+- `holding/windows_control_center_build.py` construit un candidat **AtlasHoldingControlCenter.exe** depuis les sources du SHA contrôlé avec PyInstaller Windows épinglé. PySide6 et le point d'entrée réel de la fenêtre sont empaquetés ; le résultat est publié dans un répertoire de sortie choisi, avec taille et SHA-256 mesurés. Aucun fichier existant n'est écrasé et la copie de staging gère les volumes Windows différents.
+- `holding/control_center_entry.py --self-test` initialise **la véritable fenêtre Qt** dans un processus sans service ni jeton, puis quitte. Les options du démon sont refusées en combinaison avec `--self-test`. Ce test ne prétend pas vérifier l'autonomie du moteur.
+- Le workflow Windows de la PR #11 installe PyInstaller `6.22.3`, compile un EXE `--onefile --windowed`, exécute ce binaire avec `--self-test`, vérifie le rejet des arguments contradictoires et relève le SHA-256 avant nettoyage ; Linux garde la suite Python complète.
+- `tests/test_windows_control_center_build.py` et `tests/test_control_center_entry.py` testent le builder, les validations de chemins, l'interdiction d'écraser un EXE et le point d'entrée Qt.
+
+Il s'agit uniquement du **GUI compilé non-release**. La publication `AtlasHoldingSetup.exe`, le provisioning initial, les vraies ACL/identités Windows, le lancement intégré GUI+démon sur un poste vierge, les modèles IA et l'E2E de développement autonome restent des blocages de release.
+
 ## Limites explicites
 
 - Aucun token n'est fourni au coordinateur ou stocké dans SQLite.
