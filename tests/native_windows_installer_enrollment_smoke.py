@@ -21,7 +21,9 @@ import threading
 # never another installed Holding package or arbitrary PYTHONPATH entry.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from holding.windows_engine_enrollment import protect_approved_install_root
+from holding.windows_engine_enrollment import (
+    protect_approved_install_root, EngineEnrollmentError,
+)
 from holding.windows_runtime_payload import (
     install_pinned_runtime_pair, install_pinned_adapter, verify_runtime_payload,
 )
@@ -120,6 +122,24 @@ def run(frozen_directory: Path) -> None:
         try:
             if dict(discover_local_models()).get(_MODEL) != _DIGEST:
                 raise RuntimeError("Local model digest inventory mismatch")
+            # A valid .git marker with a foreign origin must never receive
+            # enrollment state or a newly created engine configuration.
+            _git("-C", str(canonical), "remote", "set-url", "origin",
+                 "https://github.com/unrelated/wrong-project.git")
+            try:
+                configure_and_launch_engine(
+                    install_root=installed, atlas_root=canonical,
+                    runtime_pins=expected, adapter_sha256=agent_pin,
+                    model_name=_MODEL, approved=True, launch_approved=False,
+                )
+            except EngineEnrollmentError:
+                pass
+            else:
+                raise RuntimeError("Foreign Git remote was accepted by installer")
+            if (installed / "config").exists() or (installed / "data").exists():
+                raise RuntimeError("Foreign checkout caused state enrollment")
+            _git("-C", str(canonical), "remote", "set-url", "origin",
+                 "https://github.com/r9327/Dof-Atlas.git")
             status, pid = configure_and_launch_engine(
                 install_root=installed, atlas_root=canonical,
                 runtime_pins=expected, adapter_sha256=agent_pin,
