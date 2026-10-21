@@ -66,6 +66,17 @@ jobs:
           } finally {
             Remove-Item -Force -ErrorAction SilentlyContinue $gitZip, $codeZip
           }
+      - name: Verify exact Ollama user x64 installer availability via native WinGet
+        if: matrix.os == 'windows-latest' && (github.event_name == 'push' || github.event.label.name == 'ci:validate')
+        shell: pwsh
+        timeout-minutes: 4
+        run: |
+          $winget = Get-Command winget.exe -ErrorAction Stop
+          & $winget.Source --version
+          if ($LASTEXITCODE -ne 0) { throw "Windows package manager cannot start" }
+          & $winget.Source show --id Ollama.Ollama --exact --version 0.32.8 --source winget --scope user --architecture x64 --disable-interactivity --accept-source-agreements
+          if ($LASTEXITCODE -ne 0) { throw "User-scoped pinned Ollama installer unavailable" }
+          Write-Output "OLLAMA_WINGET_USER_X64_PREFLIGHT_PASS"
       - name: Install pinned Windows build packager
         if: matrix.os == 'windows-latest' && (github.event_name == 'push' || github.event.label.name == 'ci:validate')
         run: |
