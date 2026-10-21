@@ -338,7 +338,7 @@ def execute_setup(
                 "RUNTIME_STAGED_ENGINE_CONFIG_PENDING",
                 stage_steps, result.blockers,
             )
-        except (RuntimePayloadError, OSError, ValueError):
+        except (RuntimePayloadError, EngineEnrollmentError, OSError, ValueError):
             result = ProvisionExecution(
                 "PARTIAL_OR_BLOCKED",
                 result.steps + (
@@ -632,7 +632,7 @@ def main(argv: list[str] | None = None) -> int:
                 events.put(("result", summary, executed,
                             (current_target, current_storage,
                              model_directory)))
-            except (OSError, ValueError, TypeError) as exc:
+            except (OSError, ValueError, TypeError, EngineEnrollmentError) as exc:
                 # Never dump exception text: a URL or credential may occur in it.
                 events.put(("error", type(exc).__name__))
 
@@ -698,6 +698,11 @@ def main(argv: list[str] | None = None) -> int:
                         lines += ["", "Résultat : " + executed.state]
                         lines += [f"{s.name}: {s.result}" for s in executed.steps]
                         lines += list(executed.blockers)
+                        if (runtime_staged and args.adapter_sha256 is None):
+                            lines.append(
+                                "Adaptateur IA compatible non embarqué : "
+                                "configuration du moteur indisponible."
+                            )
                         state_message.set(
                             "Paquets préparés — contrôles logiciels et IA encore nécessaires"
                             if executed.state == "TOOLCHAIN_HEALTHY_MODEL_BENCHMARK_PENDING"
