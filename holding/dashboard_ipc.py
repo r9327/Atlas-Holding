@@ -26,7 +26,11 @@ from .control_center_state import (
 )
 
 _MAGIC = b"AH01"
+_CONTROL_MAGIC = b"AH02"
 _REQUEST_BYTES = 4 + 32 + 32
+_CONTROL_BYTES = 1 + 8 + 32 + 32
+_CONTROL_ACTIONS = {"pause": b"P", "resume": b"R", "stop": b"S"}
+_CONTROL_TTL_SECONDS = 30
 _MAX_CLIENTS = 4
 _MAX_TIME_SECONDS = 3
 
@@ -57,11 +61,16 @@ class _DashboardTCP(socketserver.ThreadingMixIn, socketserver.TCPServer):
     block_on_close = False
     request_queue_size = 8
 
-    def __init__(self, key: bytes, supplier: Callable[[], bytes]):
+    def __init__(self, key: bytes, supplier: Callable[[], bytes], *,
+                 control_key: bytes | None = None,
+                 control_handler: Callable[[bytes], None] | None = None):
         self.key = key
         self.supplier = supplier
+        self.control_key = control_key
+        self.control_handler = control_handler
         self.slots = threading.BoundedSemaphore(_MAX_CLIENTS)
         self.nonces: OrderedDict[bytes, None] = OrderedDict()
+        self.control_nonces: OrderedDict[bytes, int] = OrderedDict()
         self.nonce_lock = threading.Lock()
         super().__init__(("127.0.0.1", 0), _DashboardHandler)
 
@@ -87,10 +96,16 @@ class _DashboardHandler(socketserver.BaseRequestHandler):
         sock = self.request
         sock.settimeout(_MAX_TIME_SECONDS)
         try:
-            request = _read_exact(sock, _REQUEST_BYTES)
-            magic, nonce, signature = request[:4], request[4:36], request[36:]
+            magic = _read_exact(sock, 4)
+            if magic == _CONTROL_MAGIC:
+                self._control(sock)
+                return
+            if magic != _MAGIC:
+                return
+            request = _read_exact(sock, _REQUEST_BYTES - 4)
+            nonce, signature = request[:32], request[32:]
             expected = hmac.new(self.server.key, b"request" + nonce, hashlib.sha256).digest()
-            if magic != _MAGIC or not hmac.compare_digest(signature, expected):
+            if not hmac.compare_digest(signature, expected):
                 return
             # Captured local frames must not become reusable read capabilities.
             with self.server.nonce_lock:
@@ -115,14 +130,67 @@ class _DashboardHandler(socketserver.BaseRequestHandler):
             # Projection failures are not grounds for disclosing internals.
             return
 
+    def _control(self, sock: socket.socket) -> None:
+        """Separate write grant; never accept a command signed by a read key."""
+        key = self.server.control_key
+        handler = self.server.control_handler
+        if key is None or handler is None:
+            return
+        message = _read_exact(sock, _CONTROL_BYTES)
+        op, timestamp, nonce, signature = (
+            message[:1], message[1:9], message[9:41], message[41:],
+        )
+        if op not in _CONTROL_ACTIONS.values():
+            return
+        epoch = struct.unpack("!Q", timestamp)[0]
+        now = int(time.time())
+        if abs(now - epoch) > _CONTROL_TTL_SECONDS:
+            return
+        expected = hmac.new(
+            key, b"control-request" + op + timestamp + nonce,
+            hashlib.sha256,
+        ).digest()
+        if not hmac.compare_digest(signature, expected):
+            return
+        with self.server.nonce_lock:
+            # Never evict a still-valid nonce: at capacity reject new commands
+            # rather than admitting a replay of an older control request.
+            for saved, created in tuple(self.server.control_nonces.items()):
+                if now - created > 2 * _CONTROL_TTL_SECONDS:
+                    del self.server.control_nonces[saved]
+            if nonce in self.server.control_nonces or len(self.server.control_nonces) >= 512:
+                return
+            self.server.control_nonces[nonce] = now
+        try:
+            handler(op)
+        except Exception:
+            result = b"N"
+        else:
+            result = b"A"
+        confirmation = hmac.new(
+            key, b"control-response" + op + timestamp + nonce + result,
+            hashlib.sha256,
+        ).digest()
+        sock.sendall(_CONTROL_MAGIC + result + confirmation)
+
 
 class DashboardIpcServer:
     """Trusted host's independent local read-only server, no control commands."""
 
-    def __init__(self, secret: bytes, supplier: Callable[[], bytes]):
+    def __init__(self, secret: bytes, supplier: Callable[[], bytes], *,
+                 control_secret: bytes | None = None,
+                 control_handler: Callable[[bytes], None] | None = None):
         if not callable(supplier):
             raise DashboardIpcError("Trusted projection supplier required")
-        self._server = _DashboardTCP(_secret(secret), supplier)
+        if (control_secret is None) != (control_handler is None):
+            raise DashboardIpcError("Control key and trusted handler required together")
+        if control_secret is not None and (not callable(control_handler)
+                                            or _secret(control_secret) == secret):
+            raise DashboardIpcError("Separate trusted write capability required")
+        self._server = _DashboardTCP(
+            _secret(secret), supplier, control_key=control_secret,
+            control_handler=control_handler,
+        )
         self._thread: threading.Thread | None = None
 
     @property
@@ -130,7 +198,8 @@ class DashboardIpcServer:
         return self._server.server_address[1]
 
     @classmethod
-    def for_database(cls, database: Path, *, engine_id: str, secret: bytes):
+    def for_database(cls, database: Path, *, engine_id: str, secret: bytes,
+                     control_secret: bytes | None = None):
         if (not isinstance(database, Path) or not database.is_absolute()
                 or not database.is_file() or database.is_symlink()):
             raise DashboardIpcError("Existing trusted database required")
@@ -144,7 +213,26 @@ class DashboardIpcServer:
                 return project_dashboard_snapshot(
                     control, engine_id=engine_id, now_epoch=int(time.time()),
                 )
-        return cls(secret, project)
+        def apply_control(operation: bytes) -> None:
+            from .control import ControlPlane
+            with ControlPlane(database) as control:
+                if operation == b"P":
+                    control.pause()
+                elif operation == b"R":
+                    # STOP is durable: RESUME must never clear a STOP request.
+                    if control.snapshot().stop_requested:
+                        raise DashboardIpcError("STOP must be reset by trusted installer")
+                    control.resume()
+                elif operation == b"S":
+                    control.request_stop()
+                else:
+                    raise DashboardIpcError("Unknown control operation")
+
+        return cls(
+            secret, project,
+            control_secret=control_secret,
+            control_handler=apply_control if control_secret is not None else None,
+        )
 
     def start(self) -> None:
         if self._thread is not None:
