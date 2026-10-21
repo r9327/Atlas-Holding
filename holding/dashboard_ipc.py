@@ -320,3 +320,53 @@ class DashboardIpcClient:
             raise DashboardIpcError("Replayed older dashboard sequence")
         self._last_sequence = state.sequence
         return state
+
+
+class DashboardControlClient:
+    """Separate write-authority client; deliberately cannot fetch snapshots.
+
+    Installers must provision a fresh short-lived secret over a private,
+    ACL-protected OS boundary. The key is never stored by this module.
+    """
+
+    def __init__(self, *, port: int, secret: bytes):
+        if type(port) is not int or not 1 <= port <= 65535:
+            raise DashboardIpcError("Invalid trusted control endpoint")
+        self.port = port
+        self._secret = _secret(secret)
+
+    def send(self, action: str) -> None:
+        if type(action) is not str or action not in _CONTROL_ACTIONS:
+            raise DashboardIpcError("Unsupported dashboard control action")
+        op = _CONTROL_ACTIONS[action]
+        timestamp = struct.pack("!Q", int(time.time()))
+        nonce = secrets.token_bytes(32)
+        mac = hmac.new(
+            self._secret, b"control-request" + op + timestamp + nonce,
+            hashlib.sha256,
+        ).digest()
+        frame = _CONTROL_MAGIC + op + timestamp + nonce + mac
+        try:
+            with socket.create_connection(
+                ("127.0.0.1", self.port), timeout=_MAX_TIME_SECONDS,
+            ) as sock:
+                sock.settimeout(_MAX_TIME_SECONDS)
+                sock.sendall(frame)
+                response = _read_exact(sock, 4 + 1 + 32)
+        except (OSError, TimeoutError) as exc:
+            raise DashboardIpcError(
+                "Control acknowledgement unavailable; inspect durable state"
+            ) from exc
+        magic, result, signature = response[:4], response[4:5], response[5:]
+        expected = hmac.new(
+            self._secret,
+            b"control-response" + op + timestamp + nonce + result,
+            hashlib.sha256,
+        ).digest()
+        if (magic != _CONTROL_MAGIC or result not in {b"A", b"N"}
+                or not hmac.compare_digest(signature, expected)):
+            raise DashboardIpcError(
+                "Control acknowledgement unauthenticated; inspect durable state"
+            )
+        if result != b"A":
+            raise DashboardIpcError("Control refused; inspect durable state")
