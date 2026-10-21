@@ -117,6 +117,20 @@ def run_rehearsal(
         )
         if denied.returncode != 2:
             raise RuntimeError("Frozen setup accepted a forbidden startup mode")
+        # Unlike a simple file-copy demonstration, this invokes the actual
+        # PR#2 production staging function on the same measured real binaries,
+        # and boots both executables from an accented, space-bearing path.
+        _call(
+            [sys.executable, "-B", "-X", "utf8",
+             str(Path(__file__).resolve().parent.parent
+                 / "tests" / "windows_installed_pair_smoke.py"),
+             "--bootstrap", str(bootstrap),
+             "--runtime-source", str(binaries),
+             "--destination", str(root / "Disque choisi été" / "Atlas Holding"),
+             "--viewer-sha256", viewer_sha,
+             "--engine-sha256", engine_sha],
+            cwd=bootstrap, timeout=300,
+        )
         _checked_checkout(bootstrap, bootstrap_sha)
         _checked_checkout(integration, integration_sha)
         print("NONRELEASE_REAL_GUI_ENGINE_INSIDE_REAL_SETUP_PASS")
