@@ -280,3 +280,19 @@ les ACL Windows de l'identité installée, puis le lancement natif du moteur et
 du Control Center depuis ce chemin. Le fait d'embarquer le binaire ne garantit
 pas sa mise en service : ce build demeure non-release et la PR reste Draft.
 
+
+### Staging après consentement — nouveaux exécutables embarqués
+
+L'assistant Windows reçoit les empreintes fixes et les fichiers extraits du
+setup autonome. Après validation des composants préexistants et autorisation
+explicite de l'utilisateur, il copie la paire dans le dossier choisi
+(`runtime/<version-des-SHA>/`) et recontrôle leurs SHA-256. Une paire saine
+est réutilisée au prochain passage ; une paire endommagée exige une réparation
+explicite et n'est jamais écrasée silencieusement.
+
+L'opération retourne `RUNTIME_STAGED_ENGINE_CONFIG_PENDING`, **pas READY**.
+Même si Git/Ollama sont déjà présents et sains, l'UI conserve le bouton
+d'autorisation nécessaire pour installer la paire de binaires. Le provisioning
+des identités/ACL Windows, la génération de la configuration fiable v3 et le
+lancement de l'EXE moteur/GUI n'ont pas encore passé de test d'installation
+complet et restent des blocages de certification.
