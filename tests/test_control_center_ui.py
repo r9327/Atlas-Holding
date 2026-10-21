@@ -64,6 +64,30 @@ class ControlCenterUiTests(unittest.TestCase):
         self.assertFalse(hasattr(window, "engine"))
         self.assertTrue(window.close())
 
+    def test_refresh_reuses_unmodified_cells_and_preserves_selection(self):
+        window = ControlCenterWindow(trusted_engine_id="engine-1")
+        window.render_state(self.state(sequence=42))
+        window.tasks.selectRow(0)
+        original = window.tasks.item(0, 0)
+        window.render_state(self.state(sequence=43))
+        self.assertIs(window.tasks.item(0, 0), original)
+        self.assertEqual(window.tasks.currentRow(), 0)
+
+        payload = snapshot()
+        payload["sequence"] = 44
+        payload["log_page"]["items"][0]["sequence"] = 43
+        payload["tasks"][0]["title"] = "Updated from engine"
+        refreshed = consume_dashboard_snapshot(
+            json.dumps(payload).encode("utf-8"),
+            trusted_engine_id="engine-1", expected_sequence=44, now_epoch=NOW,
+        )
+        self.assertTrue(window.render_state(refreshed))
+        self.assertIs(window.tasks.item(0, 0), original)
+        self.assertEqual(original.text(), "Updated from engine")
+        self.assertEqual(original.toolTip(), "Updated from engine")
+        self.assertEqual(window.tasks.currentRow(), 0)
+        window.close()
+
     def test_pre_candidate_task_displays_no_fake_sha_or_evidence(self):
         payload = snapshot()
         payload["tasks"][0].update({
