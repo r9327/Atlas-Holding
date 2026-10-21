@@ -60,8 +60,8 @@ def _freeze_entry(
         workspace = Path(temp)
         entry = workspace / "frozen_entry.py"
         entry.write_text(
-            f"from {entry_module} import main\\n"
-            "raise SystemExit(main())\\n", encoding="utf-8",
+            f"from {entry_module} import main\n"
+            "raise SystemExit(main())\n", encoding="utf-8",
         )
         dist = workspace / "dist"
         command = [
