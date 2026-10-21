@@ -170,10 +170,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--manifest-sha256", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--runtime-directory", type=Path)
+    parser.add_argument("--viewer-sha256")
+    parser.add_argument("--engine-sha256")
     args = parser.parse_args(argv)
+    choices = (args.runtime_directory, args.viewer_sha256, args.engine_sha256)
+    if any(item is not None for item in choices) and not all(
+            item is not None for item in choices):
+        parser.error("Runtime directory and both pinned binary hashes are required")
+    pins = None
+    if args.runtime_directory is not None:
+        pins = {
+            "AtlasHoldingControlCenter.exe": args.viewer_sha256,
+            "AtlasHoldingEngine.exe": args.engine_sha256,
+        }
     result = build_windows_installer(
         manifest=args.manifest, expected_manifest_sha256=args.manifest_sha256,
-        output_dir=args.output_dir,
+        output_dir=args.output_dir, runtime_directory=args.runtime_directory,
+        runtime_pins=pins,
     )
     print(json.dumps(asdict(result), sort_keys=True))
     return 0
