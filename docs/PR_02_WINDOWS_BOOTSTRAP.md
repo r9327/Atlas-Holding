@@ -44,3 +44,9 @@ L'utilisateur fournit ensuite **uniquement les roadmaps**. Les téléchargements
 - `tests/test_staged_install.py` et `tests/test_bootstrap_assets_cli.py` : cas de version réutilisée, archive malveillante, contenu modifié, autorisation, manif illisible/mal épinglé, échec partiel et annulation.
 - **Frontière de sécurité :** le manifeste ne doit jamais provenir d'une roadmap ou d'une réponse de modèle sans pin de release validé. L'installation sous une identité Windows dédiée et ACL de répertoires sécurisées reste du ressort du vrai installateur.
 - **Reste bloquant :** construire l'EXE, les intégrations natives Git/Ollama/OpenCode/Qt et leurs healthchecks après déploiement, la sélection des modèles par benchmarks #4, l'UI guidée/disque choisi et le scénario complet sur Windows propre. Les ZIP sont de simples données versionnées ; aucune commande téléchargée n'est exécutée par ce lot.
+
+## Durcissement sondes locales (21 octobre 2026)
+
+- `holding/probe_process.py` ne collecte plus les sorties avec `communicate()` sans borne : deux lecteurs simultanés plafonnent stdout et stderr à **32 KiB chacun** par défaut, détruisent le groupe de processus/Job Windows lors d'un dépassement ou timeout et refusent les descendants qui gardent des pipes ouverts.
+- `tests/test_probe_process.py` couvre sortie normale, saturation stdout/stderr, timeout, descendant qui hérite des handles et paramètres invalides.
+- Il s'agit du budget de la **sonde**, pas d'une preuve du budget RAM global du Control Center/holding, qui reste une exigence E2E de la PR #9.
