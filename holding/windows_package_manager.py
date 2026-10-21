@@ -90,6 +90,20 @@ def install_pinned_winget(
         )
         if version.returncode or not version.stdout.strip():
             return WingetResult(pin.component, "WINGET_UNHEALTHY")
+        # A source query with exact version, scope and architecture runs
+        # before any native installer mutation. Do not parse localized text.
+        available = run_probe(
+            [
+                executable, "show", "--id", pin.package_id, "--exact",
+                "--version", pin.version, "--source", "winget",
+                "--scope", "user", "--architecture", "x64",
+                "--disable-interactivity", "--accept-source-agreements",
+            ],
+            environment=environment, timeout=min(max_seconds, 45),
+            max_output_bytes=16384,
+        )
+        if available.returncode != 0 or not available.stdout.strip():
+            return WingetResult(pin.component, "PINNED_USER_PACKAGE_UNAVAILABLE")
         result = run_probe(
             [
                 executable, "install", "--exact", "--id", pin.package_id,
