@@ -58,8 +58,8 @@ class NetworkProbeTests(unittest.TestCase):
                     result = engine.tick()
                     self.assertEqual(result.action, "QA_PENDING")
                     self.assertEqual(result.mission_id, "local")
-                    self.assertEqual(engine.store.missions()[0].state, "READY")
-                    self.assertEqual(engine.store.missions()[1].state, "QA_PENDING")
+                    states = {m.id: m.state for m in engine.store.missions()}
+                    self.assertEqual(states, {"external": "READY", "local": "QA_PENDING"})
                 # Restore the fixture to test all failures independently.
                 with StateStore(self.db_path) as state:
                     state.db.execute(
@@ -78,6 +78,19 @@ class NetworkProbeTests(unittest.TestCase):
                     state.db.execute(
                         "UPDATE missions SET state='READY',candidate_sha='',evidence_sha='' "
                         "WHERE id='local'")
+
+    def test_offline_only_tasks_skip_even_a_broken_network_detector(self):
+        with StateStore(self.db_path) as state:
+            state.db.execute("UPDATE missions SET state='CANCELLED' WHERE id='external'")
+        calls = []
+        def unexpected_probe():
+            calls.append("network")
+            raise AssertionError("No network probe for an offline-only roadmap")
+        with self._engine(unexpected_probe) as engine:
+            engine.start()
+            self.assertEqual(engine.tick().mission_id, "local")
+            self.assertEqual(engine.tick().action, "WAIT")
+        self.assertEqual(calls, [])
 
     def test_true_boolean_enables_external_work(self):
         with self._engine(lambda: True) as engine:
