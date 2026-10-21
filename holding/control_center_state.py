@@ -132,12 +132,13 @@ def _nullable_identifier(value: Any, label: str) -> str | None:
 
 def _evidence(value: Any, candidate_sha: str) -> EvidenceView:
     item = _object(value, {"kind", "outcome", "scope", "sha", "digest", "source"})
-    if item["kind"] not in {"CI", "DOCTOR", "TEST"}:
-        raise ControlCenterStateError("Unsupported completion evidence kind")
+    # The Core (#3) settles DONE only with independently authenticated
+    # github_certification evidence. Local Doctor and scoped tests are useful
+    # diagnostics, never final completion proof.
+    if item["kind"] != "CI" or item["scope"] != "FULL":
+        raise ControlCenterStateError("DONE needs final CI FULL evidence")
     if item["outcome"] not in {"PASS", "SUCCESS"}:
         raise ControlCenterStateError("Completion evidence did not pass")
-    if item["scope"] not in {"SCOPED", "FULL"}:
-        raise ControlCenterStateError("Invalid completion evidence scope")
     if item["sha"] != candidate_sha:
         raise ControlCenterStateError("Completion evidence belongs to another SHA")
     digest = item["digest"]
