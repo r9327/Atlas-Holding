@@ -104,6 +104,20 @@ class McpStdioTests(unittest.TestCase):
         framed = response(self.server, b'{}\n{}\n')
         self.assertEqual(framed["error"]["code"], -32700)
 
+    def test_nonfinite_json_and_nested_payloads_fail_without_killing_server(self):
+        nonfinite = request("tools/call", {
+            "name": "holding.health", "arguments": {},
+        }).replace(b'"arguments":{}', b'"arguments":{"x":NaN}')
+        self.assertEqual(
+            response(self.server, nonfinite)["error"]["code"], -32700)
+        deeply_nested = b"[" * 2500 + b"0" + b"]" * 2500 + b"\n"
+        self.assertEqual(
+            response(self.server, deeply_nested)["error"]["code"], -32700)
+        self.assertEqual(
+            response(self.server, request("tools/list"))["result"]["tools"][0]["name"],
+            "holding.health",
+        )
+
     def test_notifications_never_receive_a_response(self):
         note = json.loads(request("notifications/cancelled"))
         del note["id"]
