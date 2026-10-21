@@ -26,6 +26,15 @@ class ProvisionPlan:
 
 
 def _action(name: str, component: Component) -> ProvisionAction:
+    # An already installed Ollama binary with an unreachable local API needs a
+    # service diagnosis, not a second installer. Never overwrite an existing
+    # application merely because its background service is stopped.
+    if (name == "ollama" and component.status == "FOUND_BROKEN"
+            and component.reason == "Ollama installed but local API is not healthy"):
+        return ProvisionAction(
+            name, "START_SERVICE",
+            "Ollama binary is present but its local API is unavailable",
+        )
     if component.status == "FOUND_VALID":
         return ProvisionAction(name, "REUSE", "Existing healthy dependency")
     if component.status == "NOT_FOUND":
@@ -51,12 +60,17 @@ def make_plan(snapshot: Inventory, *, online: bool) -> ProvisionPlan:
         _action("python_runtime", snapshot.python),
     )
     if not snapshot.models:
-        if not online:
+        service_down = any(item.action == "START_SERVICE" for item in items)
+        if not online and not service_down:
             blockers.append("No local model and network unavailable")
         # Model sizes and choices require the separate signed catalogue and
         # benchmark from PR #4; there is no guessed hardware-based READY.
-        items += (ProvisionAction("coding_model", "BENCHMARK_OR_DOWNLOAD",
-                                  "No verified installed model"),)
+        items += (ProvisionAction(
+            "coding_model",
+            "INVENTORY_PENDING_SERVICE" if service_down else "BENCHMARK_OR_DOWNLOAD",
+            "Model inventory is unknown until local Ollama API starts"
+            if service_down else "No verified installed model",
+        ),)
     else:
         items += (ProvisionAction("coding_model", "BENCHMARK_INSTALLED",
                                   "Installed models require real coding and tools tests"),)
@@ -66,6 +80,8 @@ def make_plan(snapshot: Inventory, *, online: bool) -> ProvisionPlan:
         state = "REPAIR_REQUIRED"
     elif any(item.action == "INSPECT" for item in items):
         state = "INSPECTION_REQUIRED"
+    elif any(item.action == "START_SERVICE" for item in items):
+        state = "SERVICE_START_REQUIRED"
     elif any(item.action in ("INSTALL", "BENCHMARK_OR_DOWNLOAD") for item in items):
         state = "PROVISIONING_REQUIRED"
     else:
