@@ -229,8 +229,11 @@ def install_pinned_adapter(
             os.fsync(target.fileno())
         # The temporary file is renamed only after its full contents and
         # Windows DACL were verified. No replacement of an existing adapter.
-        digest = hashlib.sha256(temporary.read_bytes()).hexdigest()
-        if digest != expected_sha256:
+        digest = hashlib.sha256()
+        with temporary.open("rb") as verify_stream:
+            for chunk in iter(lambda: verify_stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != expected_sha256:
             raise RuntimePayloadError("Copied adapter differs from release pin")
         verify_pinned_adapter(source, expected_sha256)
         if os.name == "nt":
