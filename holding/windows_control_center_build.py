@@ -36,14 +36,16 @@ def _digest(path: Path) -> str:
 
 def _freeze_entry(
     *, output_dir: Path, root: Path, executable_name: str,
-    entry_module: str, ui: bool,
+    entry_module: str, ui: bool, pass_args: bool = False,
 ) -> ViewerBuildEvidence:
     """One constrained Windows packager shared by GUI and headless engine."""
     if sys.platform != "win32":
         raise RuntimeError("Holding EXE must be built and exercised on native Windows")
     expected_files = (
-        ("control_center_entry.py", "control_center_live.py") if ui else
-        ("daemon_entry.py", "service.py", "state_store.py")
+        ("ollama_protocol.py",) if pass_args else (
+            ("control_center_entry.py", "control_center_live.py") if ui else
+            ("daemon_entry.py", "service.py", "state_store.py")
+        )
     )
     if (not isinstance(root, Path) or not root.is_absolute()
             or root != root.resolve()
@@ -60,8 +62,11 @@ def _freeze_entry(
         workspace = Path(temp)
         entry = workspace / "frozen_entry.py"
         entry.write_text(
-            f"from {entry_module} import main\n"
-            "raise SystemExit(main())\n", encoding="utf-8",
+            ("import sys\n" if pass_args else "") +
+            f"from {entry_module} import main\n" +
+            ("raise SystemExit(main(sys.argv[1:]))\n" if pass_args
+             else "raise SystemExit(main())\n"),
+            encoding="utf-8",
         )
         dist = workspace / "dist"
         command = [
@@ -121,18 +126,36 @@ def build_windows_engine(
         entry_module="holding.daemon_entry", ui=False,
     )
 
+def build_windows_agent(
+    *, output_dir: Path, project_root: Path | None = None,
+) -> ViewerBuildEvidence:
+    """Freeze the existing Ollama protocol-v1 adapter, without enrolling a model.
+
+    The installed engine must pass a separately pinned absolute model config
+    path as argv[1]. Building this EXE is not evidence of a healthy LLM.
+    """
+    root = project_root if project_root is not None else Path(__file__).resolve().parent.parent
+    return _freeze_entry(
+        output_dir=output_dir, root=root, executable_name="AtlasHoldingAgent",
+        entry_module="holding.ollama_protocol", ui=False, pass_args=True,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="atlas-holding-runtime-build")
     parser.add_argument("--output-dir", required=True, type=Path)
-    parser.add_argument("--kind", choices=("viewer", "engine", "both"), default="viewer")
+    parser.add_argument("--kind", choices=("viewer", "engine", "both", "agent", "all"), default="viewer")
     args = parser.parse_args(argv)
     observed = {}
-    if args.kind in {"viewer", "both"}:
+    if args.kind in {"viewer", "both", "all"}:
         observed["control_center"] = asdict(
             build_windows_control_center(output_dir=args.output_dir))
-    if args.kind in {"engine", "both"}:
+    if args.kind in {"engine", "both", "all"}:
         observed["engine"] = asdict(
             build_windows_engine(output_dir=args.output_dir))
+    if args.kind in {"agent", "all"}:
+        observed["agent"] = asdict(
+            build_windows_agent(output_dir=args.output_dir))
     print(json.dumps(observed, sort_keys=True))
     return 0
 
