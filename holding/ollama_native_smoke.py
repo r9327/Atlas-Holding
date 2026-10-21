@@ -14,6 +14,7 @@ from pathlib import Path
 import platform
 import subprocess
 import tempfile
+import time
 
 from .inventory import Component, _api_json, scan
 from .ollama_service import _local_api_alive, start_local_ollama
@@ -77,11 +78,24 @@ def verify_real_ollama() -> dict[str, str]:
                     pins=(PIN,), authorized=True, startup_seconds=45,
                 )
             try:
+                # OllamaSetup may spawn a tray daemon after WinGet exits.
+                # Its 11434 socket may become available moments *after* our
+                # attempted server exits on an address-in-use race. Never
+                # retry a second competing server; observe the API instead.
+                if launch is not None and launch.state == "PROCESS_EXITED":
+                    for _ in range(16):
+                        if _local_api_alive():
+                            installer_started_api = True
+                            break
+                        time.sleep(0.5)
                 if (launch is not None
                         and launch.state not in {
                             "OWNED_API_HEALTHY",
                             "EXISTING_API_STORAGE_UNVERIFIED",
-                        }):
+                        } and not (
+                            launch.state == "PROCESS_EXITED"
+                            and installer_started_api
+                        )):
                     raise RuntimeError("Ollama start failed: " + launch.state)
                 version = _api_json("/api/version").get("version", "")
                 tags = _api_json("/api/tags").get("models")
