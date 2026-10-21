@@ -2,7 +2,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
+from pathlib import Path
+import os
+import stat
 import re
 from typing import Any, Mapping
 
@@ -57,6 +61,47 @@ class ReleaseCandidate:
     passed_gates: tuple[str, ...]
     signed: bool
     publishable: bool = True
+
+
+def observe_native_release_files(directory: Path) -> dict[str, ArtifactObservation]:
+    """Hash the *actual* three Windows release files, never manifest claims.
+
+    Intended for a trusted release runner after the build and native E2E
+    steps. Merely hashing files is not a substitute for test/ACL evidence.
+    """
+    if (not isinstance(directory, Path) or not directory.is_absolute()
+            or directory.is_symlink() or not directory.is_dir()):
+        raise ReleaseEvidenceError("Trusted absolute artifact directory required")
+    try:
+        if directory.resolve(strict=True) != directory:
+            raise ReleaseEvidenceError("Artifact directory has an unsafe alias")
+    except OSError as exc:
+        raise ReleaseEvidenceError("Artifact directory unavailable") from exc
+    observed = {}
+    for filename in sorted(_REQUIRED_RUNTIME_FILES):
+        file = directory / filename
+        try:
+            if file.is_symlink() or file.resolve(strict=True) != file:
+                raise ReleaseEvidenceError("Release artifact path uses a link")
+            with file.open("rb") as stream:
+                initial = os.fstat(stream.fileno())
+                if (not stat.S_ISREG(initial.st_mode)
+                        or not 0 < initial.st_size <= 20 * 1024**3):
+                    raise ReleaseEvidenceError("Invalid native artifact size/type")
+                digest = hashlib.sha256()
+                size = 0
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    size += len(chunk)
+                    if size > 20 * 1024**3:
+                        raise ReleaseEvidenceError("Release artifact exceeds size budget")
+                    digest.update(chunk)
+                final = os.fstat(stream.fileno())
+                if size != initial.st_size or final.st_size != initial.st_size:
+                    raise ReleaseEvidenceError("Release artifact changed during hashing")
+                observed[filename] = ArtifactObservation(digest.hexdigest(), size)
+        except (OSError, ValueError) as exc:
+            raise ReleaseEvidenceError("Native release artifact unavailable") from exc
+    return observed
 
 
 def _exact(value: Any, keys: set[str], label: str) -> dict[str, Any]:
