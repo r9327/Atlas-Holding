@@ -106,16 +106,19 @@ class ResumeOllamaTests(unittest.TestCase):
                                    self.models,
                                )):
                         with patch("holding.ollama_resume.scan",
-                                   side_effect=[self.offline, after]) as scan:
-                            with patch("holding.ollama_resume.start_local_ollama",
-                                       return_value=fake):
-                                result = resume_ollama_at_logon(
+                                   return_value=self.offline) as scan:
+                            with patch("holding.ollama_resume.scan_ollama_with_pins",
+                                       return_value=after) as healthcheck:
+                                with patch("holding.ollama_resume.start_local_ollama",
+                                           return_value=fake):
+                                    result = resume_ollama_at_logon(
                                     manifest=self.manifest,
                                     manifest_sha256="a" * 64,
                                     install_root=self.root,
                                 )
                 self.assertEqual(result.state, expected)
-                self.assertEqual(scan.call_count, 2)
+                self.assertEqual(scan.call_count, 1)
+                healthcheck.assert_called_once_with(self.root, ())
 
     def test_rejects_relative_install_root_without_probing(self):
         with patch("holding.ollama_resume.read_pinned_manifest") as verify:
