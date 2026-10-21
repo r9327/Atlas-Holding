@@ -57,6 +57,63 @@ class ResumeOllamaTests(unittest.TestCase):
                 scan.assert_not_called()
                 start.assert_not_called()
 
+    def test_saved_desktop_user_environment_change_blocks_service_relaunch(self):
+        from holding.windows_ollama_environment import UserModelEnvironment
+        record = StoredModelDirectory(
+            "STORED_PREFERENCE_NOT_RUNTIME_ATTESTED",
+            self.models,
+            "consented_user_ollama_environment",
+        )
+        with patch("holding.ollama_resume.read_pinned_manifest",
+                   return_value=()):
+            with patch("holding.ollama_resume.read_model_directory",
+                       return_value=record):
+                with patch("holding.ollama_resume.inspect_user_models",
+                           return_value=UserModelEnvironment(
+                               "USER_MODELS_CONFLICT",
+                           )):
+                    with patch("holding.ollama_resume.scan") as scan:
+                        with patch("holding.ollama_resume.start_local_ollama") as start:
+                            result = resume_ollama_at_logon(
+                                manifest=self.manifest,
+                                manifest_sha256="a" * 64,
+                                install_root=self.root,
+                            )
+        self.assertEqual(
+            result.state,
+            "USER_MODEL_ENVIRONMENT_USER_MODELS_CONFLICT",
+        )
+        scan.assert_not_called()
+        start.assert_not_called()
+
+    def test_saved_desktop_registry_path_checked_before_existing_api(self):
+        from holding.windows_ollama_environment import UserModelEnvironment
+        record = StoredModelDirectory(
+            "STORED_PREFERENCE_NOT_RUNTIME_ATTESTED",
+            self.models,
+            "consented_user_ollama_environment",
+        )
+        with patch("holding.ollama_resume.read_pinned_manifest",
+                   return_value=()):
+            with patch("holding.ollama_resume.read_model_directory",
+                       return_value=record):
+                with patch("holding.ollama_resume.inspect_user_models",
+                           return_value=UserModelEnvironment(
+                               "USER_MODELS_MATCH", str(self.models),
+                           )) as inspect:
+                    with patch("holding.ollama_resume.scan",
+                               return_value=sample()):
+                        with patch("holding.ollama_resume.start_local_ollama") as launch:
+                            result = resume_ollama_at_logon(
+                                manifest=self.manifest,
+                                manifest_sha256="a" * 64,
+                                install_root=self.root,
+                            )
+        self.assertEqual(result.state,
+                         "EXISTING_SERVER_STORAGE_NOT_ATTESTED")
+        inspect.assert_called_once_with(self.models)
+        launch.assert_not_called()
+
     def test_existing_daemon_does_not_claim_our_storage(self):
         result, _, scan, start = self.resume(snapshots=(sample(),))
         self.assertEqual(result.state, "EXISTING_SERVER_STORAGE_NOT_ATTESTED")
