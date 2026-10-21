@@ -107,6 +107,13 @@ class InstalledPairIntegrationTests(unittest.TestCase):
             prepare.assert_not_called()
         self.assertFalse((self.install / "runtime").exists())
 
+    def test_cancelled_runtime_copy_reports_partial_without_publishing(self):
+        _, result = self.execute(cancelled=lambda: True)
+        self.assertEqual(result.state, "PARTIAL_OR_BLOCKED")
+        self.assertEqual(result.steps[-1].result, "RUNTIME_STAGE_FAILED")
+        self.assertTrue(result.blockers)
+        self.assertFalse((self.install / "runtime").exists())
+
     def test_stage_failure_reports_partial_not_installed(self):
         with patch("holding.windows_setup.install_pinned_runtime_pair",
                    side_effect=OSError("read only drive")):
