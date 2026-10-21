@@ -291,6 +291,39 @@ class WindowsSetupTests(unittest.TestCase):
         self.assertFalse(outcome.blockers)
         self.assertEqual(outcome.steps[-2].result, "FOUND_VALID")
 
+    def test_mingit_release_tag_differs_from_native_git_version(self):
+        from holding.managed_toolchain import ManagedTool
+        pin = PinnedZip(
+            "git", "2.56.0.2",
+            "https://github.com/git-for-windows/git/releases/download/"
+            "v2.56.0.windows.2/MinGit-2.56.0.2-64-bit.zip",
+            "a" * 64, 128, 500, "cmd/git.exe", "2.56.0",
+        )
+        staged = ProvisionExecution(
+            "PAYLOADS_STAGED_NOT_VALIDATED",
+            (ProvisionStep("git", "INSTALL", "STAGED_NATIVE_PROBED"),), (),
+        )
+        missing = sample(git=Component("NOT_FOUND"))
+        with patch("holding.windows_setup.resolve_managed_tool",
+                   return_value=ManagedTool(
+                       "git", "VERIFIED_EXECUTABLE",
+                       str(self.install_root / "cmd" / "git.exe"), "2.56.0",
+                   )):
+            confirmed = assess_post_install(
+                staged, missing, (pin,), install_root=self.install_root,
+            )
+        self.assertEqual(
+            confirmed.state, "TOOLCHAIN_HEALTHY_MODEL_BENCHMARK_PENDING",
+        )
+        self.assertFalse(confirmed.blockers)
+        # The asset release tag is not the actual binary version.
+        inconsistent = sample(git=Component(
+            "FOUND_VALID", version="git version 2.56.0.2",
+        ))
+        mismatch = assess_post_install(staged, inconsistent, (pin,))
+        self.assertEqual(mismatch.state, "POST_INSTALL_RECHECK_REQUIRED")
+        self.assertTrue(mismatch.blockers)
+
     def test_git_for_windows_release_suffix_matches_exact_pin_only(self):
         from holding.windows_package_manager import WingetPin
         pin = WingetPin("git", "Git.Git", "2.55.0")
