@@ -146,6 +146,29 @@ class DoctorEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(DoctorEvidenceError, "certification status"):
             consume(payload)
 
+    def test_untrusted_status_list_and_object_fail_closed(self):
+        for invalid in (["PASS"], {"claim": "PASS"}):
+            with self.subTest(invalid=invalid):
+                payload = report()
+                payload["status"] = invalid
+                with self.assertRaisesRegex(DoctorEvidenceError, "status"):
+                    consume(payload)
+
+    def test_nonfinite_or_deep_json_does_not_crash_supervisor(self):
+        arguments = dict(
+            observed_exit_code=0, expected_sha=SHA,
+            expected_action="validate", expected_base_ref="HEAD",
+            expected_paths=PATHS, expected_dirty=True,
+            expected_dirty_digest="b" * 64, structural=False,
+        )
+        nonfinite = json.dumps(report()).replace('"status": "PASS"', '"status": NaN')
+        with self.assertRaises(DoctorEvidenceError):
+            consume_doctor_report(nonfinite.encode(), **arguments)
+        depth_attack = b"[" * 2500 + b"0" + b"]" * 2500
+        with self.assertRaises(DoctorEvidenceError):
+            consume_doctor_report(depth_attack, **arguments)
+        self.assertEqual(consume(report()).status, "VALIDATED_LOCAL")
+
     def test_report_size_and_json_are_bounded(self):
         with self.assertRaises(DoctorEvidenceError):
             consume_doctor_report(
