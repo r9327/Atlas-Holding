@@ -14,7 +14,7 @@ from holding.windows_engine_enrollment import (
     EngineEnrollmentError, EngineEnrollmentRequest,
     enroll_pinned_engine, prepare_protected_engine_roots,
     prepare_installed_engine_launch, launch_enrolled_engine,
-    _require_native_windows,
+    protect_approved_install_root, _require_native_windows,
 )
 
 
@@ -211,6 +211,18 @@ class EngineEnrollmentTests(unittest.TestCase):
         self.assertFalse((self.root / "data").exists())
         with self.assertRaisesRegex(EngineEnrollmentError, "approval"):
             enroll_pinned_engine(self.request, approved=False)
+
+    def test_root_protection_requires_separate_approval_and_refuses_drive_root(self):
+        with self.assertRaisesRegex(EngineEnrollmentError, "consent"):
+            protect_approved_install_root(self.root, approved=False)
+        with self.fake_windows(), patch(
+                "holding.windows_runtime_acl.validate_runtime_acl"
+        ) as check, patch("holding.windows_runtime_acl.secure_runtime_acl") as secure:
+            protect_approved_install_root(self.root, approved=True)
+            check.assert_called_once_with(self.root)
+            secure.assert_not_called()
+            with self.assertRaisesRegex(EngineEnrollmentError, "broad Windows"):
+                protect_approved_install_root(Path(self.root.anchor), approved=True)
 
     def test_unprotected_install_root_blocks_enrollment_before_writes(self):
         with self.fake_windows(), patch(
