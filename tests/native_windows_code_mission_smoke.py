@@ -195,7 +195,8 @@ def run(agent: Path, *, real_model: Path | None = None) -> None:
                 try:
                     claimed = store.claim_next(
                         online=False, lease_owner=lease.owner)
-                    if claimed is None or claimed.id != "native-code-smoke":
+                    if (claimed.action != "RUN"
+                            or claimed.mission_id != "native-code-smoke"):
                         raise RuntimeError("Real persistent roadmap was not claimed")
                     git = GitWorktrees(canonical, trees, REPOSITORY)
                     authorized = AuthorizedGit(store, git, lease)
