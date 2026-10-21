@@ -153,3 +153,96 @@ def install_pinned_runtime_pair(
         for name in sorted(_RUNTIME_FILES):
             validate_runtime_acl(final / name)
     return InstalledRuntimePair("STAGED_BINARIES_SECURITY_PENDING", final)
+
+
+
+def verify_pinned_adapter(source: Path, expected_sha256: str) -> str:
+    """Verify the packaged protocol-v1 adapter, never OpenCode by inference."""
+    if (not isinstance(source, Path) or not source.is_absolute()
+            or source.name != "AtlasHoldingAgent.exe" or source.is_symlink()
+            or not isinstance(expected_sha256, str)
+            or not _SHA.fullmatch(expected_sha256)):
+        raise RuntimePayloadError("Trusted bundled adapter path and pin required")
+    try:
+        if (source.resolve(strict=True) != source or not source.is_file()
+                or not 1 <= source.stat().st_size <= 1024**3):
+            raise RuntimePayloadError("Adapter is missing, linked or implausible")
+        digest = hashlib.sha256()
+        with source.open("rb") as stream:
+            for block in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(block)
+        if digest.hexdigest() != expected_sha256:
+            raise RuntimePayloadError("Bundled adapter differs from trusted release pin")
+    except OSError as exc:
+        raise RuntimePayloadError("Bundled adapter unavailable") from exc
+    return expected_sha256
+
+
+def install_pinned_adapter(
+    source: Path, install_root: Path, expected_sha256: str, *,
+    approved: bool,
+) -> str:
+    """Place the exact bundled adapter beside, not inside, an editable clone.
+
+    This installs only pinned bytes; it does not validate the agent's protocol
+    or give it a GitHub token. The engine cannot be claimed healthy here.
+    """
+    if approved is not True:
+        raise RuntimePayloadError("Adapter staging requires explicit approval")
+    verify_pinned_adapter(source, expected_sha256)
+    if (not isinstance(install_root, Path) or not install_root.is_absolute()
+            or install_root.is_symlink() or not install_root.is_dir()
+            or install_root.resolve(strict=True) != install_root):
+        raise RuntimePayloadError("Canonical installation root required")
+    if os.name == "nt":
+        from .windows_runtime_acl import validate_runtime_acl
+        validate_runtime_acl(install_root)
+    agents = install_root / "agents"
+    if agents.is_symlink():
+        raise RuntimePayloadError("Linked adapter directory refused")
+    if agents.exists():
+        if not agents.is_dir() or agents.resolve(strict=True) != agents:
+            raise RuntimePayloadError("Unsafe installed adapter directory")
+        if os.name == "nt":
+            validate_runtime_acl(agents)
+    else:
+        agents.mkdir()
+        if os.name == "nt":
+            from .windows_runtime_acl import secure_runtime_acl
+            secure_runtime_acl(agents)
+    installed = agents / "AtlasHoldingAgent.exe"
+    if installed.exists() or installed.is_symlink():
+        verify_pinned_adapter(installed, expected_sha256)
+        if os.name == "nt":
+            validate_runtime_acl(installed)
+        return "REUSED_PINNED_ADAPTER_HEALTH_PENDING"
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+                mode="w+b", prefix=".adapter-", suffix=".tmp",
+                dir=agents, delete=False) as target:
+            temporary = Path(target.name)
+            with source.open("rb") as stream:
+                for block in iter(lambda: stream.read(1024 * 1024), b""):
+                    target.write(block)
+            target.flush()
+            os.fsync(target.fileno())
+        # The temporary file is renamed only after its full contents and
+        # Windows DACL were verified. No replacement of an existing adapter.
+        digest = hashlib.sha256(temporary.read_bytes()).hexdigest()
+        if digest != expected_sha256:
+            raise RuntimePayloadError("Copied adapter differs from release pin")
+        verify_pinned_adapter(source, expected_sha256)
+        if os.name == "nt":
+            secure_runtime_acl(temporary)
+        # Exclusive name creation, including when another installer races.
+        os.link(temporary, installed)
+        if os.name == "nt":
+            validate_runtime_acl(installed)
+        verify_pinned_adapter(installed, expected_sha256)
+        return "STAGED_PINNED_ADAPTER_HEALTH_PENDING"
+    except OSError as exc:
+        raise RuntimePayloadError("Trusted adapter staging failed") from exc
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
