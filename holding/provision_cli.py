@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .bootstrap_assets_cli import BootstrapManifestError, read_pinned_manifest
 from .inventory import scan
+from .pinned_inventory import restore_pinned_inventory
 from .provision_runtime import stage_required_dependencies
 from .staged_install import InstallError
 from .windows_setup import assess_post_install
@@ -34,7 +35,9 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("Absolute install/cache roots required")
         pins = read_pinned_manifest(args.manifest,
                                     expected_sha256=args.manifest_sha256)
-        inventory = scan(args.install_root)
+        inventory = restore_pinned_inventory(
+            scan(args.install_root), pins, install_root=args.install_root,
+        )
         result = stage_required_dependencies(
             inventory, pins,
             online=args.online_confirmed, authorized=args.approve_install,
@@ -44,7 +47,9 @@ def main(argv: list[str] | None = None) -> int:
             # CLI and GUI must not diverge: a successful unpack/winget exit
             # is never proof that the native toolchain really works.
             result = assess_post_install(
-                result, scan(args.install_root), pins,
+                result, restore_pinned_inventory(
+                    scan(args.install_root), pins, install_root=args.install_root,
+                ), pins,
                 install_root=args.install_root,
             )
         print(json.dumps(asdict(result), sort_keys=True, ensure_ascii=True))
