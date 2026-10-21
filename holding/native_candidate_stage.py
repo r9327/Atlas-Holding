@@ -18,7 +18,7 @@ from typing import Mapping
 
 from .release_evidence import (
     ArtifactObservation, ReleaseEvidenceError, _REQUIRED_RUNTIME_FILES,
-    _REQUIRED_UPSTREAM, observe_native_release_files,
+    _REQUIRED_UPSTREAM, _unique_object, observe_native_release_files,
 )
 
 _SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -122,3 +122,70 @@ def stage_native_candidate(
         # trusted single-runner staging flow can manipulate this directory.
         if acquired:
             lock.unlink(missing_ok=True)
+
+
+def verify_native_candidate(
+    directory: Path, *, expected_source_sha: str,
+    expected_upstream_shas: Mapping[str, str],
+) -> NativeCandidateStage:
+    """Revalidate staged binaries against a *trusted* build identity.
+
+    The index is an untrusted statement, not a release certificate; both the
+    caller's SHA expectations and real on-disk artifact bytes must agree.
+    """
+    if (not isinstance(directory, Path) or not directory.is_absolute()
+            or not isinstance(expected_source_sha, str)
+            or not _SHA.fullmatch(expected_source_sha)
+            or not isinstance(expected_upstream_shas, Mapping)):
+        raise ReleaseEvidenceError("Invalid trusted candidate verification")
+    expected = dict(expected_upstream_shas)
+    if (not _REQUIRED_UPSTREAM.issubset(expected)
+            or any(type(key) is not str or type(sha) is not str
+                   or not _SHA.fullmatch(sha)
+                   for key, sha in expected.items())):
+        raise ReleaseEvidenceError("Incomplete native candidate upstream identity")
+    index_file = directory / "candidate-index.json"
+    try:
+        if (directory.is_symlink() or directory.resolve(strict=True) != directory
+                or index_file.is_symlink()
+                or index_file.resolve(strict=True) != index_file
+                or index_file.stat().st_size > 64 * 1024):
+            raise ReleaseEvidenceError("Unsafe candidate index path")
+        raw = index_file.read_bytes()
+        data = json.loads(raw, object_pairs_hook=_unique_object)
+    except (ValueError, OSError, UnicodeError, RecursionError) as exc:
+        raise ReleaseEvidenceError("Native candidate index unavailable") from exc
+    if (type(data) is not dict or set(data) != {
+            "schema_version", "source_sha", "upstream_shas", "artifacts",
+            "release_ready",
+        } or type(data["schema_version"]) is not int
+            or data["schema_version"] != 1
+            or data["source_sha"] != expected_source_sha
+            or data["upstream_shas"] != expected
+            or data["release_ready"] is not False):
+        raise ReleaseEvidenceError("Native candidate is stale or falsely certified")
+    artifacts = data["artifacts"]
+    if type(artifacts) is not list or len(artifacts) != len(_REQUIRED_RUNTIME_FILES):
+        raise ReleaseEvidenceError("Native candidate runtime list is incomplete")
+    declared = {}
+    for artifact in artifacts:
+        if type(artifact) is not dict or set(artifact) != {
+                "name", "sha256", "size_bytes",
+        }:
+            raise ReleaseEvidenceError("Invalid candidate artifact record")
+        name, sha, size = (
+            artifact["name"], artifact["sha256"], artifact["size_bytes"],
+        )
+        if (type(name) is not str or name not in _REQUIRED_RUNTIME_FILES
+                or name in declared or type(sha) is not str
+                or len(sha) != 64 or any(c not in "0123456789abcdef" for c in sha)
+                or type(size) is not int or not 0 < size <= 20 * 1024**3):
+            raise ReleaseEvidenceError("Invalid observed runtime identity")
+        declared[name] = ArtifactObservation(sha, size)
+    if declared != observe_native_release_files(directory):
+        raise ReleaseEvidenceError("Native candidate binaries changed after staging")
+    return NativeCandidateStage(
+        directory, hashlib.sha256(raw).hexdigest(), expected_source_sha,
+        tuple((name, value.sha256, value.size_bytes)
+              for name, value in sorted(declared.items())),
+    )
