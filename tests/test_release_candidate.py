@@ -34,6 +34,39 @@ class ReleaseCandidateTests(unittest.TestCase):
         self.assertNotIn("SST.OpenCodeDesktop", content.decode())
         self.assertNotIn("example.invalid", content.decode())
 
+    def test_installer_evidence_matches_exact_win_get_package_versions(self):
+        from urllib.parse import urlparse
+        import re
+        evidence = json.loads((
+            CANDIDATE.parent / "winget-windows-x64-installer-evidence.json"
+        ).read_text(encoding="utf-8"))
+        candidate = json.loads(CANDIDATE.read_text(encoding="utf-8"))
+        self.assertEqual(evidence["source_repository"], "microsoft/winget-pkgs")
+        self.assertEqual(evidence["platform"], "windows-x64")
+        self.assertEqual(len(evidence["packages"]), 3)
+        reviewed = {
+            (entry["component"], entry["package_id"], entry["version"])
+            for entry in evidence["packages"]
+        }
+        pinned = {
+            (entry["component"], entry["package_id"], entry["version"])
+            for entry in candidate["assets"]
+        }
+        self.assertEqual(reviewed, pinned)
+        for row in evidence["packages"]:
+            with self.subTest(component=row["component"]):
+                self.assertRegex(row["installer_sha256"], r"^[0-9a-f]{64}$")
+                self.assertEqual(urlparse(row["installer_url"]).scheme, "https")
+                self.assertEqual(urlparse(row["installer_url"]).hostname,
+                                 "github.com")
+                self.assertTrue(row["manifest_path"].startswith("manifests/"))
+        self.assertEqual(next(x for x in evidence["packages"]
+                              if x["component"] == "git")["elevation_requirement"],
+                         "elevatesSelf")
+        self.assertEqual(next(x for x in evidence["packages"]
+                              if x["component"] == "opencode")["installer_type"],
+                         "zip/portable")
+
     def test_tampered_catalog_digest_must_fail_before_install(self):
         from holding.bootstrap_assets_cli import BootstrapManifestError
         with self.assertRaises(BootstrapManifestError):
