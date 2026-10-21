@@ -327,3 +327,29 @@ l'intégrité globale du chemin d'installation et la séparation des droits
 du lanceur par rapport aux autres processus de même utilisateur doivent
 encore être certifiées, ainsi que le service réellement démarré.
 
+
+## Lancement contrôlé du moteur installé (candidat, sans déclaration READY)
+
+`holding/windows_runtime_launch.py` ajoute une frontière distincte après la
+copie des binaires. `verify_installed_engine(spec)` refuse toute exécution
+hors Windows natif, sans chemins canoniques situés sous le volume sélectionné,
+sans une paire de binaires SHA-256 exacte, sans DACL native vérifiée pour les
+binaires et leur répertoire, ou sans configuration moteur JSON v3 protégée,
+épinglée au même Control Center installé. Un fichier de configuration en dehors
+du dossier `config/`, un autre exécutable GUI, des clés JSON dupliquées et
+une modification des octets après l'inscription sont refusés.
+
+`launch_installed_engine(spec, approved=True)` lance uniquement le binaire
+moteur vérifié avec `--config <fichier vérifié>`, sans interpréteur de
+commandes, secret CLI, héritage des sorties ni variables d'environnement
+arbitraires. La fenêtre Qt doit être ouverte ensuite par le moteur via le
+canal IPC privé de la PR #11, pas par un second lancement non authentifié.
+La réponse `ENGINE_SPAWNED_HEALTH_PENDING` n'affirme **jamais** que le moteur
+ou les agents sont prêts : il faudra une preuve du service vivant et du cycle
+roadmap/CI/Doctor complet.
+
+**Important :** ce module est une brique contrôlée en attente du provisioning
+effectif de la configuration moteur et de la sélection du compte Windows.
+Le wizard ne produit pas encore cette configuration ni ne l'active
+automatiquement, et la version définitive de l'installateur reste bloquée
+par la PR #9. Tests : `tests/test_windows_runtime_launch.py`.
