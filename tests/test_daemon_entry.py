@@ -130,7 +130,9 @@ json.dump({'schema_version':1,'request_id':r['request_id'],'status':'OK',
             Installation.load(self.config)
 
     def _enable_dashboard(self, *, readonly=False):
-        script = self.root / 'viewer.py'
+        # Windows runner temporary paths can include a junction/alias; the
+        # installed pin must be canonical, not a raw tempfile alias.
+        script = (self.root / 'viewer.py').resolve()
         script.write_text(
             "import pathlib,sys,time\n"
             "data=sys.stdin.buffer.read(65)\n"
