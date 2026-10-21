@@ -10,7 +10,13 @@ import argparse
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
+
+# This standalone CI script is invoked as tests/<file>.py; unlike the unit
+# discovery runner, direct execution doesn't include the checkout in sys.path.
+# Resolve ONLY the tested checkout, never import from a user-controlled path.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from holding.dashboard_ipc import DashboardIpcServer
 from holding.state_store import StateStore
