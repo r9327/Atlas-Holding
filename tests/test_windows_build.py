@@ -92,6 +92,81 @@ class WindowsBuildTests(unittest.TestCase):
             Path(result.artifact).read_bytes()).hexdigest())
         self.assertTrue(Path(result.artifact).is_file())
 
+    def test_embeds_two_pinned_runtime_binaries_inside_single_setup(self):
+        runtime = (self.project.parent / "approved-runtime").resolve()
+        runtime.mkdir()
+        names = ("AtlasHoldingControlCenter.exe", "AtlasHoldingEngine.exe")
+        for idx, name in enumerate(names):
+            (runtime / name).write_bytes(bytes([65 + idx]) * 1_000_015)
+        pins = {
+            name: hashlib.sha256((runtime / name).read_bytes()).hexdigest()
+            for name in names
+        }
+        calls = []
+        def build(command, *, cwd, check, timeout, shell):
+            self.assertTrue(check)
+            self.assertFalse(shell)
+            self.assertEqual(cwd, self.project)
+            additions = [
+                command[i + 1] for i, part in enumerate(command[:-1])
+                if part == "--add-data"
+            ]
+            self.assertEqual(len(additions), 3)
+            for name in names:
+                observed = [v for v in additions if name in v]
+                self.assertEqual(len(observed), 1)
+                asset = Path(observed[0].rsplit(":", 1)[0])
+                self.assertEqual(
+                    hashlib.sha256(asset.read_bytes()).hexdigest(), pins[name])
+            shim = Path(command[-1]).read_text(encoding="utf-8")
+            self.assertIn("verify_runtime_payload(base / 'runtime'", shim)
+            for digest in pins.values():
+                self.assertIn(digest, shim)
+            stage = Path(command[command.index("--distpath") + 1])
+            stage.mkdir()
+            (stage / "AtlasHoldingSetup.exe").write_bytes(b"MZ" + b"0" * 1600)
+            calls.append(True)
+        with patch("holding.windows_build.sys.platform", "win32"), \
+             patch("holding.windows_build.subprocess.run", side_effect=build):
+            result = build_windows_installer(
+                manifest=self.manifest, expected_manifest_sha256=self.digest,
+                output_dir=self.output, project_root=self.project,
+                runtime_directory=runtime, runtime_pins=pins,
+            )
+        self.assertEqual(len(calls), 1)
+        self.assertGreater(result.bytes, 1024)
+        self.assertEqual(result.sha256, hashlib.sha256(
+            Path(result.artifact).read_bytes()).hexdigest())
+
+    def test_runtime_tampering_or_partial_pins_refuse_packaging(self):
+        runtime = (self.project.parent / "approved-runtime").resolve()
+        runtime.mkdir()
+        gui = runtime / "AtlasHoldingControlCenter.exe"
+        engine = runtime / "AtlasHoldingEngine.exe"
+        gui.write_bytes(b"A" * 1_000_021)
+        engine.write_bytes(b"B" * 1_000_021)
+        pins = {
+            gui.name: hashlib.sha256(gui.read_bytes()).hexdigest(),
+            engine.name: hashlib.sha256(engine.read_bytes()).hexdigest(),
+        }
+        for invalid in (
+            None,
+            {gui.name: pins[gui.name]},
+            {**pins, engine.name: "0" * 64},
+        ):
+            with self.subTest(invalid=invalid):
+                with patch("holding.windows_build.sys.platform", "win32"), \
+                     patch("holding.windows_build.subprocess.run") as pack:
+                    with self.assertRaises(ValueError):
+                        build_windows_installer(
+                            manifest=self.manifest,
+                            expected_manifest_sha256=self.digest,
+                            output_dir=self.output, project_root=self.project,
+                            runtime_directory=runtime, runtime_pins=invalid,
+                        )
+                    pack.assert_not_called()
+        self.assertFalse(self.output.exists())
+
     def test_refuses_to_replace_an_existing_installer(self):
         self.output.mkdir()
         destination = self.output / "AtlasHoldingSetup.exe"
