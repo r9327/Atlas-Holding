@@ -122,11 +122,18 @@ def build_windows_engine(
     )
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="atlas-holding-viewer-build")
+    parser = argparse.ArgumentParser(prog="atlas-holding-runtime-build")
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--kind", choices=("viewer", "engine", "both"), default="viewer")
     args = parser.parse_args(argv)
-    evidence = build_windows_control_center(output_dir=args.output_dir)
-    print(json.dumps(asdict(evidence), sort_keys=True))
+    observed = {}
+    if args.kind in {"viewer", "both"}:
+        observed["control_center"] = asdict(
+            build_windows_control_center(output_dir=args.output_dir))
+    if args.kind in {"engine", "both"}:
+        observed["engine"] = asdict(
+            build_windows_engine(output_dir=args.output_dir))
+    print(json.dumps(observed, sort_keys=True))
     return 0
 
 
