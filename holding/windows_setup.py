@@ -25,7 +25,7 @@ from .staged_install import PinnedZip, inspect_versioned_zip
 from .windows_package_manager import WingetPin
 from .managed_toolchain import resolve_managed_tool
 from .version_evidence import matches_component_version
-from .ollama_service import start_local_ollama
+from .ollama_setup import ensure_selected_model_volume
 
 
 @dataclass(frozen=True)
@@ -190,8 +190,15 @@ def execute_setup(
         cancelled=cancelled, progress=progress,
     )
     if result.state == "PAYLOADS_STAGED_NOT_VALIDATED":
-        result = assess_post_install(result, scan(install_root), pins,
-                                     install_root=install_root)
+        observed = scan(install_root)
+        if model_root is not None:
+            result, observed = ensure_selected_model_volume(
+                result, observed, install_root=install_root,
+                model_root=model_root, pins=pins, cancelled=cancelled,
+            )
+        result = assess_post_install(
+            result, observed, pins, install_root=install_root,
+        )
     return report, result
 
 
