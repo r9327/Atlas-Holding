@@ -99,7 +99,7 @@ def install_pinned_runtime_pair(
             raise RuntimePayloadError("Existing runtime is damaged; explicit repair required") from exc
         return InstalledRuntimePair("REUSED_BINARIES_SECURITY_PENDING", final)
     with tempfile.TemporaryDirectory(dir=parent, prefix=".runtime-staging-") as tmp:
-        stage = Path(tmp)
+        stage = Path(tmp).resolve()
         for name in sorted(_RUNTIME_FILES):
             src = source / name
             if src.is_symlink() or src.resolve(strict=True) != src:
