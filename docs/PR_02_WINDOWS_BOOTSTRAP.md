@@ -103,3 +103,15 @@ Le manifeste de release **v2** ajoute `executable` (chemin ZIP relatif se termin
 Les modèles déjà présents au digest exact sont réutilisés. Une étiquette installée mais correspondant à un autre digest est bloquée sans remplacement. Hors ligne, sans consentement ou en cas de flux interrompu, aucun modèle n'est déclaré prêt et la commande n'efface rien.
 
 **À raccorder** : catalogue vérifié #4, emplacement `OLLAMA_MODELS` piloté au lancement du service, outil d'installation natif Ollama, adaptation du wizard, calibration VRAM/contexte et benchmark de code et tool-calling indépendant. Le module seul ne choisit jamais un modèle sur ses paramètres et ne prétend pas que le téléchargement prouve sa qualité.
+
+## Windows sans archive ZIP portable : winget épinglé
+
+`holding/windows_package_manager.py` ajoute une voie Windows **autorisée et versionnée**, via le gestionnaire `winget` avec des identifiants strictement limités à `Git.Git`, `Ollama.Ollama` et `SST.opencode`. La commande réelle utilise `--id`, `--exact`, `--version`, `--source winget`, `--scope user`, `--silent`, les autorisations de contrat requises et le refus d'interaction, **sans shell ni élévation automatique** ; timeout/sortie/arbre de processus sont bornés. Le gestionnaire winget valide ses propres manifestes/hashes : ce mécanisme n'est pas une archive ZIP dont le SHA est épinglé par Atlas, et le statut reste `INSTALLED_NOT_HEALTHCHECKED` jusqu'à inventaire et validation native.
+
+Le manifeste de confiance **v3** accepte des entrées typées :
+- `{"kind":"winget","component":"git","package_id":"Git.Git","version":"<version exacte du catalogue>"}`
+- `{"kind":"zip","component":"ollama","version":"<version>","url":"https://...","sha256":"<64 hex>","download_bytes":123,"unpacked_bytes":456,"executable":"ollama.exe","expected_version":"<version>"}`
+
+La version et les hashes réels doivent provenir de la release approuvée avant le build. La CLI et le Wizard acceptent ces deux catégories, ne réinstallent jamais un composant jugé sain par l'inventaire, et signalent les **tailles de téléchargement winget comme inconnues** plutôt que les afficher à zéro. Aucune entrée v3 n'autorise une URL, un package ou une commande inventés par le LLM.
+
+**Reste bloquant :** intégrer une release officielle avec versions/hashes contrôlés, recontrôler les exécutables après installation winget, configurer et valider le démarrage Ollama, l'emplacement des modèles, le sandbox OS/ACL, les redémarrages Windows, le benchmark Atlas et le build E2E final.
