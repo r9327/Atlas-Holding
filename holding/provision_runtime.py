@@ -17,6 +17,7 @@ from .staged_install import (InstallError, PinnedZip, inspect_versioned_zip,
                              install_versioned_zip)
 from .downloads import DownloadError
 from .native_health import check_staged_binary
+from .windows_package_manager import WingetPin, install_pinned_winget
 
 
 @dataclass(frozen=True)
@@ -34,7 +35,7 @@ class ProvisionExecution:
 
 
 def stage_required_dependencies(
-    snapshot: Inventory, pins: tuple[PinnedZip, ...], *,
+    snapshot: Inventory, pins: tuple[PinnedZip | WingetPin, ...], *,
     online: bool, authorized: bool,
     install_root: Path, cache_root: Path,
     cancelled: Callable[[], bool] | None = None,
@@ -57,9 +58,9 @@ def stage_required_dependencies(
         return ProvisionExecution("BLOCKED", (), plan.blockers)
     if any(action.action == "INSPECT" for action in plan.actions):
         return ProvisionExecution("BLOCKED", (), ("Unknown dependency state",))
-    manifest: dict[str, PinnedZip] = {}
+    manifest: dict[str, PinnedZip | WingetPin] = {}
     for spec in pins:
-        if not isinstance(spec, PinnedZip):
+        if not isinstance(spec, (PinnedZip, WingetPin)):
             raise ValueError("Invalid release manifest entry")
         spec.validate()
         if spec.component in manifest:
@@ -90,6 +91,17 @@ def stage_required_dependencies(
                 "PARTIAL_OR_BLOCKED", tuple(steps), ("Installation cancelled",),
             )
         spec = manifest[action.name]
+        if isinstance(spec, WingetPin):
+            installed = install_pinned_winget(
+                spec, authorized=True, online=online,
+            )
+            steps.append(ProvisionStep(action.name, action.action, installed.state))
+            if installed.state != "INSTALLED_NOT_HEALTHCHECKED":
+                return ProvisionExecution(
+                    "PARTIAL_OR_BLOCKED", tuple(steps),
+                    ("Windows package manager could not provision " + action.name,),
+                )
+            continue
         existing = inspect_versioned_zip(spec, install_root=install_root)
         if existing.status == "BLOCKED_INVALID":
             steps.append(ProvisionStep(action.name, action.action, "BLOCKED_INVALID"))
