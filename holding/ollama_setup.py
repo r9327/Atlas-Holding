@@ -10,6 +10,7 @@ from typing import Callable
 
 from .inventory import Inventory, scan
 from .ollama_service import start_local_ollama
+from .ollama_storage import store_model_directory
 from .provision_runtime import ProvisionExecution, ProvisionStep
 from .staged_install import PinnedZip
 from .windows_package_manager import WingetPin
@@ -43,6 +44,16 @@ def ensure_selected_model_volume(
             "PARTIAL_OR_BLOCKED", execution.steps + (step,),
             ("Local Ollama startup failed or requires inspection",),
         ), inventory
+    saved = store_model_directory(
+        install_root, model_root, authorized=True,
+    )
+    stored = ProvisionStep("ollama", "MODEL_STORAGE", saved.status)
+    if saved.status != "STORED_PREFERENCE_NOT_RUNTIME_ATTESTED":
+        return ProvisionExecution(
+            "PARTIAL_OR_BLOCKED",
+            execution.steps + (step, stored),
+            ("Ollama started but its storage selection could not be retained",),
+        ), inventory
     return ProvisionExecution(
-        execution.state, execution.steps + (step,), execution.blockers,
+        execution.state, execution.steps + (step, stored), execution.blockers,
     ), scan(install_root)
