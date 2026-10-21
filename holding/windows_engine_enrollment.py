@@ -159,6 +159,9 @@ def prepare_protected_engine_roots(
     _canonical(install_root, directory=True)
     _require_native_windows()
     from .windows_runtime_acl import secure_runtime_acl, validate_runtime_acl
+    # Child DACLs do not prevent an untrusted parent from being renamed.
+    # Root protection is a separate, explicitly approved installer operation.
+    validate_runtime_acl(install_root)
     data = install_root / "data"
     config = install_root / "config"
     created = []
@@ -226,6 +229,7 @@ def enroll_pinned_engine(
     _canonical(data_root, directory=True)
     _canonical(config_root, directory=True)
     _native_security((
+        request.install_root,
         request.runtime_directory.parent,
         request.runtime_directory,
         request.runtime_directory / "AtlasHoldingControlCenter.exe",
@@ -303,6 +307,7 @@ def prepare_installed_engine_launch(
     if (enrollment.config_sha256 != digest or config.read_bytes() != payload):
         raise EngineEnrollmentError("Config receipt is stale or changed")
     _native_security((
+        request.install_root,
         request.runtime_directory.parent,
         request.runtime_directory,
         request.runtime_directory / "AtlasHoldingControlCenter.exe",
