@@ -21,6 +21,7 @@ from .ollama_service import _local_api_alive, start_local_ollama
 from .version_evidence import matches_component_version
 from .windows_package_manager import WingetPin, install_pinned_winget
 from .winget_binary import discover_winget_binary
+from .windows_ollama_environment import configure_user_models, undo_created_user_models
 
 
 PIN = WingetPin("ollama", "Ollama.Ollama", "0.32.8")
@@ -48,9 +49,24 @@ def verify_real_ollama() -> dict[str, str]:
             native = discover_winget_binary(PIN)
             if native.state == "EXACT_BINARY_VERIFIED":
                 raise RuntimeError("Existing WinGet Ollama; refusing reinstall")
+            selected_models = root / "models"
+            config = configure_user_models(
+                selected_models, authorized=True,
+            )
+            if config.status not in {
+                "USER_MODELS_CREATED", "USER_MODELS_ALREADY_MATCH",
+            }:
+                raise RuntimeError(
+                    "Ollama model volume cannot be configured: " +
+                    config.status
+                )
             installed = install_pinned_winget(
                 PIN, authorized=True, online=True, max_seconds=420,
+                model_root=selected_models,
             )
+            if (installed.state != "INSTALLED_NOT_HEALTHCHECKED"
+                    and config.status == "USER_MODELS_CREATED"):
+                undo_created_user_models(selected_models)
             if installed.state != "INSTALLED_NOT_HEALTHCHECKED":
                 raise RuntimeError(
                     "Pinned user Ollama installation not confirmed: " +
@@ -74,7 +90,7 @@ def verify_real_ollama() -> dict[str, str]:
                     ),
                 )
                 launch = start_local_ollama(
-                    candidate, install_root=root, model_root=root / "models",
+                    candidate, install_root=root, model_root=selected_models,
                     pins=(PIN,), authorized=True, startup_seconds=45,
                 )
             try:
