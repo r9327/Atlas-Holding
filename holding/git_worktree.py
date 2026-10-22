@@ -65,7 +65,8 @@ class GitWorktrees:
         environment = {key: value for key, value in os.environ.items()
                        if not key.upper().startswith('GIT_')}
         environment.update(GIT_TERMINAL_PROMPT='0', GIT_NO_REPLACE_OBJECTS='1',
-                           GIT_PAGER='cat', GIT_OPTIONAL_LOCKS='0')
+                           GIT_PAGER='cat', GIT_OPTIONAL_LOCKS='0',
+                           GIT_LFS_SKIP_SMUDGE='1')
         environment.pop('GIT_CONFIG_COUNT', None)
         output_cap, error_cap = 4 * 1024 * 1024, 256 * 1024
         process = job = None
