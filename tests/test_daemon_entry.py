@@ -256,6 +256,74 @@ json.dump({'schema_version':1,'request_id':r['request_id'],'status':'OK',
         self.script.write_text('print("tampered")')
         check()
 
+    def test_installed_local_model_health_uses_pinned_agent_without_mission(self):
+        from holding.daemon_entry import main
+        from unittest.mock import patch
+        import contextlib
+        import io
+        self.save()
+        output = io.StringIO()
+        with patch("holding.daemon_entry.HoldingService.from_local_agent",
+                   side_effect=AssertionError("must not start Holding")), \\
+             contextlib.redirect_stdout(output):
+            code = main(["--check-model-health", "--config",
+                         str(self.config)])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(output.getvalue()), {
+            "installation": "CONFIG_AND_GIT_VERIFIED",
+            "local_model_health": "PINNED_AGENT_AND_LOCAL_TAGS_VERIFIED",
+            "ollama_inference": "NOT_TESTED",
+            "doctor_qa": "NOT_EXECUTED",
+            "github_push": "NOT_PERMITTED",
+        })
+        self.assertFalse((self.root / "state.sqlite").exists())
+        self.assertFalse((self.root / "worktrees").exists())
+
+    def test_installed_local_model_health_rejects_dirty_clone_or_tampered_pin(self):
+        from holding.daemon_entry import main
+        import contextlib
+        import io
+        self.save()
+        def reject():
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                result = main(["--check-model-health", "--config",
+                               str(self.config)])
+            self.assertEqual(result, 2)
+            self.assertEqual(json.loads(output.getvalue()),
+                             {"local_model_health": "REJECTED"})
+        (self.repo / "untracked-code.py").write_text("x=1")
+        reject()
+        (self.repo / "untracked-code.py").unlink()
+        self.script.write_text("changed after onboarding", encoding="utf-8")
+        reject()
+
+    def test_installed_model_health_rejects_false_ready_or_cli_conflicts(self):
+        from holding.daemon_entry import main
+        import contextlib
+        import io
+        # The agent returns status ok but must also assert exact agent_ready=True.
+        self.script.write_text(
+            "import json,sys\\n"
+            "r=json.load(sys.stdin)\\n"
+            "print(json.dumps({'protocol':1,'action':'health',"
+            "'status':'ok','agent_ready':False}))\\n", encoding="utf-8")
+        self.data["argument_sha256"][str(self.script)] = hashlib.sha256(
+            self.script.read_bytes()).hexdigest()
+        self.save()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(main(["--check-model-health", "--config",
+                                   str(self.config)]), 2)
+        self.assertEqual(json.loads(output.getvalue()),
+                         {"local_model_health": "REJECTED"})
+        self.assertEqual(main(["--check-model-health"]), 2)
+        self.assertEqual(main(["--check-model-health", "--self-test"]), 2)
+        self.assertEqual(main([
+            "--check-model-health", "--verify-installation",
+            "--config", str(self.config),
+        ]), 2)
+
     def test_installed_config_verification_mode_requires_config_and_no_other_modes(self):
         from holding.daemon_entry import main
         self.assertEqual(main(['--verify-installation']), 2)
