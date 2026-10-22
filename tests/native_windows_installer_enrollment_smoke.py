@@ -40,6 +40,7 @@ _FILES = ("AtlasHoldingControlCenter.exe", "AtlasHoldingEngine.exe")
 
 
 class _ModelInventory(BaseHTTPRequestHandler):
+    digest = _DIGEST
     def log_message(self, *_):
         pass
 
@@ -48,7 +49,7 @@ class _ModelInventory(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         body = json.dumps({
-            "models": [{"name": _MODEL, "digest": _DIGEST}],
+            "models": [{"name": _MODEL, "digest": type(self).digest}],
         }).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -70,6 +71,15 @@ def _git(*args: str) -> None:
         ["git", *args], stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         timeout=25, check=True, shell=False,
+    )
+
+
+def _check_frozen_model(engine: Path, config: Path) -> subprocess.CompletedProcess:
+    """Invoke installed frozen agent protocol through the real frozen daemon."""
+    return subprocess.run(
+        [str(engine), "--check-model-health", "--config", str(config)],
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, timeout=45, check=False, shell=False,
     )
 
 
@@ -198,8 +208,30 @@ def run(frozen_directory: Path) -> None:
                 "github_push": "NOT_PERMITTED",
             }:
                 raise RuntimeError("Frozen installed engine returned false readiness")
+            # Offline pin verification and LIVE pinned adapter health are
+            # different operations. The latter uses the actual Windows EXE
+            # against a deliberately simulated Ollama tags inventory.
+            observed = _check_frozen_model(frozen_engine, config)
+            if observed.returncode != 0:
+                raise RuntimeError("Native installed adapter/model health failed")
+            health_report = json.loads(observed.stdout)
+            if health_report != {
+                "installation": "CONFIG_AND_GIT_VERIFIED",
+                "local_model_health": "PINNED_AGENT_AND_LOCAL_TAGS_VERIFIED",
+                "ollama_inference": "NOT_TESTED",
+                "doctor_qa": "NOT_EXECUTED",
+                "github_push": "NOT_PERMITTED",
+            }:
+                raise RuntimeError("Native local model probe claimed false autonomy")
+            _ModelInventory.digest = "b" * 64
+            mismatch = _check_frozen_model(frozen_engine, config)
+            if (mismatch.returncode != 2 or
+                    json.loads(mismatch.stdout) !=
+                    {"local_model_health": "REJECTED"}):
+                raise RuntimeError("Native agent accepted an unexpected model digest")
+            _ModelInventory.digest = _DIGEST
             if (installed / "data" / "engine.sqlite").exists():
-                raise RuntimeError("Frozen installation check unexpectedly started daemon")
+                raise RuntimeError("Frozen health probes unexpectedly started daemon")
             status2, pid2 = configure_and_launch_engine(
                 install_root=installed, atlas_root=canonical,
                 runtime_pins=expected, adapter_sha256=agent_pin,
@@ -221,6 +253,7 @@ def run(frozen_directory: Path) -> None:
             server.shutdown()
             server.server_close()
             thread.join(timeout=3)
+    print("NONRELEASE_FROZEN_INSTALLED_AGENT_HEALTH_AND_DIGEST_PASS")
     print("NONRELEASE_NATIVE_ACL_INSTALLED_ENGINE_CONFIG_PASS")
 
 
