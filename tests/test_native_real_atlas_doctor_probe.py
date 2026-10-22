@@ -5,7 +5,9 @@ from dataclasses import replace
 import unittest
 
 from holding.atlas_doctor_evidence import LocalPassport
-from tests.native_real_atlas_doctor_probe import _approved_scope, _verify_local_plan
+from tests.native_real_atlas_doctor_probe import (
+    _approved_scope, _verify_local_plan, _verify_pinned_scope_decision,
+)
 
 SHA = "a" * 40
 
@@ -70,6 +72,18 @@ class RealAtlasDoctorProbeTests(unittest.TestCase):
                       "Owned_Home", None):
             with self.subTest(scope=scope), self.assertRaises(RuntimeError):
                 _approved_scope(scope)
+
+    def test_unowned_source_must_never_receive_ready_to_edit(self):
+        _verify_pinned_scope_decision("unowned", "REVIEW")
+        with self.assertRaisesRegex(RuntimeError, "unexpectedly authorized"):
+            _verify_pinned_scope_decision("unowned", "PLANNED_LOCAL")
+
+    def test_owned_source_does_not_automatically_guarantee_ready(self):
+        for status in ("REVIEW", "PLANNED_LOCAL"):
+            with self.subTest(status=status):
+                _verify_pinned_scope_decision("owned_home", status)
+        with self.assertRaises(RuntimeError):
+            _verify_pinned_scope_decision("owned_home", "VALIDATED_LOCAL")
 
     def test_nonpassport_result_is_rejected(self):
         with self.assertRaises(RuntimeError):
