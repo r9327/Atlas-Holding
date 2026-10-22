@@ -136,7 +136,76 @@ def _check_answer(candidate: Path) -> None:
     if ast.dump(syntax, include_attributes=False) != _EXACT_ANSWER_AST:
         raise RuntimeError("Independent static acceptance check failed")
 
-def run(agent: Path, *, real_model: Path | None = None) -> None:
+def _mission_receipt(*, live_model: bool, model_name: str,
+                     model_digest: str, agent_sha: str, base_sha: str,
+                     candidate_sha: str, adapter_peak: int | None,
+                     duration_ms: int) -> dict:
+    """A compact, honest, nonrelease receipt, never a Doctor/release PASS."""
+    sha256 = re.compile(r"[0-9a-f]{64}")
+    commit = re.compile(r"[0-9a-f]{40}")
+    if (type(live_model) is not bool or not isinstance(model_name, str)
+            or not 1 <= len(model_name) <= 100
+            or not isinstance(model_digest, str) or not sha256.fullmatch(model_digest)
+            or not isinstance(agent_sha, str) or not sha256.fullmatch(agent_sha)
+            or not isinstance(base_sha, str) or not commit.fullmatch(base_sha)
+            or not isinstance(candidate_sha, str) or not commit.fullmatch(candidate_sha)
+            or base_sha == candidate_sha
+            or type(duration_ms) is not int or not 1 <= duration_ms <= 3_660_000
+            or adapter_peak is not None and (
+                type(adapter_peak) is not int
+                or not 0 <= adapter_peak <= 256 * 1024 ** 2)):
+        raise ValueError("Unverified local mission cannot produce a receipt")
+    return {
+        "schema": 1,
+        "kind": "NONRELEASE_DISPOSABLE_LOCAL_MISSION",
+        "source": "LIVE_PINNED_OLLAMA" if live_model else "DETERMINISTIC_CI_STUB",
+        "target": "ISOLATED_TEST_GIT_REPOSITORY_NOT_REAL_ATLAS",
+        "model": model_name,
+        "model_digest": model_digest,
+        "agent_executable_sha256": agent_sha,
+        "base_commit_sha": base_sha,
+        "candidate_commit_sha": candidate_sha,
+        "changed_paths": ["src/feature.py"],
+        "static_ast_exact_match": True,
+        "duration_ms": duration_ms,
+        "adapter_job_peak_bytes": adapter_peak,
+        "ollama_ram_peak_bytes": None,
+        "ollama_vram_peak_bytes": None,
+        "doctor_status": "NOT_EXECUTED",
+        "github_push_status": "NOT_PERMITTED",
+        "release_ready": False,
+    }
+
+
+def _publish_receipt(target: Path, receipt: dict) -> str:
+    """Write only explicit local evidence, never overwrite an older proof."""
+    if (not isinstance(target, Path) or not target.is_absolute()
+            or target.suffix.lower() != ".json" or target.is_symlink()
+            or not target.parent.is_dir() or target.parent.is_symlink()
+            or target.parent.resolve(strict=True) != target.parent):
+        raise ValueError("Canonical new JSON receipt path required")
+    payload = (json.dumps(receipt, ensure_ascii=True, sort_keys=True,
+                          separators=(",", ":")) + "\n").encode("utf-8")
+    if len(payload) > 4096 or receipt.get("release_ready") is not False:
+        raise ValueError("Untrusted or oversized nonrelease mission receipt")
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0)
+    try:
+        descriptor = os.open(target, flags, 0o600)
+    except FileExistsError as exc:
+        raise ValueError("Cannot replace an existing mission receipt") from exc
+    try:
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(payload)
+            output.flush()
+            os.fsync(output.fileno())
+    except BaseException:
+        target.unlink(missing_ok=True)
+        raise
+    return hashlib.sha256(payload).hexdigest()
+
+
+def run(agent: Path, *, real_model: Path | None = None,
+        receipt_json: Path | None = None) -> None:
     if os.name != "nt":
         raise RuntimeError("Frozen native Windows coding smoke needs Windows")
     if (not agent.is_absolute() or not agent.is_file() or agent.is_symlink()
@@ -222,8 +291,10 @@ def run(agent: Path, *, real_model: Path | None = None) -> None:
                         authorized, child, health_directory=health_dir)
                     if not worker.ready():
                         raise RuntimeError("Native agent/model health unavailable")
+                    started = time.monotonic()
                     candidate_sha = worker(Mission(
                         "native-code-smoke", REPOSITORY))
+                    duration_ms = max(1, int((time.monotonic() - started) * 1000))
                     # The Windows Job Object covers only the lightweight
                     # agent process tree, not Ollama's inference/VRAM.
                     # Do not convert unavailable telemetry into a fake zero.
@@ -258,6 +329,17 @@ def run(agent: Path, *, real_model: Path | None = None) -> None:
                             raise RuntimeError("Stub chat count must be exactly one")
                         print("NONRELEASE_FROZEN_AGENT_LOCAL_COMMIT_STUB_PASS")
                     print("Local candidate SHA: " + candidate_sha)
+                    if receipt_json is not None:
+                        receipt = _mission_receipt(
+                            live_model=actual,
+                            model_name=(model_config["model"] if actual else MODEL),
+                            model_digest=(model_config["digest"] if actual else DIGEST),
+                            agent_sha=_sha(agent), base_sha=base,
+                            candidate_sha=candidate_sha, adapter_peak=adapter_peak,
+                            duration_ms=duration_ms,
+                        )
+                        digest = _publish_receipt(receipt_json, receipt)
+                        print("Nonrelease receipt SHA256: " + digest)
                     print("Doctor/CI proof: NOT_EXECUTED")
                     print("GitHub push: NOT_PERMITTED")
                 finally:
@@ -277,8 +359,11 @@ def main() -> None:
     parser.add_argument(
         "--model-json", type=Path,
         help="Optional installed, pinned real Ollama model: no local stub")
+    parser.add_argument(
+        "--receipt-json", type=Path,
+        help="Write nonrelease local proof in a new JSON file; refuses overwrite")
     args = parser.parse_args()
-    run(args.agent, real_model=args.model_json)
+    run(args.agent, real_model=args.model_json, receipt_json=args.receipt_json)
 
 
 if __name__ == "__main__":
