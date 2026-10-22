@@ -191,3 +191,35 @@ argument ne rend donc pas l'agent prêt. Il faut réunir PR #2 et #11 sur
 le même SHA intégré, inscrire un modèle local présent par son digest,
 sécuriser/épingler `model.json`, puis certifier la chaîne Windows complète
 avant toute release.
+
+## Vérification offline du moteur Windows installé (22 octobre 2026)
+
+Le binaire réel `AtlasHoldingEngine.exe` accepte maintenant un mode
+**lecture seule** distinct : `--verify-installation --config <chemin absolu engine.json>`.
+Cette commande réutilise `Installation.load` et `GitWorktrees.inspect_canonical` ;
+elle refuse toute modification SHA-256 de l'agent, du modèle local et de la
+GUI ainsi qu'un clone non canonique, sale ou avec remote différent. Les modes
+`--self-test`, `--native-ipc-smoke` et `--verify-installation` sont
+mutuellement exclus. Elle ne démarre pas SQLite, le GUI, le broker GitHub,
+Ollama ni un agent et n'écrit aucun état de mission.
+
+En succès, le rapport déclare uniquement :
+`CONFIG_AND_GIT_VERIFIED`, `ollama_inference=NOT_TESTED`,
+`doctor_qa=NOT_EXECUTED`, `github_push=NOT_PERMITTED`.
+Il ne faut pas interpréter cette preuve comme un benchmark du modèle ni
+comme une release certifiée. En échec, la commande retourne le code 2
+et `{"installation":"REJECTED"}`, sans divulguer la configuration.
+
+`tests/native_windows_installer_enrollment_smoke.py` exécute le **vrai**
+moteur PyInstaller de la même compilation contre un `engine.json` protégé
+par ACL native après staging, puis exige son refus après altération du JSON
+de modèle. Les tests `tests/test_daemon_entry.py` prouvent également
+l'absence d'écriture de base SQLite ou d'installation de worktree pendant
+la vérification.
+
+**Déploiement restant** : tant que l'utilisateur n'a pas effectué la
+campagne `--model-json` de `tests/native_windows_code_mission_smoke.py`
+avec un modèle Ollama réellement installé et des mesures indépendantes,
+le résultat reste limité à un protocole simulé. La résolution d'un Git
+portable vérifié sans dépendance au PATH machine et les benchmarks qualité
+sont des critères distincts à fermer avant mise en distribution.
