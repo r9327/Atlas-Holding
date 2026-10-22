@@ -213,7 +213,17 @@ def _publish_receipt(target: Path, receipt: dict) -> str:
         raise ValueError("Canonical new JSON receipt path required")
     payload = (json.dumps(receipt, ensure_ascii=True, sort_keys=True,
                           separators=(",", ":")) + "\n").encode("utf-8")
-    if len(payload) > 4096 or receipt.get("release_ready") is not False:
+    if (len(payload) > 4096 or receipt.get("release_ready") is not False
+            or receipt.get("schema") != 1
+            or receipt.get("kind") != "NONRELEASE_DISPOSABLE_LOCAL_MISSION"
+            or receipt.get("source") not in {
+                "LIVE_PINNED_OLLAMA", "DETERMINISTIC_CI_STUB"}
+            or receipt.get("target") !=
+                "ISOLATED_TEST_GIT_REPOSITORY_NOT_REAL_ATLAS"
+            or receipt.get("mission_state") !=
+                "QA_PENDING_AWAITING_PRIVILEGED_DOCTOR"
+            or receipt.get("doctor_status") != "NOT_EXECUTED"
+            or receipt.get("github_push_status") != "NOT_PERMITTED"):
         raise ValueError("Untrusted or oversized nonrelease mission receipt")
     flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0)
     try:
