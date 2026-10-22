@@ -431,7 +431,7 @@ def run(agent: Path, *, real_model: Path | None = None,
             server_thread.join(timeout=3)
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--agent", required=True, type=Path)
     parser.add_argument(
@@ -440,9 +440,10 @@ def main() -> None:
     parser.add_argument(
         "--receipt-json", type=Path,
         help="Write nonrelease local proof in a new JSON file; refuses overwrite")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     run(args.agent, real_model=args.model_json, receipt_json=args.receipt_json)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
