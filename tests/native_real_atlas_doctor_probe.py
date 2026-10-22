@@ -88,6 +88,37 @@ def _evidence_receipt(scope: str, expected_sha: str,
     }
 
 
+def _seal_doctor_receipt(target: Path, receipt: dict) -> str:
+    """Write once inside runner temp, never inside Dof-Atlas or user data."""
+    runner = os.environ.get("RUNNER_TEMP", "")
+    if (not runner or not Path(runner).is_absolute()
+            or not isinstance(target, Path) or not target.is_absolute()
+            or target.suffix != ".json" or target.is_symlink()
+            or not target.parent.is_dir() or target.parent.is_symlink()
+            or target.parent.resolve(strict=True) != target.parent
+            or not target.is_relative_to(Path(runner).resolve(strict=True))):
+        raise RuntimeError("Doctor proof must be a new canonical runner-temp JSON")
+    payload = (json.dumps(receipt, sort_keys=True, ensure_ascii=True,
+                          separators=(",", ":")) + "\n").encode("utf-8")
+    if (len(payload) > 4096
+            or receipt.get("kind") != "NONRELEASE_ATLAS_DOCTOR_REAL_PLAN"
+            or receipt.get("doctor_tests_executed") is not False
+            or receipt.get("doctor_full_certified") is not False
+            or receipt.get("github_push_permitted") is not False
+            or receipt.get("release_ready") is not False):
+        raise RuntimeError("Untrusted or oversized Doctor evidence")
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as output:
+            output.write(payload)
+            output.flush()
+            os.fsync(output.fileno())
+    except BaseException:
+        target.unlink(missing_ok=True)
+        raise
+    return hashlib.sha256(payload).hexdigest()
+
+
 def _git(root: Path, *args: str) -> str:
     command = subprocess.run(
         ["git", "-C", str(root), *args],
