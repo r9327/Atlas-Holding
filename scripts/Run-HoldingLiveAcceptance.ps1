@@ -89,9 +89,16 @@ try {
         $stream = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
         $buffer = New-Object byte[] 4096
         $memory = [System.IO.MemoryStream]::new()
+        $inventoryTimer = [System.Diagnostics.Stopwatch]::StartNew()
         try {
             while ($true) {
-                $count = $stream.Read($buffer, 0, $buffer.Length)
+                $left = 5000 - [int]$inventoryTimer.ElapsedMilliseconds
+                if ($left -le 0) { throw 'Local Ollama inventory read timed out' }
+                $readTask = $stream.ReadAsync($buffer, 0, $buffer.Length)
+                if (!$readTask.Wait($left)) {
+                    throw 'Local Ollama inventory read timed out'
+                }
+                $count = $readTask.GetAwaiter().GetResult()
                 if ($count -eq 0) { break }
                 if ($memory.Length + $count -gt 262144) {
                     throw 'Local Ollama inventory exceeds 256 KiB'
