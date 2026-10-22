@@ -88,7 +88,7 @@ try {
         schema = 1; model = $Model; digest = $digest
         num_ctx = $NumCtx; timeout = $TimeoutSeconds
     } | ConvertTo-Json -Compress
-    [System.IO.File]::WriteAllText($modelFile, $config, [System.Text.Encoding]::UTF8)
+    [System.IO.File]::WriteAllText($modelFile, $config, [System.Text.UTF8Encoding]::new($false))
     $agent = Join-Path $kit 'AtlasHoldingAgent.exe'
     $runner = Join-Path $kit 'AtlasHoldingAcceptance.exe'
     & $runner --self-test
