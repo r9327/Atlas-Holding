@@ -250,3 +250,13 @@ release. Le test Windows exécutant le vrai script et les vrais EXE vérifie
 **3/3 sur serveur Ollama simulé**, les SHA des trois reçus et la
 contre-épreuve **1 essai réussi puis HTTP 503 au deuxième** : aucun bilan
 PASS dans ce dernier cas. Essai avec un véritable LLM Windows encore requis.
+
+
+### 22 octobre — double interpréteur Windows pour le kit
+
+La CI valide `Run-HoldingLiveAcceptance.ps1` avec `pwsh` (PowerShell 7)
+**et** avec `powershell.exe` (version 5.x native à Windows). Chaque shell
+exerce le même kit des deux EXE compilés, 3 essais Git/AST, altérations
+d'empreinte, HTTP 503, digest changé et 1 réussite suivie d'un échec.
+Le kit reste nonrelease : le vrai modèle et les performances GPU du PC
+utilisateur ne sont pas simulables par cette validation.
