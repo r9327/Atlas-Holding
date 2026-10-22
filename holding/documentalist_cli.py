@@ -12,11 +12,12 @@ import os
 from pathlib import Path
 import sys
 
+from .document_cache import DocumentCacheError, load_cached_batch, store_batch
 from .document_csv import ingest_csv_records
 from .document_exchange import export_document_batch
 from .document_html import ingest_html_table
 from .document_intake import DocumentIntakeError, MAX_DOCUMENT_BYTES, ingest_json_records
-from .document_source import DocumentSourceError, fetch_document
+from .document_source import DocumentSourceError, fetch_document, _check_url
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -32,11 +33,16 @@ def main(argv: list[str] | None = None) -> int:
                         help="explicit remote hostname permitted for collection")
     parser.add_argument("--id-field", default="id")
     parser.add_argument("--timeout", type=float, default=15.0)
+    parser.add_argument("--cache-dir", type=Path, help="optional persistent source cache")
+    parser.add_argument("--offline", action="store_true", help="use verified cached source only; never network")
     args = parser.parse_args(argv)
     try:
         if args.format != "html" and args.table_index != 0:
             raise DocumentIntakeError("--table-index applies only to HTML")
+        source_mode = "LOCAL_FILE"
         if args.file:
+            if args.offline or args.cache_dir is not None:
+                raise DocumentIntakeError("--offline/--cache-dir apply only to --url")
             if args.allow_host:
                 raise DocumentIntakeError("--allow-host applies only to --url")
             if args.file.is_symlink() or not args.file.is_file():
@@ -54,10 +60,26 @@ def main(argv: list[str] | None = None) -> int:
         else:
             if not args.allow_host:
                 raise DocumentSourceError("--allow-host is required for URL collection")
-            fetched = fetch_document(args.url, allowed_hosts=tuple(args.allow_host),
-                                     format=args.format, id_field=args.id_field,
-                                     table_index=args.table_index, timeout=args.timeout)
-            batch, read_bytes = fetched.batch, fetched.bytes_received
+            if args.offline:
+                if args.cache_dir is None:
+                    raise DocumentCacheError("offline mode requires --cache-dir")
+                # An offline cache entry cannot grant permission to read an unapproved URL.
+                _check_url(args.url, frozenset(args.allow_host), test_loopback=False)
+                cached = load_cached_batch(
+                    args.cache_dir, source=args.url, format=args.format,
+                    id_field=args.id_field, table_index=args.table_index,
+                )
+                if cached is None:
+                    raise DocumentCacheError("OFFLINE_CACHE_MISS")
+                batch, read_bytes, source_mode = cached.batch, 0, "OFFLINE_CACHE"
+            else:
+                fetched = fetch_document(args.url, allowed_hosts=tuple(args.allow_host),
+                                         format=args.format, id_field=args.id_field,
+                                         table_index=args.table_index, timeout=args.timeout)
+                batch, read_bytes, source_mode = fetched.batch, fetched.bytes_received, "NETWORK"
+                if args.cache_dir is not None:
+                    store_batch(args.cache_dir, batch, format=args.format,
+                                id_field=args.id_field, table_index=args.table_index)
         result = export_document_batch(batch)
         if args.out.is_symlink():
             raise DocumentIntakeError("output path cannot be a symlink")
@@ -71,7 +93,7 @@ def main(argv: list[str] | None = None) -> int:
                 file.close()
                 args.out.unlink(missing_ok=True)
                 raise
-    except (DocumentIntakeError, DocumentSourceError, OSError,
+    except (DocumentIntakeError, DocumentSourceError, DocumentCacheError, OSError,
             UnicodeError, ValueError) as exc:
         print(json.dumps({"status": "ERROR", "reason": str(exc)}, ensure_ascii=False),
               file=sys.stderr)
@@ -83,6 +105,8 @@ def main(argv: list[str] | None = None) -> int:
         "source_sha256": batch.source_sha256,
         "records": len(batch.records),
         "source_bytes": read_bytes,
+        "source_mode": source_mode,
+        "collected_at": batch.collected_at,
         "exchange_bytes": len(result),
     }, sort_keys=True, ensure_ascii=False))
     return 0
