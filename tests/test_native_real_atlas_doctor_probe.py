@@ -5,7 +5,7 @@ from dataclasses import replace
 import unittest
 
 from holding.atlas_doctor_evidence import LocalPassport
-from tests.native_real_atlas_doctor_probe import _verify_local_plan
+from tests.native_real_atlas_doctor_probe import _approved_scope, _verify_local_plan
 
 SHA = "a" * 40
 
@@ -58,6 +58,18 @@ class RealAtlasDoctorProbeTests(unittest.TestCase):
         for wrong in ("", "deadbeef", SHA.upper(), "a" * 41):
             with self.subTest(wrong=wrong), self.assertRaises(RuntimeError):
                 _verify_local_plan(advisory(), wrong)
+
+    def test_scope_is_bound_to_exact_allowlisted_Atlas_path(self):
+        self.assertEqual(_approved_scope("unowned"), ("app/constants.py",))
+        self.assertEqual(_approved_scope("owned_home"),
+                         ("app/pages/home_page.py",))
+
+    def test_arbitrary_or_path_traversal_doctor_scope_is_rejected(self):
+        for scope in ("../outside", "app/pages/home_page.py",
+                      "tools/doctor_certification.py", "", "--run-tests",
+                      "Owned_Home", None):
+            with self.subTest(scope=scope), self.assertRaises(RuntimeError):
+                _approved_scope(scope)
 
     def test_nonpassport_result_is_rejected(self):
         with self.assertRaises(RuntimeError):
