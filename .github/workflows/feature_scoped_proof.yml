@@ -25,7 +25,7 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import subprocess, sys
-          candidates = ("test_document_intake.py", "test_project_profile.py", "test_update_plan.py", "test_project_profile_cli.py")
+          candidates = ("test_document_intake.py", "test_project_profile.py", "test_update_plan.py", "test_project_profile_cli.py", "test_project_profile_examples.py")
           present = [name for name in candidates if (Path("tests") / name).is_file()]
           if not present:
               raise SystemExit("No new feature tests in this branch")
