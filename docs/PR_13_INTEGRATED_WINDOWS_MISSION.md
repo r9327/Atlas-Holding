@@ -118,3 +118,19 @@ Doctor Atlas, sa QA exacte et la certification FULL du dépôt source devront
 être réalisés sur un candidat Atlas isolé, avec une identité Windows
 restreinte et des preuves officielles. Ni le commit, ni le contrôle AST, ni
 la valeur `QA_PENDING` ne suffisent pour certifier ou fusionner le code.
+
+
+## Validation du digest charge et grant Doctor local
+
+Les releves facultatifs `/api/ps` ne comptent un modele comme charge que si
+son nom **et son digest exact** correspondent au modele choisi dans le JSON
+d'installation. Si le nom est identique mais l'empreinte differe ou manque,
+la lecture echoue, le compteur d'echecs augmente et les valeurs peuvent
+rester inconnues. Aucun releve d'un autre modele ne doit se voir attribuer
+une mesure RAM/VRAM. Ce controle ne prouve toujours pas un pic GPU systeme.
+
+Le test Windows de mission ajoute ensuite une tentative de lancer le Doctor
+scoped **sans** grant `local_test` (seuls `code` et `commit` sont permis).
+Le superviseur la refuse explicitement : la mission demeure `QA_PENDING` et
+aucun faux verdict `PASS` n'est emis. C'est un test du refus de permission,
+non une certification du vrai Doctor.
