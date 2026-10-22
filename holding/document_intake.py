@@ -93,8 +93,20 @@ def ingest_json_records(raw: bytes, *, source: str, collected_at: str,
         raise DocumentIntakeError("invalid or oversized JSON bytes")
     if not isinstance(id_field, str) or not id_field or len(id_field) > 100:
         raise DocumentIntakeError("invalid ID field")
+    def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON key: {key}")
+            result[key] = value
+        return result
+
     try:
-        doc = json.loads(raw.decode("utf-8"), parse_constant=lambda s: (_ for _ in ()).throw(ValueError(s)))
+        doc = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=unique_object,
+            parse_constant=lambda s: (_ for _ in ()).throw(ValueError(s)),
+        )
     except (UnicodeError, ValueError, RecursionError) as exc:
         raise DocumentIntakeError("malformed document") from exc
     if isinstance(doc, dict) and set(doc) == {"records"}:
