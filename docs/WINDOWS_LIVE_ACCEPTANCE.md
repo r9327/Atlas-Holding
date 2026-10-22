@@ -106,3 +106,29 @@ La CI exerce également les refus si `/api/chat` renvoie une erreur 503 ou
 si le digest du modèle change entre le choix PowerShell et la revérification
 par l'agent natif : aucun reçu de succès n'est créé, le JSON temporaire
 est supprimé, et aucune PR ni aucun push n'est effectué.
+
+
+## Essais répétables du modèle (nouveau contrôle nonrelease)
+
+La commande accepte désormais `-Trials` entre **1 et 5** (défaut : 1).
+Exemple :
+
+```powershell
+.\\Run-HoldingLiveAcceptance.ps1 -Model "nom-exact" -Trials 3 -NumCtx 4096 -TimeoutSeconds 600
+```
+
+Chaque essai lance une **nouvelle mission Git jetable indépendante**, avec
+le même modèle épinglé par digest et la même petite tâche. Chacun génère
+un `receipt-<session>-<num>.json` qui conserve les SHA et la durée. Une
+fois **tous les essais réussis**, un `session-<id>.json` est créé en mode
+sans écrasement, avec nombre d'essais, durées et SHA-256 des reçus.
+**Si un essai échoue, la session globale n'est jamais marquée PASS** et le
+JSON d'épinglage temporaire est effacé ; les reçus d'essais déjà réussis
+sont conservés pour diagnostic. Une interruption ne crée jamais de bilan
+positif non mérité.
+
+Cette répétition détecte certains comportements instables sur la même tâche
+mais **n'est pas un benchmark comparatif de qualité** :
+`model_quality_benchmark: NOT_CERTIFIED`, `independent_doctor_qa:
+NOT_EXECUTED` et `release_ready: false`. Elle n'inclut pas la RAM/VRAM
+réelle d'Ollama ni les contraintes d'un projet de production.
