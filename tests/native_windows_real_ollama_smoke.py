@@ -94,6 +94,53 @@ def _check_live_receipt(receipt: dict, *, model: str, digest: str) -> None:
             raise RuntimeError("Untrusted certification claim in live-model proof")
 
 
+
+TRIALS = 3
+
+
+def _build_verified_session(receipts: list[tuple[bytes, dict]],
+                            *, model: str, digest: str) -> dict:
+    """An aggregate PASS exists only after THREE independently sealed receipts.
+
+    This summarizes isolated one-off missions, not quality certification.
+    The raw receipts stay on the disposable runner and aren't uploaded.
+    """
+    if len(receipts) != TRIALS or not _SHA64.fullmatch(digest):
+        raise RuntimeError("Incomplete real-model trials: no aggregate PASS")
+    receipt_hashes: list[str] = []
+    candidate_shas: list[str] = []
+    durations: list[int] = []
+    agent_hashes: set[str] = set()
+    for raw, record in receipts:
+        if (not isinstance(raw, bytes) or not 0 < len(raw) <= 4096
+                or not isinstance(record, dict)
+                or json.loads(raw) != record):
+            raise RuntimeError("Invalid or altered individual model receipt")
+        _check_live_receipt(record, model=model, digest=digest)
+        receipt_hashes.append(hashlib.sha256(raw).hexdigest())
+        candidate_shas.append(record["candidate_commit_sha"])
+        durations.append(record["duration_ms"])
+        agent_hashes.add(record["agent_executable_sha256"])
+    if len(agent_hashes) != 1:
+        raise RuntimeError("Different native agents used between trials")
+    return {
+        "schema": 1,
+        "kind": "NONRELEASE_THREE_DISPOSABLE_GIT_TRIALS",
+        "source": "LIVE_PINNED_OLLAMA",
+        "model": model,
+        "model_digest": digest,
+        "trial_count": TRIALS,
+        "individual_receipt_sha256": receipt_hashes,
+        "candidate_commit_sha": candidate_shas,
+        "trial_duration_ms": durations,
+        "agent_executable_sha256": next(iter(agent_hashes)),
+        "doctor_status": "NOT_EXECUTED",
+        "github_push_status": "NOT_PERMITTED",
+        "release_ready": False,
+        "model_quality_benchmark": "NOT_CERTIFIED",
+    }
+
+
 def _restricted_environment(model_dir: Path) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if k.upper() in {
         "PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "USERPROFILE",
@@ -168,29 +215,58 @@ def run(agent: Path, acceptance: Path) -> None:
             "schema": 1, "model": MODEL, "digest": digest,
             "num_ctx": 4096, "timeout": 420,
         }), encoding="utf-8")
-        receipt = root / "real-receipt.json"
-        stdout, stderr = root / "mission.out", root / "mission.err"
-        with stdout.open("wb") as out, stderr.open("wb") as err:
-            result = subprocess.run(
-                [str(acceptance), "--agent", str(agent),
-                 "--model-json", str(pinned), "--receipt-json", str(receipt)],
-                env=_restricted_environment(model_dir),
-                stdin=subprocess.DEVNULL, stdout=out, stderr=err,
-                check=False, timeout=540, cwd=root,
-            )
-        if result.returncode:
-            raise RuntimeError(
-                "Real model was invoked but did not satisfy isolated code "
-                "acceptance (not a passing quality benchmark)")
-        if not receipt.is_file() or receipt.stat().st_size > 4096:
-            raise RuntimeError("Verified live-model receipt is missing or oversized")
-        raw = receipt.read_bytes()
-        proof = json.loads(raw)
-        _check_live_receipt(proof, model=MODEL, digest=digest)
-        print("NONRELEASE_REAL_OLLAMA_FROZEN_CODE_COMMIT_PASS", flush=True)
+        verified_receipts: list[tuple[bytes, dict]] = []
+        for trial in range(1, TRIALS + 1):
+            # Digest may change between trials; a different model MUST NOT
+            # contribute to an aggregate proof, even if its code looks fine.
+            if _pinned_digest(MODEL, _api_json("/api/tags")) != digest:
+                raise RuntimeError(
+                    f"Pinned Ollama model changed before trial {trial}: no session PASS"
+                )
+            receipt = root / f"real-receipt-{trial}.json"
+            stdout = root / f"mission-{trial}.out"
+            stderr = root / f"mission-{trial}.err"
+            with stdout.open("xb") as out, stderr.open("xb") as err:
+                result = subprocess.run(
+                    [str(acceptance), "--agent", str(agent),
+                     "--model-json", str(pinned), "--receipt-json", str(receipt)],
+                    env=_restricted_environment(model_dir),
+                    stdin=subprocess.DEVNULL, stdout=out, stderr=err,
+                    check=False, timeout=540, cwd=root,
+                )
+            if result.returncode:
+                raise RuntimeError(
+                    f"Real model trial {trial}/{TRIALS} did not satisfy isolated "
+                    "code acceptance; no aggregate PASS"
+                )
+            if (not receipt.is_file() or receipt.is_symlink()
+                    or not 0 < receipt.stat().st_size <= 4096):
+                raise RuntimeError(
+                    f"Trial {trial} has no valid exact receipt; no aggregate PASS"
+                )
+            raw = receipt.read_bytes()
+            proof = json.loads(raw)
+            _check_live_receipt(proof, model=MODEL, digest=digest)
+            verified_receipts.append((raw, proof))
+            print(f"NONRELEASE_REAL_OLLAMA_INDIVIDUAL_TRIAL_PASS={trial}/{TRIALS}",
+                  flush=True)
+        session = _build_verified_session(
+            verified_receipts, model=MODEL, digest=digest,
+        )
+        session_raw = (json.dumps(session, sort_keys=True, separators=(",", ":"))
+                       + "\n").encode("utf-8")
+        session_path = root / "three-trial-session.json"
+        # Exclusive create only AFTER all trials passed. Never overwrite.
+        with session_path.open("xb") as session_file:
+            session_file.write(session_raw)
+            session_file.flush()
+            os.fsync(session_file.fileno())
+        print("NONRELEASE_REAL_OLLAMA_FROZEN_THREE_TRIALS_PASS", flush=True)
         print("Model digest: " + digest, flush=True)
-        print("Receipt SHA256: " + hashlib.sha256(raw).hexdigest(), flush=True)
-        print("Doctor: NOT_EXECUTED; Atlas GitHub push: NOT_PERMITTED", flush=True)
+        print("Session SHA256: " + hashlib.sha256(session_raw).hexdigest(),
+              flush=True)
+        print("Doctor: NOT_EXECUTED; Atlas GitHub push: NOT_PERMITTED",
+              flush=True)
     finally:
         if launch is not None and launch.owned and launch.process is not None:
             child = launch.process
