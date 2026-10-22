@@ -27,6 +27,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from holding.autonomy import Mission, StandingGrant
+from holding.ollama_observation import OllamaAllocation, OllamaAllocationObserver
 from holding.code_worker import LocalCodeWorker
 from holding.daemon_lease import DaemonLease
 from holding.executor import AuthorizedGit
@@ -139,7 +140,8 @@ def _check_answer(candidate: Path) -> None:
 def _mission_receipt(*, live_model: bool, model_name: str,
                      model_digest: str, agent_sha: str, base_sha: str,
                      candidate_sha: str, adapter_peak: int | None,
-                     duration_ms: int) -> dict:
+                     duration_ms: int,
+                     allocation: OllamaAllocation | None = None) -> dict:
     """A compact, honest, nonrelease receipt, never a Doctor/release PASS."""
     sha256 = re.compile(r"[0-9a-f]{64}")
     commit = re.compile(r"[0-9a-f]{40}")
@@ -153,7 +155,22 @@ def _mission_receipt(*, live_model: bool, model_name: str,
             or type(duration_ms) is not int or not 1 <= duration_ms <= 3_660_000
             or adapter_peak is not None and (
                 type(adapter_peak) is not int
-                or not 0 <= adapter_peak <= 256 * 1024 ** 2)):
+                or not 0 <= adapter_peak <= 256 * 1024 ** 2)
+            or allocation is not None and (
+                not live_model or type(allocation) is not OllamaAllocation
+                or type(allocation.observations) is not int
+                or not 0 <= allocation.observations <= 1_000_000
+                or type(allocation.failed_polls) is not int
+                or not 0 <= allocation.failed_polls <= 1_000_000
+                or (allocation.observations == 0 and (
+                    allocation.loaded_model_bytes_high is not None
+                    or allocation.loaded_model_vram_bytes_high is not None))
+                or (allocation.observations > 0 and (
+                    type(allocation.loaded_model_bytes_high) is not int
+                    or type(allocation.loaded_model_vram_bytes_high) is not int
+                    or not 0 <= allocation.loaded_model_vram_bytes_high
+                    <= allocation.loaded_model_bytes_high <= 1024 ** 5))
+            )):
         raise ValueError("Unverified local mission cannot produce a receipt")
     return {
         "schema": 1,
@@ -171,6 +188,15 @@ def _mission_receipt(*, live_model: bool, model_name: str,
         "adapter_job_peak_bytes": adapter_peak,
         "ollama_ram_peak_bytes": None,
         "ollama_vram_peak_bytes": None,
+        "ollama_allocation_observations": (
+            allocation.observations if allocation is not None else 0),
+        "ollama_allocation_failed_polls": (
+            allocation.failed_polls if allocation is not None else 0),
+        "ollama_loaded_model_bytes_observed_high": (
+            allocation.loaded_model_bytes_high if allocation is not None else None),
+        "ollama_loaded_model_vram_bytes_observed_high": (
+            allocation.loaded_model_vram_bytes_high
+            if allocation is not None else None),
         "doctor_status": "NOT_EXECUTED",
         "github_push_status": "NOT_PERMITTED",
         "release_ready": False,
@@ -292,8 +318,17 @@ def run(agent: Path, *, real_model: Path | None = None,
                     if not worker.ready():
                         raise RuntimeError("Native agent/model health unavailable")
                     started = time.monotonic()
-                    candidate_sha = worker(Mission(
-                        "native-code-smoke", REPOSITORY))
+                    observer = (OllamaAllocationObserver(model_config["model"])
+                                if actual else None)
+                    allocation = None
+                    try:
+                        if observer is not None:
+                            observer.start()
+                        candidate_sha = worker(Mission(
+                            "native-code-smoke", REPOSITORY))
+                    finally:
+                        if observer is not None:
+                            allocation = observer.stop()
                     duration_ms = max(1, int((time.monotonic() - started) * 1000))
                     # The Windows Job Object covers only the lightweight
                     # agent process tree, not Ollama's inference/VRAM.
@@ -336,7 +371,7 @@ def run(agent: Path, *, real_model: Path | None = None,
                             model_digest=(model_config["digest"] if actual else DIGEST),
                             agent_sha=_sha(agent), base_sha=base,
                             candidate_sha=candidate_sha, adapter_peak=adapter_peak,
-                            duration_ms=duration_ms,
+                            duration_ms=duration_ms, allocation=allocation,
                         )
                         digest = _publish_receipt(receipt_json, receipt)
                         print("Nonrelease receipt SHA256: " + digest)
