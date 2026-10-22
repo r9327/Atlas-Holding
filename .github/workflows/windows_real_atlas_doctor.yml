@@ -78,7 +78,30 @@ jobs:
                 $json.doctor_full_certified -ne $false -or
                 $json.github_push_permitted -ne $false -or
                 $json.release_ready -ne $false -or
-                $json.doctor_report_sha256 -cnotmatch '^[0-9a-f]{64}) {
+                $json.doctor_report_sha256 -cnotmatch '^[0-9a-f]{64}
+              throw "One Doctor report made an unverified certification claim"
+            }
+            if ($scopes.ContainsKey($json.scope)) { throw "Duplicated Doctor scope" }
+            $scopes[$json.scope] = $json
+          }
+          if (!$scopes.ContainsKey('unowned') -or
+              $scopes['unowned'].path -ne 'app/constants.py' -or
+              $scopes['unowned'].status -ne 'REVIEW' -or
+              !$scopes.ContainsKey('owned_home') -or
+              $scopes['owned_home'].path -ne 'app/pages/home_page.py' -or
+              $scopes['owned_home'].status -notin @('REVIEW','PLANNED_LOCAL')) {
+            throw "Doctor ownership scope comparison was not certified as advisory-only"
+          }
+          Write-Output "NONRELEASE_TWO_REAL_ATLAS_DOCTOR_SCOPE_RECEIPTS_PASS"
+      - name: Upload nonrelease Doctor exact-SHA advisory receipts
+        uses: actions/upload-artifact@v4
+        with:
+          name: NONRELEASE-Real-Atlas-Doctor-${{ github.run_id }}
+          path: ${{ runner.temp }}/atlas-doctor-*-${{ github.run_id }}.json
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+) {
               throw "One Doctor report made an unverified certification claim"
             }
             if ($scopes.ContainsKey($json.scope)) { throw "Duplicated Doctor scope" }
