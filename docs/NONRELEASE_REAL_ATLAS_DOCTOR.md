@@ -61,3 +61,22 @@ Git propre avant/apres. Le diagnostic REVIEW est un second appel plan-only
 dont le rapport est relu a travers le meme protocole strict. Ne jamais
 interpréter un proprietaire unique comme un passe-droit pour pousser,
 modifier, tester ou fusionner.
+
+## Reçus indépendants exploitables par la Holding (NONRELEASE)
+
+Chaque comparaison émet maintenant un petit reçu canonique au format JSON dans
+le **répertoire temporaire du runner GitHub**, jamais dans le checkout Atlas.
+Il contient : dépôt et SHA Atlas exact, chemin de scope autorisé, statut
+`PLANNED_LOCAL` ou `REVIEW`, empreinte du rapport Doctor et quatre verrous
+explicites à `false` (tests exécutés, Doctor FULL, push GitHub, release).
+La création utilise `O_EXCL` : un reçu préexistant ne peut pas être remplacé.
+Avant la création, les deux commandes Git vérifient que HEAD et l'arbre Atlas
+n'ont pas changé.
+
+Le workflow compare indépendamment les deux reçus et vérifie que le fichier
+sans propriétaire reste en `REVIEW`. Seulement ensuite, il produit un
+artefact GitHub **NONRELEASE**, conservé trois jours.
+Une empreinte SHA-256 à 64 caractères ne constitue **pas** une signature
+d'autorité du Doctor ; ces reçus restent des diagnostics locaux.
+Cette différence est essentielle pour le futur Control Center, qui ne doit pas
+convertir un rapport consultatif en autorisation de fusion.
