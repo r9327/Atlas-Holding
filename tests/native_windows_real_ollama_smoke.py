@@ -112,9 +112,11 @@ def _build_verified_session(receipts: list[tuple[bytes, dict]],
     durations: list[int] = []
     agent_hashes: set[str] = set()
     for raw, record in receipts:
+        expected_raw = ((json.dumps(record, ensure_ascii=True, sort_keys=True,
+                                    separators=(",", ":")) + "\n")
+                        .encode("utf-8")) if isinstance(record, dict) else b""
         if (not isinstance(raw, bytes) or not 0 < len(raw) <= 4096
-                or not isinstance(record, dict)
-                or json.loads(raw) != record):
+                or raw != expected_raw):
             raise RuntimeError("Invalid or altered individual model receipt")
         _check_live_receipt(record, model=model, digest=digest)
         receipt_hashes.append(hashlib.sha256(raw).hexdigest())
