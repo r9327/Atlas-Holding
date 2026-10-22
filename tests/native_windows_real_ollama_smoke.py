@@ -123,6 +123,9 @@ def _build_verified_session(receipts: list[tuple[bytes, dict]],
         agent_hashes.add(record["agent_executable_sha256"])
     if len(agent_hashes) != 1:
         raise RuntimeError("Different native agents used between trials")
+    if (len(set(candidate_shas)) != TRIALS
+            or len(set(receipt_hashes)) != TRIALS):
+        raise RuntimeError("Duplicate Git commit/receipt cannot prove independent trials")
     return {
         "schema": 1,
         "kind": "NONRELEASE_THREE_DISPOSABLE_GIT_TRIALS",
