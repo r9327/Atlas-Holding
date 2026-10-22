@@ -374,20 +374,71 @@ def _verify_installed_config(filename: Path) -> int:
     return 0
 
 
+def _verify_installed_model_health(filename: Path) -> int:
+    """Health-check the REAL pinned frozen adapter and exact local model.
+
+    Runs with installed ACL/config/Git checks, a bounded read-only agent
+    `health` request and zero mission/database/GUI/push/Doctor operations.
+    This is NOT an inference or model-quality benchmark. The native adapter
+    verifies the digest currently offered by loopback Ollama /api/tags.
+    """
+    from .git_worktree import GitSafetyError
+    from .process_agent import AgentProcessError, AgentProgram, LocalProcessAgent
+    try:
+        installation = Installation.load(filename)
+        git = GitWorktrees(installation.canonical_root, installation.workspace,
+                           installation.repository)
+        git.inspect_canonical()
+        if len(installation.arguments) != 1:
+            raise BootstrapError("Exactly one pinned local model config required")
+        agent = AgentProgram(
+            installation.executable, installation.arguments,
+            timeout_seconds=installation.timeout_seconds,
+            pinned_executable_sha256=installation.executable_sha256,
+            pinned_arguments=tuple(
+                (arg, installation.argument_sha256[arg])
+                for arg in installation.arguments),
+        )
+        response = LocalProcessAgent(agent).request(
+            "health", {}, cwd=installation.canonical_root)
+        if response != {
+            "protocol": 1, "action": "health", "status": "ok",
+            "agent_ready": True,
+        }:
+            raise BootstrapError("Pinned model agent did not report exact health")
+    except (BootstrapError, GitSafetyError, AgentProcessError, OSError,
+            ValueError, TypeError):
+        print(json.dumps({"local_model_health": "REJECTED"}, sort_keys=True))
+        return 2
+    print(json.dumps({
+        "installation": "CONFIG_AND_GIT_VERIFIED",
+        "local_model_health": "PINNED_AGENT_AND_LOCAL_TAGS_VERIFIED",
+        "ollama_inference": "NOT_TESTED",
+        "doctor_qa": "NOT_EXECUTED",
+        "github_push": "NOT_PERMITTED",
+    }, sort_keys=True))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog='atlas-holding-daemon')
     parser.add_argument('--config',type=Path)
     parser.add_argument('--self-test',action='store_true')
     parser.add_argument('--native-ipc-smoke',action='store_true')
     parser.add_argument('--verify-installation', action='store_true')
+    parser.add_argument('--check-model-health', action='store_true')
     args=parser.parse_args(argv)
     if sum((args.self_test, args.native_ipc_smoke,
-            args.verify_installation)) > 1:
+            args.verify_installation, args.check_model_health)) > 1:
         return 2
     if args.verify_installation:
         if args.config is None:
             return 2
         return _verify_installed_config(args.config)
+    if args.check_model_health:
+        if args.config is None:
+            return 2
+        return _verify_installed_model_health(args.config)
     if args.native_ipc_smoke:
         if args.config is not None:
             return 2
