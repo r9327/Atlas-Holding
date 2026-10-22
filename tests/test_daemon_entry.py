@@ -263,9 +263,9 @@ json.dump({'schema_version':1,'request_id':r['request_id'],'status':'OK',
         import io
         self.save()
         output = io.StringIO()
-        with patch("holding.daemon_entry.HoldingService.from_local_agent",
-                   side_effect=AssertionError("must not start Holding")), \\
-             contextlib.redirect_stdout(output):
+        with (patch("holding.daemon_entry.HoldingService.from_local_agent",
+                    side_effect=AssertionError("must not start Holding")),
+              contextlib.redirect_stdout(output)):
             code = main(["--check-model-health", "--config",
                          str(self.config)])
         self.assertEqual(code, 0)
@@ -304,10 +304,10 @@ json.dump({'schema_version':1,'request_id':r['request_id'],'status':'OK',
         import io
         # The agent returns status ok but must also assert exact agent_ready=True.
         self.script.write_text(
-            "import json,sys\\n"
-            "r=json.load(sys.stdin)\\n"
+            "import json,sys\n"
+            "r=json.load(sys.stdin)\n"
             "print(json.dumps({'protocol':1,'action':'health',"
-            "'status':'ok','agent_ready':False}))\\n", encoding="utf-8")
+            "'status':'ok','agent_ready':False}))\n", encoding="utf-8")
         self.data["argument_sha256"][str(self.script)] = hashlib.sha256(
             self.script.read_bytes()).hexdigest()
         self.save()
