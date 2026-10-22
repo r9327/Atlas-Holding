@@ -34,6 +34,7 @@ class _FaultInjectingOllamaStub(LocalOllamaStub):
     mode = "normal"
     inventory_calls = 0
     failed_chat_calls = 0
+    fail_after_chat_calls = 0
 
     def do_GET(self):
         if self.path == "/api/tags":
@@ -46,7 +47,10 @@ class _FaultInjectingOllamaStub(LocalOllamaStub):
         super().do_GET()
 
     def do_POST(self):
-        if self.path == "/api/chat" and type(self).mode == "http_error":
+        if self.path == "/api/chat" and (
+                type(self).mode == "http_error"
+                or (type(self).mode == "partial_failure"
+                    and type(self).chat_calls >= type(self).fail_after_chat_calls)):
             type(self).failed_chat_calls += 1
             self.send_error(503)
             return
@@ -180,6 +184,27 @@ def run(kit: Path) -> None:
                 raise RuntimeError("Failed model generation emitted a success receipt")
             if list(failed_dir.glob("model-*.json")):
                 raise RuntimeError("Failed model generation left its pin on disk")
+
+            # One passing trial followed by a failing second trial must never
+            # produce a passing aggregate; retain only the individual receipt.
+            _FaultInjectingOllamaStub.mode = "partial_failure"
+            _FaultInjectingOllamaStub.fail_after_chat_calls = (
+                _FaultInjectingOllamaStub.chat_calls + 1)
+            previous_chats = _FaultInjectingOllamaStub.chat_calls
+            failed_before = _FaultInjectingOllamaStub.failed_chat_calls
+            partial_dir = root / "partially-successful-mission"
+            partial = launch(partial_dir, trials=3)
+            if partial.returncode == 0:
+                raise RuntimeError("Partially failing model was certified as 3/3")
+            if (_FaultInjectingOllamaStub.chat_calls != previous_chats + 1
+                    or _FaultInjectingOllamaStub.failed_chat_calls != failed_before + 1):
+                raise RuntimeError("No proof of success-one-then-fail-second path")
+            if len(list(partial_dir.glob("receipt-*.json"))) != 1:
+                raise RuntimeError("Partial failure did not retain exactly one trial receipt")
+            if list(partial_dir.glob("session-*.json")):
+                raise RuntimeError("Partial run emitted a fake aggregate PASS")
+            if list(partial_dir.glob("model-*.json")):
+                raise RuntimeError("Partial run left a temporary model pin")
 
             # A model tag can change after the launcher selected its digest
             # but before the real native adapter checks /api/tags again.
