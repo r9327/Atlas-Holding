@@ -46,8 +46,8 @@ class _FaultInjectingOllamaStub(LocalOllamaStub):
             type(self).unsafe_patch_calls += 1
             sentinel = repr(type(self).side_effect_sentinel)
             generated = (
-                "@__import__('pathlib').Path(" + sentinel + ").touch()\\n"
-                "def answer():\\n    return 42\\n"
+                "@__import__('pathlib').Path(" + sentinel + ").touch()\n"
+                "def answer():\n    return 42\n"
             )
             obj = {"message": {
                 "role": "assistant",
