@@ -89,8 +89,14 @@ jobs:
           }
           python -B -X utf8 tests/native_windows_installer_enrollment_smoke.py --frozen-directory "$output"
           if ($LASTEXITCODE -ne 0) { throw "Native pinned installation ACL or engine v3 smoke failed" }
+          $acceptance = Join-Path $output "AtlasHoldingAcceptance.exe"
+          if (!(Test-Path $acceptance) -or (Get-Item $acceptance).Length -lt 1000000) {
+            throw "Standalone no-Python Windows acceptance EXE missing"
+          }
+          & $acceptance --self-test
+          if ($LASTEXITCODE -ne 0) { throw "Native acceptance self-test failed" }
           $missionReceipt = Join-Path $env:RUNNER_TEMP "atlas-native-mission-$env:GITHUB_RUN_ID.json"
-          python -B -X utf8 tests/native_windows_code_mission_smoke.py --agent "$agent" --receipt-json "$missionReceipt"
+          & $acceptance --agent "$agent" --receipt-json "$missionReceipt"
           if ($LASTEXITCODE -ne 0) { throw "Frozen agent local coding-to-commit integration failed" }
           if (!(Test-Path $missionReceipt)) { throw "Nonrelease mission receipt missing" }
           $mission = Get-Content -Raw "$missionReceipt" | ConvertFrom-Json
@@ -122,8 +128,48 @@ jobs:
           Write-Output "Agent SHA256: $agentSha"
           Write-Output "Viewer SHA256: $((Get-FileHash -Algorithm SHA256 $exe).Hash.ToLowerInvariant())"
           Write-Output "Engine SHA256: $((Get-FileHash -Algorithm SHA256 $engine).Hash.ToLowerInvariant())"
+          # Export a NONRELEASE acceptance kit only after all native checks
+          # pass. Do not publish a release or a demo-manifest setup executable.
+          $kit = Join-Path $env:RUNNER_TEMP "atlas-live-acceptance-$env:GITHUB_RUN_ID"
+          New-Item -ItemType Directory -Path $kit -ErrorAction Stop | Out-Null
+          Copy-Item -LiteralPath "$agent" -Destination "$kit/AtlasHoldingAgent.exe"
+          Copy-Item -LiteralPath "$acceptance" -Destination "$kit/AtlasHoldingAcceptance.exe"
+          Copy-Item -LiteralPath "scripts/Run-HoldingLiveAcceptance.ps1" -Destination "$kit/Run-HoldingLiveAcceptance.ps1"
+          Copy-Item -LiteralPath "docs/WINDOWS_LIVE_ACCEPTANCE.md" -Destination "$kit/README.md"
+          $candidateSha = (git rev-parse HEAD).Trim().ToLowerInvariant()
+          if ($candidateSha -ne '${{ github.event.pull_request.head.sha }}') {
+            throw "Acceptance kit source SHA differs from checked out PR HEAD"
+          }
+          $agentKitSha = (Get-FileHash -Algorithm SHA256 "$kit/AtlasHoldingAgent.exe").Hash.ToLowerInvariant()
+          $acceptanceKitSha = (Get-FileHash -Algorithm SHA256 "$kit/AtlasHoldingAcceptance.exe").Hash.ToLowerInvariant()
+          if ($agentKitSha -ne $agentSha) { throw "Agent was modified during kit staging" }
+          $kitManifest = @{
+            schema = 1
+            git_sha = $candidateSha
+            release_ready = $false
+            files = @{
+              "AtlasHoldingAgent.exe" = $agentKitSha
+              "AtlasHoldingAcceptance.exe" = $acceptanceKitSha
+            }
+          } | ConvertTo-Json -Depth 4 -Compress
+          [System.IO.File]::WriteAllText(
+            (Join-Path $kit "nonrelease-manifest.json"), $kitManifest,
+            [System.Text.UTF8Encoding]::new($false))
+          Write-Output "NONRELEASE_NO_PYTHON_WINDOWS_LIVE_KIT_PASS"
+          Write-Output "Acceptance EXE SHA256: $acceptanceKitSha"
+          Write-Output "Kit candidate SHA: $candidateSha"
           Remove-Item -Force -Recurse "$output"
           Remove-Item -Force -Recurse "$setupOut"
           if (git status --porcelain --untracked-files=normal) {
             throw "Frozen viewer build mutated checked-out sources"
           }
+
+      - name: Upload tested no-Python Windows live-model acceptance kit (NOT RELEASE)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: NONRELEASE-Windows-Ollama-Acceptance-${{ github.run_id }}
+          path: ${{ runner.temp }}/atlas-live-acceptance-${{ github.run_id }}/
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
