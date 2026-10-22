@@ -2,11 +2,17 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
+import os
+from pathlib import Path
+import tempfile
 import unittest
+from unittest.mock import patch
 
 from holding.atlas_doctor_evidence import LocalPassport
 from tests.native_real_atlas_doctor_probe import (
     _approved_scope, _verify_local_plan, _verify_pinned_scope_decision,
+    _evidence_receipt, _seal_doctor_receipt,
 )
 
 SHA = "a" * 40
@@ -84,6 +90,47 @@ class RealAtlasDoctorProbeTests(unittest.TestCase):
                 _verify_pinned_scope_decision("owned_home", status)
         with self.assertRaises(RuntimeError):
             _verify_pinned_scope_decision("owned_home", "VALIDATED_LOCAL")
+
+    def test_machine_receipt_never_asserts_authority(self):
+        payload = _evidence_receipt("unowned", SHA, advisory(status="REVIEW"))
+        self.assertEqual(payload["path"], "app/constants.py")
+        self.assertEqual(payload["status"], "REVIEW")
+        self.assertEqual(payload["source_sha"], SHA)
+        for field in ("doctor_tests_executed", "doctor_full_certified",
+                      "github_push_permitted", "release_ready"):
+            self.assertIs(payload[field], False)
+        self.assertEqual(
+            _evidence_receipt("owned_home", SHA, advisory())["scope"],
+            "owned_home")
+
+    def test_seal_local_plan_proof_is_exclusive_and_bound_to_runner(self):
+        payload = _evidence_receipt("unowned", SHA, advisory(status="REVIEW"))
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp).resolve()
+            target = directory / "proof.json"
+            with patch.dict(os.environ, {"RUNNER_TEMP": str(directory)}):
+                digest = _seal_doctor_receipt(target, payload)
+                self.assertEqual(len(digest), 64)
+                self.assertEqual(json.loads(target.read_text()), payload)
+                with self.assertRaises(FileExistsError):
+                    _seal_doctor_receipt(target, payload)
+                self.assertEqual(json.loads(target.read_text()), payload)
+                with self.assertRaises(RuntimeError):
+                    _seal_doctor_receipt(directory.parent / "outside.json", payload)
+
+    def test_seal_rejects_fake_doctor_or_release_claims(self):
+        good = _evidence_receipt("unowned", SHA, advisory(status="REVIEW"))
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp).resolve()
+            with patch.dict(os.environ, {"RUNNER_TEMP": str(directory)}):
+                for field in ("doctor_tests_executed", "doctor_full_certified",
+                              "github_push_permitted", "release_ready"):
+                    receipt = dict(good)
+                    receipt[field] = True
+                    target = directory / (field + ".json")
+                    with self.subTest(field=field), self.assertRaises(RuntimeError):
+                        _seal_doctor_receipt(target, receipt)
+                    self.assertFalse(target.exists())
 
     def test_nonpassport_result_is_rejected(self):
         with self.assertRaises(RuntimeError):
