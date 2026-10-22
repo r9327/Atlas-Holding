@@ -7,6 +7,8 @@ canonical Atlas repository are never altered, and there is no push or merge.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -62,6 +64,28 @@ def _verify_pinned_scope_decision(scope: str, status: str) -> None:
         raise RuntimeError("Invalid real Atlas Doctor planning status")
     if scope == "unowned" and status != "REVIEW":
         raise RuntimeError("Unowned Atlas path was unexpectedly authorized")
+
+
+def _evidence_receipt(scope: str, expected_sha: str,
+                      passport: LocalPassport) -> dict:
+    """Machine-readable, strictly NONRELEASE independent Doctor plan evidence."""
+    _verify_pinned_scope_decision(scope, passport.status)
+    decision = _verify_local_plan(passport, expected_sha)
+    return {
+        "schema": 1,
+        "kind": "NONRELEASE_ATLAS_DOCTOR_REAL_PLAN",
+        "source_repository": "r9327/Dof-Atlas",
+        "source_sha": expected_sha,
+        "scope": scope,
+        "path": _approved_scope(scope)[0],
+        "status": passport.status,
+        "decision_marker": decision,
+        "doctor_report_sha256": passport.report_sha256,
+        "doctor_tests_executed": False,
+        "doctor_full_certified": False,
+        "github_push_permitted": False,
+        "release_ready": False,
+    }
 
 
 def _git(root: Path, *args: str) -> str:
