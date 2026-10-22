@@ -329,7 +329,8 @@ def run(agent: Path, *, real_model: Path | None = None,
                     if not worker.ready():
                         raise RuntimeError("Native agent/model health unavailable")
                     started = time.monotonic()
-                    observer = (OllamaAllocationObserver(model_config["model"])
+                    observer = (OllamaAllocationObserver(
+                                    model_config["model"], model_config["digest"])
                                 if actual else None)
                     allocation = None
                     try:
