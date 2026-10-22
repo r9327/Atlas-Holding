@@ -50,6 +50,18 @@ def _git(root: Path, *argv: str, timeout: int = 30) -> str:
     return proc.stdout.strip()
 
 
+def _same_canonical_checkout(expected: Path, observed: str) -> bool:
+    # Native Git prints Windows separators/case differently from pathlib.
+    # Only resolved filesystem identity is admissible, never string equality.
+    if not isinstance(observed, str) or not observed.strip():
+        return False
+    try:
+        target = Path(observed)
+        return target.is_absolute() and target.resolve(strict=True) == expected.resolve(strict=True)
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+
 def _is_source_clean(root: Path, sha: str) -> None:
     if (not _SHA.fullmatch(sha)
             or _git(root, "rev-parse", "HEAD") != sha
@@ -166,7 +178,7 @@ def run(source: Path, sha: str) -> None:
     source = source.resolve(strict=True)
     if (not _SHA.fullmatch(sha) or not source.is_dir() or source.is_symlink()
             or not (source / "tools" / "atlas_doctor.py").is_file()
-            or inspect_git(source, "rev-parse", "--show-toplevel") != str(source)):
+            or not _same_canonical_checkout(source, inspect_git(source, "rev-parse", "--show-toplevel"))):
         raise RuntimeError("A true SHA-pinned Atlas checkout is required")
     _is_source_clean(source, sha)
     destination = temp / ("atlas-doctor-candidate-" + os.environ["GITHUB_RUN_ID"])
