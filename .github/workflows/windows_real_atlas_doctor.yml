@@ -1,0 +1,60 @@
+name: Nonrelease real Atlas Doctor Windows read-only
+
+on:
+  pull_request:
+    branches: [experiment/native-real-ollama-20261022]
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  real-atlas-doctor-plan:
+    if: >-
+      github.event.label.name == 'ci:real-atlas-doctor' &&
+      github.head_ref == 'experiment/atlas-doctor-real-readonly-20261022' &&
+      github.event.pull_request.head.repo.full_name == 'r9327/Atlas-Holding'
+    runs-on: windows-2025
+    timeout-minutes: 14
+    steps:
+      - name: Checkout Holding exact experimental SHA without credentials
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Checkout public Atlas exact source SHA without credentials
+        uses: actions/checkout@v7
+        with:
+          repository: r9327/Dof-Atlas
+          ref: 54d45478c88cd733d2127789c1bef7caa599b54d
+          path: atlas-target
+          persist-credentials: false
+      - name: Python 3.13
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Run strict portable local passport identity and downgrade tests
+        shell: pwsh
+        run: |
+          python -B -X utf8 -m unittest tests.test_native_real_atlas_doctor_probe -v
+          if ($LASTEXITCODE -ne 0) { throw "Local Doctor evidence contracts failed" }
+      - name: Execute actual Dof-Atlas Doctor plan on exact SHA read-only
+        shell: pwsh
+        timeout-minutes: 9
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+          PYTHONNOUSERSITE: "1"
+        run: |
+          $atlas = Join-Path $env:GITHUB_WORKSPACE "atlas-target"
+          python -B -X utf8 -m tests.native_real_atlas_doctor_probe `
+            --atlas-root "$atlas" `
+            --expected-atlas-sha "54d45478c88cd733d2127789c1bef7caa599b54d"
+          if ($LASTEXITCODE -ne 0) { throw "Real Dof-Atlas Doctor contract is not verified" }
+      - name: Refuse mutations to either checkout
+        shell: pwsh
+        run: |
+          $changes = git status --porcelain --untracked-files=normal -- ':!atlas-target'
+          if ($changes) { throw "Holding test mutated checkout: $changes" }
+          $atlas = Join-Path $env:GITHUB_WORKSPACE "atlas-target"
+          $atlasChanges = git -C "$atlas" status --porcelain --untracked-files=all
+          if ($atlasChanges) { throw "Doctor mutated real Atlas source checkout: $atlasChanges" }
