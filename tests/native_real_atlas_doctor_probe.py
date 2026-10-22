@@ -198,6 +198,15 @@ def run(atlas_root: Path, exact_sha: str, *, scope: str = "unowned") -> None:
         raise RuntimeError("Doctor plan unexpectedly modified the Atlas checkout")
     if _git(root, "rev-parse", "HEAD") != exact_sha:
         raise RuntimeError("Doctor plan changed the candidate SHA")
+    # Seal the same validated, read-only Doctor decision as machine evidence
+    # only after both Git state checks. Never put receipts in Dof-Atlas.
+    evidence = _evidence_receipt(scope, exact_sha, result)
+    proof_path = (Path(os.environ["RUNNER_TEMP"]).resolve(strict=True)
+                  / ("atlas-doctor-" + scope + "-"
+                     + os.environ["GITHUB_RUN_ID"] + ".json"))
+    proof_sha = _seal_doctor_receipt(proof_path, evidence)
+    print("NONRELEASE_REAL_ATLAS_DOCTOR_RECEIPT_SHA256=" + proof_sha,
+          flush=True)
     print("REAL_ATLAS_DOCTOR_SCOPE=" + scope + ":" + paths[0], flush=True)
     print(decision, flush=True)
     print("Real Dof-Atlas source SHA: " + exact_sha, flush=True)
