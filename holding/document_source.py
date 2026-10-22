@@ -104,7 +104,8 @@ def fetch_document(
         url,
         headers={
             "Accept-Encoding": "identity",
-            "Accept": "application/json" if format == "json" else "text/csv",
+            "Accept": ("application/json" if format == "json" else
+                       "text/csv" if format == "csv" else "text/html"),
             "User-Agent": "AtlasHolding-Documentalist/1",
         },
     )
