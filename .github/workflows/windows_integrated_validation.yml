@@ -89,8 +89,21 @@ jobs:
           }
           python -B -X utf8 tests/native_windows_installer_enrollment_smoke.py --frozen-directory "$output"
           if ($LASTEXITCODE -ne 0) { throw "Native pinned installation ACL or engine v3 smoke failed" }
-          python -B -X utf8 tests/native_windows_code_mission_smoke.py --agent "$agent"
+          $missionReceipt = Join-Path $env:RUNNER_TEMP "atlas-native-mission-$env:GITHUB_RUN_ID.json"
+          python -B -X utf8 tests/native_windows_code_mission_smoke.py --agent "$agent" --receipt-json "$missionReceipt"
           if ($LASTEXITCODE -ne 0) { throw "Frozen agent local coding-to-commit integration failed" }
+          if (!(Test-Path $missionReceipt)) { throw "Nonrelease mission receipt missing" }
+          $mission = Get-Content -Raw "$missionReceipt" | ConvertFrom-Json
+          if ($mission.source -ne "DETERMINISTIC_CI_STUB" -or
+              $mission.doctor_status -ne "NOT_EXECUTED" -or
+              $mission.github_push_status -ne "NOT_PERMITTED" -or
+              $mission.release_ready -ne $false -or
+              $mission.ollama_ram_peak_bytes -ne $null -or
+              $mission.ollama_vram_peak_bytes -ne $null) {
+            throw "Native mission receipt falsely claimed real model, Doctor, resource or release proof"
+          }
+          Write-Output "Nonrelease mission receipt SHA256: $((Get-FileHash -Algorithm SHA256 "$missionReceipt").Hash.ToLowerInvariant())"
+          Remove-Item -Force "$missionReceipt"
           $manifest = Join-Path $PWD "tests/fixtures/bootstrap_smoke_assets.json"
           $manifestSha = (Get-FileHash -Algorithm SHA256 "$manifest").Hash.ToLowerInvariant()
           $viewerSha = (Get-FileHash -Algorithm SHA256 "$exe").Hash.ToLowerInvariant()
