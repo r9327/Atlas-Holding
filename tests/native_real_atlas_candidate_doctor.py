@@ -249,12 +249,15 @@ def _inspect_real_doctor_review(runner: AtlasDoctorRunner, *,
         expected_dirty=False, expected_dirty_digest="",
         structural=False,
     )
-    if observed.status != "REVIEW" or observed.report_sha256 != expected_digest:
-        # Report digest is identical only if the Doctor uses stable evidence.
-        # A changed digest is allowed below only after semantic verification:
-        # timestamps may vary, but no change of verdict or SHA is accepted.
-        if observed.status != "REVIEW":
-            raise RuntimeError("Doctor review verdict changed during diagnostic")
+    if observed.status != "REVIEW":
+        raise RuntimeError("Doctor review verdict changed during diagnostic")
+    # Timestamps may change the raw digest between identical rechecks.
+    # Never substitute the second diagnostic for the first signed-by-nobody
+    # local advisory; it is explanatory only.
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_digest):
+        raise RuntimeError("Original Doctor report digest was not exact")
+    if _git(runner.root, "rev-parse", "HEAD") != candidate:
+        raise RuntimeError("Doctor diagnostic changed candidate HEAD")
     report = json.loads(raw.stdout)
     return _review_diagnostics(report, stage=stage)
 
