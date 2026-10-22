@@ -47,3 +47,35 @@ Modele reel et qualite benchmarkee, tests UI Windows visibles, gestion de
 redemarrage et upgrade, pression RAM/VRAM Ollama mesuree independamment,
 Doctor et CI preuves exact-SHA, GitHub broker authentifie et PR brouillon.
 Ne jamais confondre un commit local avec une mission autonome certifiee.
+
+## Static QA is deliberately strict (non-executing)
+
+The isolated coding fixture permits only the exact Python AST of
+`def answer(): return 42`, allowing formatting and comments only.
+Decorators, annotations, default expressions, all argument kinds,
+extra statements and imports are rejected without ever executing the
+model-generated file. This is a **narrow acceptance fixture**, not a
+general-purpose replacement for Doctor or real project tests.
+
+## Local evidence receipt, separate from release certification
+
+Both the default deterministic stub and the optional real Ollama model
+may supply `--receipt-json` pointing to an **absolute new JSON file**.
+Example for a real-model test:
+
+```powershell
+python -B -X utf8 tests/native_windows_code_mission_smoke.py --agent "C:\\chemin\\AtlasHoldingAgent.exe" --model-json "C:\\chemin\\model.json" --receipt-json "C:\\chemin\\nouvelle-preuve.json"
+```
+
+The receipt records agent/model SHA-256, isolated Git base and candidate
+commit SHAs, elapsed time and independently checked AST. It clearly marks
+`source: LIVE_PINNED_OLLAMA` or `DETERMINISTIC_CI_STUB`, and **always**
+states `release_ready: false`, `doctor_status: NOT_EXECUTED` and
+`github_push_status: NOT_PERMITTED`.
+
+The frozen native agent's Windows Job peak is recorded **only when actually
+measured**. The separately running Ollama server RAM/VRAM remain `null`
+(unmeasured), not a misleading zero. Evidence is local, unsigned and
+nonrelease; no existing receipt can be silently overwritten. It contains
+no generated code or credentials. The CI checks this schema for the stub
+rather than mislabeling it as real model proof.
