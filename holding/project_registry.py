@@ -7,6 +7,8 @@ the repository/branch and adapter independently before running a mission.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from contextlib import contextmanager
+from functools import wraps
 from dataclasses import dataclass
 import json
 import os
@@ -145,6 +147,47 @@ def _exclusive_registry_write(method):
     return wrapped
 
 
+
+@contextmanager
+def _exclusive(directory: Path):
+    """Cross-process write lease; requires one winner even on Windows."""
+    lock_path = directory / ".project-registry.lock"
+    if lock_path.is_symlink():
+        raise ProjectRegistryError("unsafe registry lock")
+    with lock_path.open("a+b") as handle:
+        if handle.seek(0, os.SEEK_END) == 0:
+            handle.write(b"0")
+            handle.flush()
+        handle.seek(0)
+        try:
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            raise ProjectRegistryError("another project registry writer is active") from exc
+        try:
+            yield
+        finally:
+            handle.seek(0)
+            if os.name == "nt":
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _serialized(method):
+    """Prevent two local supervisors from defeating the digest precondition."""
+    @wraps(method)
+    def guarded(self, *args, **kwargs):
+        with _exclusive(self.directory):
+            return method(self, *args, **kwargs)
+    return guarded
+
+
 class ProjectRegistry:
     def __init__(self, directory: Path):
         self.directory = _root(directory)
@@ -164,6 +207,7 @@ class ProjectRegistry:
         return None
 
     @_exclusive_registry_write
+    @_serialized
     def register(self, raw_profile: str, *, expected_digest: str | None = None) -> ProfileEntry:
         profile = load_profile(raw_profile)
         data = _read(self.directory)
@@ -183,6 +227,7 @@ class ProjectRegistry:
         return ProfileEntry(profile, profile.digest, data["selected"] == profile.name)
 
     @_exclusive_registry_write
+    @_serialized
     def select(self, name: str, *, expected_digest: str) -> ProfileEntry:
         data = _read(self.directory)
         row = data["profiles"].get(name)
@@ -193,6 +238,7 @@ class ProjectRegistry:
         return ProfileEntry(ProjectProfile.parse(row["data"]), row["digest"], True)
 
     @_exclusive_registry_write
+    @_serialized
     def clear_selection(self) -> None:
         data = _read(self.directory)
         if data["selected"] is not None:
