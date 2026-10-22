@@ -122,10 +122,13 @@ def fetch_document(
             declared = response.headers.get("Content-Length")
             if declared is not None:
                 try:
-                    if int(declared) > max_bytes:
-                        raise DocumentSourceError("document exceeds size budget")
+                    declared_size = int(declared)
                 except ValueError as exc:
                     raise DocumentSourceError("invalid Content-Length") from exc
+                if declared_size < 0:
+                    raise DocumentSourceError("invalid Content-Length")
+                if declared_size > max_bytes:
+                    raise DocumentSourceError("document exceeds size budget")
             raw = response.read(max_bytes + 1)
             if len(raw) > max_bytes:
                 raise DocumentSourceError("document exceeds size budget")
@@ -133,8 +136,10 @@ def fetch_document(
         raise DocumentSourceError("source fetch failed") from exc
     stamp = datetime.now(timezone.utc).isoformat()
     ingest = ingest_json_records if format == "json" else ingest_csv_records
+    # Test HTTP loopback is local evidence, never mislabelled HTTPS.
+    provenance = ("local:" + final_url) if final_url.startswith("http://") else final_url
     try:
-        batch = ingest(raw, source=final_url, collected_at=stamp, id_field=id_field)
+        batch = ingest(raw, source=provenance, collected_at=stamp, id_field=id_field)
     except DocumentIntakeError as exc:
         raise DocumentSourceError("source document is invalid") from exc
     return WebDocument(batch, len(raw), content_type)
