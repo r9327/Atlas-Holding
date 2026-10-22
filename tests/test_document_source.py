@@ -127,7 +127,7 @@ class DocumentSourceTests(unittest.TestCase):
 
     def test_invalid_configuration_is_refused_before_http(self):
         for kwargs in ({"allowed_hosts": ()}, {"allowed_hosts": ("invalid/path",)},
-                       {"format": "html"}, {"max_bytes": 0}):
+                       {"format": "xml"}, {"max_bytes": 0}):
             args = {"allowed_hosts": ("127.0.0.1",), "format": "json",
                     "allow_test_loopback": True}
             args.update(kwargs)
