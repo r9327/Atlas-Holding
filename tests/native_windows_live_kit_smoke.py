@@ -36,12 +36,13 @@ class _FaultInjectingOllamaStub(LocalOllamaStub):
     failed_chat_calls = 0
 
     def do_GET(self):
-        if self.path == "/api/tags" and type(self).mode == "digest_drift":
+        if self.path == "/api/tags":
             type(self).inventory_calls += 1
-            digest = (DIGEST if type(self).inventory_calls == 1
-                      else "b" * 64)
-            self._reply({"models": [{"name": MODEL, "digest": digest}]})
-            return
+            if type(self).mode == "digest_drift":
+                digest = (DIGEST if type(self).inventory_calls == 1
+                          else "b" * 64)
+                self._reply({"models": [{"name": MODEL, "digest": digest}]})
+                return
         super().do_GET()
 
     def do_POST(self):
@@ -120,21 +121,33 @@ def run(kit: Path) -> None:
             # the "live" HTTP path. Never label the CI result as real inference.
             source = kit / "nonrelease-manifest.json"
             previous = source.read_bytes()
-            altered = json.loads(previous)
-            altered["files"]["AtlasHoldingAgent.exe"] = "0" * 64
-            try:
-                source.write_text(
-                    json.dumps(altered, sort_keys=True),
-                    encoding="utf-8")
-                blocked = launch(root / "must-not-be-created")
-                if blocked.returncode == 0:
-                    raise RuntimeError("Kit accepted a modified SHA256 pin")
-                if _FaultInjectingOllamaStub.chat_calls != 1:
-                    raise RuntimeError("Tampered kit reached Ollama")
-                if (root / "must-not-be-created").exists():
-                    raise RuntimeError("Tampered kit created proof directories")
-            finally:
-                source.write_bytes(previous)
+            expected_files = {
+                "AtlasHoldingAgent.exe",
+                "AtlasHoldingAcceptance.exe",
+                "Run-HoldingLiveAcceptance.ps1",
+                "README.md",
+            }
+            if set(manifest.get("files", {})) != expected_files:
+                raise RuntimeError("Candidate archive is not fully pinned")
+            for i, name in enumerate(sorted(expected_files)):
+                altered = json.loads(previous)
+                altered["files"][name] = "0" * 64
+                count_before = _FaultInjectingOllamaStub.inventory_calls
+                chats_before = _FaultInjectingOllamaStub.chat_calls
+                proofdir = root / f"tampered-pin-{i}"
+                try:
+                    source.write_text(
+                        json.dumps(altered, sort_keys=True), encoding="utf-8")
+                    blocked = launch(proofdir)
+                    if blocked.returncode == 0:
+                        raise RuntimeError("Kit accepted a changed " + name + " pin")
+                    if (_FaultInjectingOllamaStub.chat_calls != chats_before or
+                            _FaultInjectingOllamaStub.inventory_calls != count_before):
+                        raise RuntimeError("Corrupt archive contacted Ollama")
+                    if proofdir.exists():
+                        raise RuntimeError("Corrupt archive created a proof folder")
+                finally:
+                    source.write_bytes(previous)
 
             # A genuine model can be unavailable mid-generation. Refuse to
             # create a receipt and remove the temporary model pin on failure.
