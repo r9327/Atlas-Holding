@@ -21,11 +21,20 @@ Python 3.13 et PyInstaller epingle.
    `AtlasHoldingAcceptance.exe`. Ce dernier execute une **vraie requete
    /api/chat** (pas un faux service) pour proposer un seul fichier dans un
    depot Git **temporaire**, valider un AST strict et effectuer un commit local.
+   **Trois missions indépendantes** sont exécutées successivement. Avant
+   chaque mission le digest Ollama est contrôlé de nouveau ; chaque essai
+   doit avoir son propre SHA de commit, sa durée et son reçu canonicalisé.
 5. Refuse une preuve sans SHA exact, une affirmation de Doctor PASS,
    un push GitHub, une release ou un autre modele.
-6. Emet uniquement des traces sans code genere ni donnees du modele :
-   `NONRELEASE_REAL_OLLAMA_FROZEN_CODE_COMMIT_PASS` si le test reussit,
-   digest du modele, SHA-256 du recu et statut Doctor `NOT_EXECUTED`.
+6. Chaque essai local ayant réussi reçoit un marqueur
+   `NONRELEASE_REAL_OLLAMA_INDIVIDUAL_TRIAL_PASS=N/3`. **Après les trois
+   succès distincts seulement**, le script crée sans écrasement un JSON
+   de session liant les trois empreintes SHA-256 de reçus, les trois commits
+   Git, les durées et le digest du modèle. Le marqueur global est
+   `NONRELEASE_REAL_OLLAMA_FROZEN_THREE_TRIALS_PASS`, accompagné du
+   digest, du SHA-256 de session et de `Doctor: NOT_EXECUTED`.
+   Tout échec ou changement de modèle interdit ce bilan global. Les preuves
+   restent sur le runner éphémère (pas de diffusion des sorties du modèle).
 
 Si le modele faible echoue meme cette petite tache, le job reste rouge.
 Un PASS atteste seulement la chaine native et cette tache jetable, **pas**
@@ -39,3 +48,16 @@ par des deadlines, refuse les sorties non authentiques et n'execute jamais
 le code genere. Les jobs normaux de #13 restent invariables et ne
 telechargent aucun modele. Ce scenario existe pour montrer ce qu'une
 API Ollama **reelle** change par rapport au stub deterministe.
+
+## Preuve initiale indépendante du nouveau lot
+
+Le premier essai simple est **PASS** sur le SHA GitHub
+`872e423ffc009dbf7ab7fe182d854d94c0cff39a` :
+[GitHub Actions #39789768043](https://github.com/r9327/Atlas-Holding/actions/runs/39789768043).
+Digest du modèle exécuté :
+`d7372fd828518a4d38b1eb196c673c31a85f2ed302b3d1e406c4c2d1b64a0668`.
+Preuve de commit Git jetable acceptée, Doctor non exécuté.
+
+Ce succès n'est **pas** extrapolé à 3/3 essais ni à des tâches Atlas.
+Le nouveau lot de répétabilité doit obtenir son propre verdict CI
+sur le HEAD exact, avec ses trois reçus et sans faux aggregate PASS.
