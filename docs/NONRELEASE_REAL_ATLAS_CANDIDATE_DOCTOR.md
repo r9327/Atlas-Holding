@@ -59,3 +59,18 @@ candidat utilisent désormais `GIT_LFS_SKIP_SMUDGE=1` et
 `GIT_TERMINAL_PROMPT=0`, avec refus des sorties non zéro et journal
 d'erreur Git borné. Ces contrôles ne sont **pas** des substituts à la
 certification des données binaires d'Atlas, qui garde ses propres gates.
+
+## Correctif de protocole observe sur Atlas reel
+
+Sur le commit Git jetable, `agent plan` a renvoye `PLANNED_LOCAL`
+avec un SHA et un arbre propres. La commande `agent check` a ensuite
+expose le fait que le protocole actuel de Dofus Atlas peut renvoyer
+`execution.tests_executed=false` (booleen) et non une liste de modules.
+
+Le consommateur Holding accepte donc **uniquement `false` si le statut
+Doctor n'est pas `PASS`**, comme constat d'absence de tests executes.
+`true`, les entiers et une liste vide ne prouvent aucun module execute.
+Un `PASS` exige toujours une vraie liste non vide de modules nommes,
+un code retour coherent et un statut d'execution valide. Des tests
+negatifs protegent ce comportement; il ne dispense **jamais** d'une QA
+independante ni des CI/FULL du vrai Atlas.
