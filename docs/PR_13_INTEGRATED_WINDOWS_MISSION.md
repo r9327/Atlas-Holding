@@ -193,3 +193,30 @@ sur le runner**. Cette distribution est un banc d'essai facultatif pour
 collecter les premières preuves réelles. La release signée et le vrai setup
 ne sont PAS diffusés : l'installateur de CI reste construit avec un manifeste
 de simulation et n'est pas destiné à l'utilisateur.
+
+### Validation de la distribution PowerShell elle-même
+
+Le test natif supplémentaire `tests/native_windows_live_kit_smoke.py`
+exécute le **véritable script PowerShell livré dans l'archive**, après sa
+construction et en utilisant `AtlasHoldingAcceptance.exe` et
+`AtlasHoldingAgent.exe` gelés. Un service HTTP factice est lié exclusivement
+à `127.0.0.1:11434`. Le scénario atteste :
+
+- la lecture du manifeste et des empreintes SHA des deux EXE ;
+- la sélection exacte du nom du modèle et l'épinglage de son digest ;
+- la création du JSON temporaire, l'appel natif, le commit Git jetable et
+  le reçu `QA_PENDING` nonrelease ;
+- la suppression du JSON de modèle temporaire en sortie ;
+- la modification volontaire d'un SHA dans le manifeste provoquant un refus
+  **avant** toute nouvelle requête Ollama et tout nouveau dossier de preuve ;
+- la restauration du manifeste initial avant publication.
+
+**Cette épreuve reste SIMULÉE** ; son PASS ne dit pas que le LLM a réellement
+fonctionné sur le matériel de l'utilisateur. Elle complète le test séparé
+facultatif à lancer sur Windows avec un vrai modèle installé.
+
+Première distribution testée sur `424e00b762c728d1d5b082d7f39bcf20f9fbbf83` :
+CI Windows+Ubuntu PASS (#39730074863), artefact GitHub Actions
+`NONRELEASE-Windows-Ollama-Acceptance-39730074863` (environ 19,9 Mo,
+expiration le 25/10/2026). Les corrections postérieures doivent être
+recertifiées sur leur **propre SHA**.
