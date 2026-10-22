@@ -1,0 +1,222 @@
+"""Scoped Doctor runner contracts, including exact-SHA and no fake DONE."""
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+import sys
+import tempfile
+import time
+import unittest
+from unittest.mock import patch
+
+from holding.autonomy import Mission, StandingGrant
+from holding.qa_scoped import ScopedDoctorRunner, ScopedQaError
+from holding.state_store import StateStore, StoreError
+
+REPO = "r9327/Dof-Atlas"
+SHA = "a" * 40
+BASE = "b" * 40
+
+
+class _Tree:
+    def __init__(self, root):
+        self.path = root
+        self.base_sha = SHA
+
+
+class _Git:
+    repository = REPO
+    def __init__(self, root):
+        self.root = root
+        self.dirty = False
+        self.head = SHA
+
+    def inspect(self, mission_id):
+        assert mission_id == "mission"
+        tree = _Tree(self.root)
+        tree.base_sha = self.head
+        return tree
+
+    def _git(self, *args, cwd=None):
+        if args[0] == "rev-parse":
+            return BASE
+        if args[0] == "status":
+            return " M app/code.py" if self.dirty else ""
+        raise AssertionError("Unexpected trusted Git command")
+
+
+def _report(*, sha=SHA, base=BASE, status="READY_TO_RUN_SCOPED",
+            execution="SCOPED_TESTS_PASS", modules=None, exit_code=0,
+            certified=False):
+    selected = ["tests.test_code"] if modules is None else modules
+    return {
+        "candidate_sha": sha, "base_sha": base, "status": status,
+        "certified": certified, "phase_certified": False,
+        "full_suite_waived": False, "test_modules": selected,
+        "execution": {"status": execution, "exit_code": exit_code,
+                      "executed_modules": selected},
+    }
+
+
+class ScopedDoctorRunnerTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.git = _Git(self.root)
+        self.runner = ScopedDoctorRunner(self.git, Path(sys.executable).resolve())
+        self.plan = type("Advice", (), {"status": "READY_TO_RUN_SCOPED",
+                                        "report_sha256": "c" * 64})()
+        self.doctor_patch = patch("holding.qa_scoped.DoctorPlanner")
+        self.doctor = self.doctor_patch.start()
+        self.addCleanup(self.doctor_patch.stop)
+        self.doctor.return_value.plan.return_value = self.plan
+
+    def run_with_report(self, report, *, process_exit=0):
+        def execute(argv, *, cwd, timeout_seconds):
+            self.assertEqual(argv[-1], "--run")
+            self.assertEqual(argv[argv.index("--expected-sha") + 1], SHA)
+            self.assertEqual(argv[argv.index("--base-ref") + 1], BASE)
+            self.assertEqual(cwd, self.root)
+            self.assertEqual(timeout_seconds, 900)
+            return process_exit, json.dumps(report).encode()
+        with patch("holding.qa_scoped._run_limited_doctor", side_effect=execute):
+            return self.runner.run("mission", SHA)
+
+    def test_successful_scoped_test_is_advisory_not_certified(self):
+        result = self.run_with_report(_report())
+        self.assertEqual(result.status, "SCOPED_TESTS_PASS")
+        self.assertTrue(result.advisory_only)
+        self.assertEqual(result.candidate_sha, SHA)
+        self.assertEqual(result.modules, ("tests.test_code",))
+
+    def test_full_required_never_dispatches_tests(self):
+        self.plan.status = "FULL_REQUIRED"
+        with patch("holding.qa_scoped._run_limited_doctor") as execute:
+            result = self.runner.run("mission", SHA)
+        self.assertEqual(result.status, "FULL_REQUIRED")
+        execute.assert_not_called()
+
+    def test_blocked_doctor_plan_is_not_misreported_as_full_required(self):
+        self.plan.status = "BLOCKED"
+        with patch("holding.qa_scoped._run_limited_doctor") as execute:
+            result = self.runner.run("mission", SHA)
+        self.assertEqual(result.status, "SCOPED_PLAN_BLOCKED")
+        execute.assert_not_called()
+
+    def test_wrong_sha_rejected(self):
+        with self.assertRaises(ScopedQaError):
+            self.run_with_report(_report(sha="f" * 40))
+        with self.assertRaises(ScopedQaError):
+            self.runner.run("mission", "not-a-sha")
+
+    def test_fake_certification_claim_rejected(self):
+        with self.assertRaises(ScopedQaError):
+            self.run_with_report(_report(certified=True))
+
+    def test_zero_exit_without_executed_modules_is_not_pass(self):
+        result = self.run_with_report(_report(modules=[]))
+        self.assertEqual(result.status, "SCOPED_TESTS_FAIL")
+
+    def test_failed_tests_are_not_pass(self):
+        result = self.run_with_report(_report(
+            execution="BLOCKED", exit_code=1), process_exit=1)
+        self.assertEqual(result.status, "SCOPED_TESTS_FAIL")
+
+    def test_mutated_worktree_rejects_scoped_success(self):
+        self.git.dirty = True
+        self.assertEqual(self.run_with_report(_report()).status, "SCOPED_TESTS_FAIL")
+
+    def test_preflight_error_prevents_test_execution(self):
+        self.doctor.return_value.plan.side_effect = RuntimeError("not an allowed preflight")
+        with patch("holding.qa_scoped._run_limited_doctor") as execute:
+            with self.assertRaises(RuntimeError):
+                self.runner.run("mission", SHA)
+        execute.assert_not_called()
+
+    def test_pending_advisory_persists_without_promoting_done(self):
+        db_path = self.root / "state.sqlite"
+        with StateStore(db_path) as state:
+            state.add_missions([Mission("mission", REPO)])
+            state.grant_for_onboarding(StandingGrant(
+                REPO, frozenset({"code", "local_test"}), int(time.time()) + 1000))
+            self.assertEqual(state.claim_next(online=False).mission_id, "mission")
+            state.checkpoint("mission", SHA)
+            with patch("holding.qa_scoped._run_limited_doctor",
+                       side_effect=self._write_successful_report):
+                result = self.runner.run_pending(state, "mission")
+            self.assertEqual(result.status, "SCOPED_TESTS_PASS")
+            self.assertEqual(state.missions()[0].state, "QA_PENDING")
+            self.assertEqual(state.missions()[0].evidence_sha, "")
+            advisory = state.db.execute(
+                "SELECT status,candidate_sha FROM scoped_qa_advisories WHERE mission_id=?",
+                ("mission",)).fetchone()
+            self.assertEqual(tuple(advisory), ("SCOPED_TESTS_PASS", SHA))
+
+    @staticmethod
+    def _write_successful_report(argv, **kwargs):
+        return 0, json.dumps(_report()).encode()
+
+    def test_revoked_grant_during_execution_prevents_advisory(self):
+        with StateStore(self.root / "revoke.sqlite") as state:
+            state.add_missions([Mission("mission", REPO)])
+            state.grant_for_onboarding(StandingGrant(
+                REPO, frozenset(("code", "local_test")), int(time.time()) + 1000))
+            state.claim_next(online=False)
+            state.checkpoint("mission", SHA)
+            def revoke_during_run(*_args, **_kwargs):
+                state.revoke(REPO)
+                return ScopedQaResult(
+                    SHA, BASE, "SCOPED_TESTS_PASS", ("tests.test_code",), "d" * 64)
+            from holding.qa_scoped import ScopedQaResult
+            with patch.object(self.runner, "run", side_effect=revoke_during_run):
+                with self.assertRaisesRegex(StoreError, "grant revoked"):
+                    self.runner.run_pending(state, "mission")
+            self.assertEqual(state.missions()[0].state, "QA_PENDING")
+            self.assertIsNone(state.db.execute(
+                "SELECT name FROM sqlite_master WHERE name='scoped_qa_advisories'"
+            ).fetchone())
+
+    def test_manual_scoped_qa_respects_pause_and_stop(self):
+        with StateStore(self.root / "suspended.sqlite") as state:
+            state.add_missions([Mission("mission", REPO)])
+            state.grant_for_onboarding(StandingGrant(
+                REPO, frozenset({"code", "local_test"}), int(time.time()) + 1000))
+            state.claim_next(online=False)
+            state.checkpoint("mission", SHA)
+            with patch.object(self.runner, "run") as run:
+                state.set_paused(True)
+                with self.assertRaisesRegex(StoreError, "paused or stopped"):
+                    self.runner.run_pending(state, "mission")
+                state.set_paused(False)
+                state.db.execute(
+                    "INSERT INTO settings(key,value) VALUES('stop_requested','1')")
+                with self.assertRaisesRegex(StoreError, "paused or stopped"):
+                    self.runner.run_pending(state, "mission")
+                run.assert_not_called()
+
+    def test_local_tests_need_separate_grant(self):
+        db_path = self.root / "no-test-permission.sqlite"
+        with StateStore(db_path) as state:
+            state.add_missions([Mission("mission", REPO)])
+            state.grant_for_onboarding(StandingGrant(
+                REPO, frozenset({"code"}), int(time.time()) + 1000))
+            self.assertEqual(state.claim_next(online=False).mission_id, "mission")
+            state.checkpoint("mission", SHA)
+            with patch("holding.qa_scoped._run_limited_doctor") as executable:
+                with self.assertRaisesRegex(StoreError, "local_test permission"):
+                    self.runner.run_pending(state, "mission")
+                executable.assert_not_called()
+
+
+    def test_without_pending_exact_mission_no_test_process_launches(self):
+        with StateStore(self.root / "state.sqlite") as state:
+            with patch("holding.qa_scoped._run_limited_doctor") as run:
+                with self.assertRaises(StoreError):
+                    self.runner.run_pending(state, "mission")
+                run.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()

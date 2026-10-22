@@ -1,0 +1,270 @@
+"""Bounded subprocess execution for read-only dependency probes.
+
+The direct process and every child it starts share one disposable containment
+boundary: a process group on POSIX and a kill-on-close Job Object on Windows.
+"""
+from __future__ import annotations
+
+import os
+import signal
+import subprocess
+import threading
+import time
+
+
+CREATE_SUSPENDED = 0x00000004
+
+
+class ProbeProcessError(OSError):
+    """The probe could not be started inside a verified process boundary."""
+
+
+class _WindowsJob:
+    """Minimal kill-on-close Job Object for a single probe tree."""
+
+    def __init__(self) -> None:
+        if os.name != "nt":
+            raise ProbeProcessError("Windows Job Objects require Windows")
+        import ctypes
+        from ctypes import wintypes
+
+        class BasicLimits(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_longlong),
+                ("PerJobUserTimeLimit", ctypes.c_longlong),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class IoCounters(ctypes.Structure):
+            _fields_ = [(name, ctypes.c_ulonglong) for name in (
+                "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+                "ReadTransferCount", "WriteTransferCount", "OtherTransferCount",
+            )]
+
+        class ExtendedLimits(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", BasicLimits),
+                ("IoInfo", IoCounters),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        class ThreadEntry(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ThreadID", wintypes.DWORD),
+                ("th32OwnerProcessID", wintypes.DWORD),
+                ("tpBasePri", wintypes.LONG),
+                ("tpDeltaPri", wintypes.LONG),
+                ("dwFlags", wintypes.DWORD),
+            ]
+
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+        kernel.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel.SetInformationJobObject.argtypes = [
+            wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
+        ]
+        kernel.SetInformationJobObject.restype = wintypes.BOOL
+        kernel.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        kernel.AssignProcessToJobObject.restype = wintypes.BOOL
+        kernel.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        kernel.TerminateJobObject.restype = wintypes.BOOL
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel.CloseHandle.restype = wintypes.BOOL
+        kernel.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+        kernel.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        kernel.Thread32First.argtypes = [wintypes.HANDLE, ctypes.POINTER(ThreadEntry)]
+        kernel.Thread32First.restype = wintypes.BOOL
+        kernel.Thread32Next.argtypes = [wintypes.HANDLE, ctypes.POINTER(ThreadEntry)]
+        kernel.Thread32Next.restype = wintypes.BOOL
+        kernel.OpenThread.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel.OpenThread.restype = wintypes.HANDLE
+        kernel.ResumeThread.argtypes = [wintypes.HANDLE]
+        kernel.ResumeThread.restype = wintypes.DWORD
+        self._kernel = kernel
+        self._thread_entry_type = ThreadEntry
+        self._handle = kernel.CreateJobObjectW(None, None)
+        if not self._handle:
+            raise ProbeProcessError(
+                f"CreateJobObjectW failed with WinError {ctypes.get_last_error()}"
+            )
+        limits = ExtendedLimits()
+        limits.BasicLimitInformation.LimitFlags = 0x00002000  # KILL_ON_JOB_CLOSE
+        if not kernel.SetInformationJobObject(
+                self._handle, 9, ctypes.byref(limits), ctypes.sizeof(limits)):
+            error = ctypes.get_last_error()
+            self.close()
+            raise ProbeProcessError(
+                f"SetInformationJobObject failed with WinError {error}"
+            )
+
+    def attach_and_resume(self, process: subprocess.Popen[str]) -> None:
+        import ctypes
+
+        # This child starts CREATE_SUSPENDED. Do not trust an early
+        # Popen.poll() result; fail closed if Win32 assignment rejects it.
+        if self._handle is None or not self._kernel.AssignProcessToJobObject(
+                self._handle, process._handle):
+            error = ctypes.get_last_error()
+            raise ProbeProcessError(
+                f"AssignProcessToJobObject failed with WinError {error}"
+            )
+        snapshot = self._kernel.CreateToolhelp32Snapshot(0x00000004, 0)
+        if snapshot == ctypes.c_void_p(-1).value:
+            raise ProbeProcessError(
+                f"Thread snapshot failed with WinError {ctypes.get_last_error()}"
+            )
+        resumed = 0
+        try:
+            entry = self._thread_entry_type()
+            entry.dwSize = ctypes.sizeof(entry)
+            more = bool(self._kernel.Thread32First(snapshot, ctypes.byref(entry)))
+            while more:
+                if entry.th32OwnerProcessID == process.pid:
+                    thread = self._kernel.OpenThread(0x0002, False, entry.th32ThreadID)
+                    if not thread:
+                        raise ProbeProcessError(
+                            f"OpenThread failed with WinError {ctypes.get_last_error()}"
+                        )
+                    try:
+                        if self._kernel.ResumeThread(thread) == 0xFFFFFFFF:
+                            raise ProbeProcessError(
+                                f"ResumeThread failed with WinError {ctypes.get_last_error()}"
+                            )
+                        resumed += 1
+                    finally:
+                        self._kernel.CloseHandle(thread)
+                more = bool(self._kernel.Thread32Next(snapshot, ctypes.byref(entry)))
+        finally:
+            self._kernel.CloseHandle(snapshot)
+        if resumed == 0:
+            raise ProbeProcessError("Suspended probe had no resumable thread")
+
+    def terminate(self) -> None:
+        if self._handle is not None:
+            self._kernel.TerminateJobObject(self._handle, 1)
+
+    def close(self) -> None:
+        if self._handle is not None:
+            self._kernel.CloseHandle(self._handle)
+            self._handle = None
+
+
+def run_probe(argv: list[str], *, environment: dict[str, str],
+              timeout: float, max_output_bytes: int = 32 * 1024
+              ) -> subprocess.CompletedProcess[str]:
+    """Execute a disposable probe with bounded time, output and descendants.
+
+    Both pipes are drained concurrently: communicate() alone may consume
+    unbounded RAM even when its timeout is short. No temp file can fill a disk.
+    """
+    if not isinstance(argv, list) or not argv or timeout <= 0:
+        raise ValueError("Invalid probe configuration")
+    if type(max_output_bytes) is not int or not 1024 <= max_output_bytes <= 1024 * 1024:
+        raise ValueError("Invalid maximum probe output")
+    job = _WindowsJob() if os.name == "nt" else None
+    process: subprocess.Popen[bytes] | None = None
+    readers: list[threading.Thread] = []
+    output = [bytearray(), bytearray()]
+    overflow = threading.Event()
+    read_failure = threading.Event()
+    tree_killed = False
+
+    def dispose_tree() -> None:
+        nonlocal tree_killed
+        if tree_killed or process is None:
+            return
+        tree_killed = True
+        if job is not None:
+            job.terminate()
+        else:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    def drain(stream, buffer: bytearray) -> None:
+        try:
+            while True:
+                chunk = stream.read(4096)
+                if not chunk:
+                    return
+                left = max_output_bytes - len(buffer)
+                if len(chunk) > left:
+                    buffer.extend(chunk[:left])
+                    overflow.set()
+                    return
+                buffer.extend(chunk)
+        except (OSError, ValueError):
+            read_failure.set()
+
+    try:
+        process = subprocess.Popen(
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=False,
+            stdin=subprocess.DEVNULL,
+            env=environment,
+            shell=False,
+            start_new_session=(os.name != "nt"),
+            creationflags=(
+                getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | CREATE_SUSPENDED
+                if os.name == "nt" else 0
+            ),
+        )
+        if job is not None:
+            job.attach_and_resume(process)
+        assert process.stdout is not None and process.stderr is not None
+        for stream, bucket in zip((process.stdout, process.stderr), output):
+            reader = threading.Thread(target=drain, args=(stream, bucket),
+                                      daemon=True)
+            reader.start()
+            readers.append(reader)
+        deadline = time.monotonic() + timeout
+        while process.poll() is None:
+            if overflow.is_set():
+                raise ProbeProcessError("Probe exceeded bounded output budget")
+            if read_failure.is_set():
+                raise ProbeProcessError("Probe output channel failed")
+            if time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(argv, timeout)
+            time.sleep(min(0.02, max(0, deadline - time.monotonic())))
+        returncode = process.returncode
+        # The direct process may exit while a descendant still owns stdout.
+        # Close the containment tree before waiting for both reader threads.
+        dispose_tree()
+        for reader in readers:
+            reader.join(timeout=1)
+        if any(reader.is_alive() for reader in readers):
+            raise ProbeProcessError("Probe descendant kept an output pipe open")
+        if overflow.is_set() or read_failure.is_set():
+            raise ProbeProcessError("Probe output exceeded limit or failed")
+        return subprocess.CompletedProcess(
+            argv, returncode, output[0].decode("utf-8", errors="replace"),
+            output[1].decode("utf-8", errors="replace"),
+        )
+    finally:
+        dispose_tree()
+        if process is not None:
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+            if process.stdout is not None:
+                process.stdout.close()
+            if process.stderr is not None:
+                process.stderr.close()
+        for reader in readers:
+            reader.join(timeout=1)
+        if job is not None:
+            job.close()
