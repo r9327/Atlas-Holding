@@ -60,6 +60,22 @@ class DocumentalistCliTests(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertEqual(json.loads(self.out.read_text())["records"][0]["id"], "002")
 
+    def test_html_table_exports_for_atlas(self):
+        self.input.write_text(
+            "<table><tr><th>id</th><th>kind</th></tr>"
+            "<tr><td>002</td><td>quest</td></tr></table>",
+            encoding="utf-8",
+        )
+        run = subprocess.run(
+            [sys.executable, "-m", "holding.documentalist_cli", "--file", str(self.input),
+             "--format", "html", "--out", str(self.out)],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(run.returncode, 0, run.stderr)
+        document = json.loads(self.out.read_text(encoding="utf-8"))
+        self.assertEqual(document["records"][0]["id"], "002")
+        self.assertEqual(document["records"][0]["payload"]["kind"], "quest")
+
     def test_reject_host_option_for_local_file(self):
         run = self.run_cli("--allow-host", "example.org")
         self.assertEqual(run.returncode, 2)
