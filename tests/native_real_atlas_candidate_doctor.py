@@ -43,7 +43,8 @@ def _git(root: Path, *argv: str, timeout: int = 30) -> str:
         ["git", "-C", str(root), *argv], capture_output=True, text=True,
         encoding="utf-8", errors="replace", check=False, timeout=timeout,
         stdin=subprocess.DEVNULL,
-        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        env={**os.environ, "GIT_TERMINAL_PROMPT": "0",
+             "GIT_LFS_SKIP_SMUDGE": "1"},
     )
     if proc.returncode:
         # Source is public and this helper never handles credentials. Include
@@ -88,7 +89,8 @@ def _prepare_candidate(source: Path, destination: Path, base_sha: str) -> str:
          str(source), str(destination)],
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL, timeout=180, check=True,
-        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        env={**os.environ, "GIT_TERMINAL_PROMPT": "0",
+             "GIT_LFS_SKIP_SMUDGE": "1"},
     )
     _git(destination, "-c", "core.longpaths=true", "checkout", "--quiet", "--detach", base_sha, timeout=120)
     if (not (destination / "tools" / "atlas_doctor.py").is_file()
