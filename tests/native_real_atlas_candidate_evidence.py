@@ -78,6 +78,9 @@ def verify_disposable_candidate(raw: bytes, *, source_sha: str) -> str:
                 or expected_name == "check" and item["state"] == "CHECKED_LOCAL"
                     and item["test_modules_reported"] == 0):
             raise EvidenceError("Stale, forged or incomplete Doctor step")
+        if (expected_name == "plan" and item["state"] != "PLANNED_LOCAL"
+                or item["state"] in ("FAIL", "BLOCKED")):
+            raise EvidenceError("Doctor review or failure cannot be a complete candidate session")
     return hashlib.sha256(raw).hexdigest()
 
 
