@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from holding.project_profile import ProjectProfile
-from holding.project_registry import ProjectRegistry, ProjectRegistryError, _registry_lock
+from holding.project_registry import ProjectRegistry, ProjectRegistryError, _exclusive, _registry_lock
 
 ATLAS = {
     "schema": "project-profile/v1",
@@ -133,6 +133,17 @@ class ProjectRegistryTests(unittest.TestCase):
             self.skipTest("Windows runner does not permit symlink creation")
         with self.assertRaisesRegex(ProjectRegistryError, "symlink"):
             self.register(ATLAS)
+
+    def test_write_fails_when_another_writer_holds_the_lease(self):
+        self.register(ATLAS)
+        state = (self.root / "project-registry.json").read_bytes()
+        with _exclusive(self.root):
+            with self.assertRaisesRegex(ProjectRegistryError, "writer is active"):
+                self.register(PYTHON)
+            with self.assertRaisesRegex(ProjectRegistryError, "writer is active"):
+                self.registry.clear_selection()
+        self.assertEqual((self.root / "project-registry.json").read_bytes(), state)
+        self.assertEqual(len(self.registry.list_entries()), 1)
 
     def test_never_run_commands_or_git(self):
         profile = self.register(ATLAS)
