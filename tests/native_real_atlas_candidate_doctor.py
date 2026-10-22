@@ -46,7 +46,13 @@ def _git(root: Path, *argv: str, timeout: int = 30) -> str:
         env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
     )
     if proc.returncode:
-        raise RuntimeError("Disposable Git operation failed")
+        # Source is public and this helper never handles credentials. Include
+        # a bounded Git-native diagnostic, not unbounded output or generated code.
+        detail = " ".join(proc.stderr.split())[-380:]
+        operation = argv[0] if argv else "unknown"
+        raise RuntimeError(
+            f"Disposable Git {operation} failed (exit {proc.returncode}): {detail}"
+        )
     return proc.stdout.strip()
 
 
@@ -84,7 +90,7 @@ def _prepare_candidate(source: Path, destination: Path, base_sha: str) -> str:
         stderr=subprocess.DEVNULL, timeout=180, check=True,
         env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
     )
-    _git(destination, "checkout", "--quiet", "--detach", base_sha, timeout=120)
+    _git(destination, "-c", "core.longpaths=true", "checkout", "--quiet", "--detach", base_sha, timeout=120)
     if (not (destination / "tools" / "atlas_doctor.py").is_file()
             or not (destination / "AI_ENTRYPOINT.md").is_file()
             or not (destination / ".ai" / "scopes" / "project_docs.yaml").is_file()):
