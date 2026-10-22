@@ -102,3 +102,19 @@ attestées contre un serveur local éventuellement contrefait : le digest de
 \`/api/tags\` et \`/api/ps\` provient du même service. Une expérimentation
 qualité réelle doit encore valider plusieurs tâches, les échecs, les ressources
 par processus et la promotion par le Doctor/CI du vrai dépôt Atlas.
+
+
+## 22 octobre — contrôle durable de la transition QA
+
+Après le commit Git local, le simulateur Windows enregistre maintenant un
+`StateStore.checkpoint(...)` sous bail et constate `QA_PENDING` sur le
+SHA exact. Il tente ensuite volontairement d'injecter un verdict `PASS`
+textuel non authentifié ; ce verdict est refusé, et la mission reste
+`QA_PENDING`. Le reçu indique `mission_state:
+QA_PENDING_AWAITING_PRIVILEGED_DOCTOR` et `doctor_status: NOT_EXECUTED`.
+
+**Il n'y a pas encore de Doctor réel sur cette mission factice.** Le véritable
+Doctor Atlas, sa QA exacte et la certification FULL du dépôt source devront
+être réalisés sur un candidat Atlas isolé, avec une identité Windows
+restreinte et des preuves officielles. Ni le commit, ni le contrôle AST, ni
+la valeur `QA_PENDING` ne suffisent pour certifier ou fusionner le code.
