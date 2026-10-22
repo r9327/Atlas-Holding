@@ -57,10 +57,12 @@ class _FaultInjectingOllamaStub(LocalOllamaStub):
         super().do_POST()
 
 
-def run(kit: Path) -> None:
+def run(kit: Path, *, shell: str = "pwsh") -> None:
     import os
     if os.name != "nt":
         raise RuntimeError("Only real Windows may certify a PowerShell kit")
+    if shell not in ("pwsh", "powershell"):
+        raise ValueError("Explicit native shell must be PowerShell 7 or Windows 5.1")
     kit = kit.resolve(strict=True)
     required = (
         "AtlasHoldingAgent.exe",
@@ -71,9 +73,17 @@ def run(kit: Path) -> None:
     )
     if any(not (kit / name).is_file() for name in required):
         raise RuntimeError("Downloadable native acceptance kit is incomplete")
-    ps = shutil.which("pwsh")
+    ps = shutil.which("pwsh" if shell == "pwsh" else "powershell.exe")
     if ps is None:
-        raise RuntimeError("Native PowerShell 7 required on CI Windows runner")
+        raise RuntimeError("Selected native Windows PowerShell shell is unavailable")
+    if shell == "powershell":
+        # This is Windows PowerShell 5.1, not a second test of pwsh 7.
+        check = subprocess.run(
+            [ps, "-NoProfile", "-NonInteractive", "-Command",
+             "$PSVersionTable.PSVersion.Major"],
+            check=False, capture_output=True, timeout=15)
+        if check.returncode or check.stdout.strip() != b"5":
+            raise RuntimeError("Expected stock Windows PowerShell 5.x")
     manifest = json.loads(
         (kit / "nonrelease-manifest.json").read_text(encoding="utf-8"))
     if manifest.get("release_ready") is not False:
@@ -227,14 +237,15 @@ def run(kit: Path) -> None:
         service.shutdown()
         service.server_close()
         thread.join(timeout=3)
-    print("NONRELEASE_POWERSHELL_STUB_TAMPER_HTTP_FAILURE_AND_DIGEST_DRIFT_PASS")
+    print("NONRELEASE_POWERSHELL_STUB_TAMPER_HTTP_FAILURE_AND_DIGEST_DRIFT_PASS " + shell)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--kit", type=Path, required=True)
+    parser.add_argument("--shell", choices=("pwsh", "powershell"), default="pwsh")
     options = parser.parse_args()
-    run(options.kit)
+    run(options.kit, shell=options.shell)
 
 
 if __name__ == "__main__":
