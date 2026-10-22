@@ -1,0 +1,49 @@
+name: Trusted Atlas Git context-index Windows Linux
+
+on:
+  pull_request:
+    branches: [experiment/atlas-doctor-disposable-candidate-20261022]
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  trusted-index:
+    if: >-
+      github.event.label.name == 'ci:atlas-context-index' &&
+      github.head_ref == 'feature/trusted-atlas-context-index-sync-20261022' &&
+      github.event.pull_request.head.repo.full_name == 'r9327/Atlas-Holding'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 18
+    steps:
+      - name: Checkout exact candidate SHA without persisted credentials
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Python 3.13
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Exercise trusted staged Git tree index and protected real commits
+        shell: pwsh
+        run: |
+          python -B -X utf8 -m unittest `
+            tests.test_atlas_context_index `
+            tests.test_git_worktree `
+            tests.test_atlas_doctor_evidence `
+            tests.test_atlas_doctor_runner -v
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Canonical Atlas Git context index exact-commit contracts failed'
+          }
+      - name: Keep checkout unchanged
+        shell: pwsh
+        run: |
+          $dirty = git status --porcelain --untracked-files=normal
+          if ($dirty) { throw "Trusted Git index test mutated Holding checkout: $dirty" }
+          Write-Output "NONRELEASE_TRUSTED_ATLAS_CONTEXT_INDEX_MATRIX_PASS"
