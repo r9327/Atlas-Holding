@@ -18,6 +18,9 @@ param(
     [ValidateRange(2, 3600)]
     [int] $TimeoutSeconds = 600,
 
+    [ValidateRange(1, 5)]
+    [int] $Trials = 1,
+
     [string] $EvidenceDirectory = ''
 )
 Set-StrictMode -Version Latest
@@ -68,7 +71,7 @@ $parent = [System.IO.Path]::GetFullPath($EvidenceDirectory)
 $parent = (Resolve-Path -LiteralPath $parent).Path
 $guid = [guid]::NewGuid().ToString('N')
 $modelFile = Join-Path $parent ("model-" + $guid + ".json")
-$receipt = Join-Path $parent ("receipt-" + $guid + ".json")
+$session = Join-Path $parent ("session-" + $guid + ".json")
 
 # Only loopback is contacted; explicitly disable HTTP proxy inheritance.
 Add-Type -AssemblyName System.Net.Http
@@ -132,21 +135,83 @@ try {
     $runner = Join-Path $kit 'AtlasHoldingAcceptance.exe'
     & $runner --self-test
     if ($LASTEXITCODE -ne 0) { throw 'Acceptance runtime self-test failed' }
-    & $runner --agent $agent --model-json $modelFile --receipt-json $receipt
-    if ($LASTEXITCODE -ne 0) { throw 'Real-model isolated coding acceptance failed' }
-    if (!(Test-Path -LiteralPath $receipt -PathType Leaf)) {
-        throw 'Real-model proof was not created'
+    # Independent disposable repositories for each trial. Stop on any
+    # error; a partial set of receipts is NOT a passed multi-trial session.
+    $results = @()
+    for ($trial = 1; $trial -le $Trials; $trial++) {
+        $receipt = Join-Path $parent ("receipt-" + $guid + "-" + $trial + ".json")
+        & $runner --agent $agent --model-json $modelFile --receipt-json $receipt
+        if ($LASTEXITCODE -ne 0) {
+            throw ("Local coding trial " + $trial + " failed; no session PASS")
+        }
+        if (!(Test-Path -LiteralPath $receipt -PathType Leaf)) {
+            throw 'Local model trial did not create its evidence receipt'
+        }
+        $proof = Get-Content -Raw -LiteralPath $receipt -Encoding UTF8 | ConvertFrom-Json
+        if ($proof.source -cne 'LIVE_PINNED_OLLAMA' -or
+            $proof.model -cne $Model -or $proof.model_digest -cne $digest -or
+            $proof.doctor_status -cne 'NOT_EXECUTED' -or
+            $proof.mission_state -cne 'QA_PENDING_AWAITING_PRIVILEGED_DOCTOR' -or
+            $proof.github_push_status -cne 'NOT_PERMITTED' -or
+            $proof.static_ast_exact_match -ne $true -or
+            $proof.release_ready -ne $false -or
+            $proof.candidate_commit_sha -cnotmatch '^[0-9a-f]{40}
+}
+finally {
+    $client.Dispose()
+    $handler.Dispose()
+    if (Test-Path -LiteralPath $modelFile) {
+        Remove-Item -Force -LiteralPath $modelFile
     }
-    $proof = Get-Content -Raw -LiteralPath $receipt -Encoding UTF8 | ConvertFrom-Json
-    if ($proof.source -cne 'LIVE_PINNED_OLLAMA' -or
-        $proof.model -cne $Model -or $proof.model_digest -cne $digest -or
-        $proof.doctor_status -cne 'NOT_EXECUTED' -or
-        $proof.release_ready -ne $false) {
-        throw 'Receipt contradicts the selected model or claimed certification'
+}
+) {
+            throw 'Receipt contradicts the selected model or claimed certification'
+        }
+        $receiptSha = (Get-FileHash -LiteralPath $receipt -Algorithm SHA256).Hash.ToLowerInvariant()
+        $results += @{
+            trial = $trial
+            receipt_sha256 = $receiptSha
+            duration_ms = [int64]$proof.duration_ms
+            commit_sha = [string]$proof.candidate_commit_sha
+        }
+        Write-Output ("Local trial " + $trial + "/" + $Trials + ": static QA + local Git commit PASS")
     }
-    Write-Output 'LIVE_MODEL_LOCAL_ACCEPTANCE_PASS (nonrelease only)'
+    # Session-level proof exists ONLY after all trials succeeded. It is
+    # unsigned, nonrelease, and deliberately not a comparative quality score.
+    $summary = @{
+        schema = 1
+        kind = 'NONRELEASE_REPEATED_LOCAL_ACCEPTANCE'
+        source_sha = [string]$manifest.git_sha
+        model = $Model
+        model_digest = $digest
+        trials_requested = $Trials
+        trials_passed = $results.Count
+        results = @($results)
+        independent_doctor_qa = 'NOT_EXECUTED'
+        model_quality_benchmark = 'NOT_CERTIFIED'
+        release_ready = $false
+    } | ConvertTo-Json -Depth 7 -Compress
+    $stream = [System.IO.FileStream]::new(
+        $session, [System.IO.FileMode]::CreateNew,
+        [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+    try {
+        $writer = [System.IO.StreamWriter]::new(
+            $stream, [System.Text.UTF8Encoding]::new($false))
+        try {
+            $writer.WriteLine($summary)
+            $writer.Flush()
+            $stream.Flush($true)
+        }
+        finally {
+            $writer.Dispose()
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+    Write-Output ("LIVE_MODEL_LOCAL_ACCEPTANCE_PASS " + $Trials + "/" + $Trials + " (nonrelease only)")
     Write-Output ("Candidate SHA: " + $manifest.git_sha)
-    Write-Output ("Evidence: " + $receipt)
+    Write-Output ("Session evidence: " + $session)
 }
 finally {
     $client.Dispose()
