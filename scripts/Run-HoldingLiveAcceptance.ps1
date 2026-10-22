@@ -26,6 +26,26 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# SHA-256 uses .NET directly: Get-FileHash may be unavailable in a restricted
+# Windows PowerShell 5.1 session. Both shells must check the SAME file bytes.
+function Get-HoldingSha256 {
+    param([Parameter(Mandatory = $true)][string] $LiteralFilePath)
+    $stream = [System.IO.File]::OpenRead($LiteralFilePath)
+    try {
+        $algorithm = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            return [System.BitConverter]::ToString(
+                $algorithm.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+        }
+        finally {
+            $algorithm.Dispose()
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
 $kit = (Resolve-Path -LiteralPath $PSScriptRoot).Path
 $manifestPath = Join-Path $kit 'nonrelease-manifest.json'
 if (!(Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
@@ -54,7 +74,7 @@ foreach ($name in $names) {
     if ($expected -cnotmatch '^[0-9a-f]{64}$') {
         throw 'Invalid expected binary pin'
     }
-    $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+    $actual = Get-HoldingSha256 -LiteralFilePath $path
     if ($actual -cne $expected) {
         throw 'Downloaded candidate does not match its published SHA256'
     }
@@ -158,7 +178,7 @@ try {
             $proof.candidate_commit_sha -cnotmatch '^[0-9a-f]{40}$') {
             throw 'Receipt contradicts the selected model or claimed certification'
         }
-        $receiptSha = (Get-FileHash -LiteralPath $receipt -Algorithm SHA256).Hash.ToLowerInvariant()
+        $receiptSha = Get-HoldingSha256 -LiteralFilePath $receipt
         $results += @{
             trial = $trial
             receipt_sha256 = $receiptSha
