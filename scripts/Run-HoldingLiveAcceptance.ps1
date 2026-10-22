@@ -33,7 +33,8 @@ if ($manifest.schema -ne 1 -or $manifest.release_ready -ne $false -or
     $manifest.git_sha -cnotmatch '^[0-9a-f]{40}$') {
     throw 'Untrusted acceptance manifest: not a nonrelease exact-SHA build'
 }
-$names = @('AtlasHoldingAgent.exe', 'AtlasHoldingAcceptance.exe')
+$names = @('AtlasHoldingAgent.exe', 'AtlasHoldingAcceptance.exe',
+           'Run-HoldingLiveAcceptance.ps1', 'README.md')
 $actualNames = @($manifest.files.PSObject.Properties.Name)
 $unexpected = @(Compare-Object -ReferenceObject $actualNames -DifferenceObject $names)
 if ($unexpected.Count -ne 0) {
