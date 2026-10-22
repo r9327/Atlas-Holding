@@ -50,6 +50,11 @@ class DocumentIntakeTests(unittest.TestCase):
             with self.subTest(length=len(raw)), self.assertRaises(DocumentIntakeError):
                 ingest_json_records(raw, source="local:test", collected_at=STAMP)
 
+    def test_duplicate_json_object_keys_are_rejected(self):
+        for raw in (b'[{"id":1,"id":2}]', b'[{"id":1,"data":{"x":1,"x":2}}]'):
+            with self.subTest(raw=raw), self.assertRaises(DocumentIntakeError):
+                ingest_json_records(raw, source="local:fixture", collected_at=STAMP)
+
     def test_timestamp_and_source_must_be_explicit(self):
         for bad in ("../file", "ftp://example.com", "http://insecure"):
             with self.assertRaises(DocumentIntakeError):
