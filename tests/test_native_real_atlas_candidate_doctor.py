@@ -40,7 +40,7 @@ class NativeCandidateDoctorTests(unittest.TestCase):
             self.assertFalse(_same_canonical_checkout(root, str(root.parent)))
 
     def test_local_git_disables_network_prompt_and_lfs_smudge(self):
-        completed = Mock(returncode=0, stdout="safe\\n", stderr="")
+        completed = Mock(returncode=0, stdout="safe", stderr="")
         with patch("tests.native_real_atlas_candidate_doctor.subprocess.run",
                    return_value=completed) as spawn:
             self.assertEqual(_git(Path("C:/dummy"), "status"), "safe")
