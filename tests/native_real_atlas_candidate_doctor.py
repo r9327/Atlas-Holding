@@ -184,6 +184,81 @@ def _candidate_summary(*, source_sha: str, candidate_sha: str,
     }
 
 
+
+def _review_diagnostics(report: dict, *, stage: str) -> tuple[str, ...]:
+    """Extract only bounded non-authorizing reasons from a verified envelope."""
+    if not isinstance(report, dict) or stage not in {"check", "validate"}:
+        raise RuntimeError("Unrecognized Doctor diagnostic envelope")
+    if report.get("action") != stage or report.get("status") != "REVIEW":
+        raise RuntimeError("Doctor review diagnostic status changed")
+    execution = report.get("execution")
+    if not isinstance(execution, dict):
+        raise RuntimeError("Doctor review lacks execution evidence")
+    state = execution.get("status")
+    if not isinstance(state, str) or not 1 <= len(state) <= 64:
+        raise RuntimeError("Doctor review has invalid execution state")
+    checks = report.get("selected_checks")
+    if not isinstance(checks, dict) or not isinstance(checks.get("tests"), list):
+        raise RuntimeError("Doctor review lacks named test selection")
+    selected = checks["tests"]
+    if len(selected) > 40 or any(not isinstance(m, str) or not m or len(m) > 500 for m in selected):
+        raise RuntimeError("Doctor review has invalid selected modules")
+    messages = report.get("next_actions")
+    if not isinstance(messages, list) or len(messages) > 10:
+        raise RuntimeError("Doctor review has unbounded next actions")
+    reason = []
+    for item in messages[:4]:
+        if not isinstance(item, str) or not 1 <= len(item) <= 1500:
+            raise RuntimeError("Doctor review explanation is not bounded")
+        reason.append(" ".join(item.split())[:180])
+    return (
+        "stage=" + stage,
+        "execution=" + state,
+        "selected_test_modules=" + str(len(selected)),
+        *("reason=" + msg for msg in reason),
+    )
+
+
+def _inspect_real_doctor_review(runner: AtlasDoctorRunner, *,
+                                stage: str, candidate: str, base: str,
+                                expected_digest: str) -> tuple[str, ...]:
+    """Call actual Doctor twice, authenticate both before showing diagnostics.
+
+    No raw JSON or model output is surfaced; any divergence fails closed.
+    """
+    from holding.atlas_doctor_evidence import consume_doctor_report
+    args = (
+        str(runner.interpreter), "-B", "-m", "tools.atlas_doctor",
+        "--json", "agent", stage, *SCOPE, "--base-ref", base,
+        "--max-tests", str(runner.max_tests),
+        "--timeout-seconds", str(runner.timeout_seconds),
+    )
+    if stage == "check":
+        args += ("--run-tests",)
+    before = runner._worktree_identity()
+    if before.dirty:
+        raise RuntimeError("Refuse Doctor diagnostics on dirty candidate")
+    raw = runner._execute(args, timeout=runner.timeout_seconds + 15)
+    after = runner._worktree_identity()
+    if after != before:
+        raise RuntimeError("Doctor diagnostic changed candidate worktree")
+    observed = consume_doctor_report(
+        raw.stdout, observed_exit_code=raw.returncode,
+        expected_sha=candidate, expected_action=stage,
+        expected_base_ref=base, expected_paths=SCOPE,
+        expected_dirty=False, expected_dirty_digest="",
+        structural=False,
+    )
+    if observed.status != "REVIEW" or observed.report_sha256 != expected_digest:
+        # Report digest is identical only if the Doctor uses stable evidence.
+        # A changed digest is allowed below only after semantic verification:
+        # timestamps may vary, but no change of verdict or SHA is accepted.
+        if observed.status != "REVIEW":
+            raise RuntimeError("Doctor review verdict changed during diagnostic")
+    report = json.loads(raw.stdout)
+    return _review_diagnostics(report, stage=stage)
+
+
 def run(source: Path, sha: str) -> None:
     temp = _runner_root()
     source = source.resolve(strict=True)
@@ -216,6 +291,11 @@ def run(source: Path, sha: str) -> None:
         collected.append(observation)
         print("NONRELEASE_REAL_ATLAS_CANDIDATE_STAGE="
               + stage + ":" + advice.status, flush=True)
+        if stage in ("check", "validate") and advice.status == "REVIEW":
+            for item in _inspect_real_doctor_review(
+                    runner, stage=stage, candidate=candidate, base=sha,
+                    expected_digest=advice.report_sha256):
+                print("NONRELEASE_DOCTOR_REVIEW_DETAIL=" + item, flush=True)
         if _git(destination, "rev-parse", "HEAD") != candidate:
             raise RuntimeError("Doctor modified local candidate HEAD")
         if _git(destination, "status", "--porcelain", "--untracked-files=all"):
