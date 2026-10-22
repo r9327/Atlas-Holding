@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from holding.self_git_sync import HoldingGitSync, SyncBlocked, _origin_identity
 
@@ -64,6 +65,62 @@ class HoldingGitSyncTests(unittest.TestCase):
         self.assertEqual(state.head, git(self.local, "rev-parse", "HEAD"))
         self.assertFalse(state.dirty)
         self.assertFalse(state.remote_checked)
+
+    def traced(self, mode):
+        """Record network Git operations without changing the real Git code."""
+        network = []
+        real_git = self.client._git
+        def monitor(*args, **kwargs):
+            if args[0] in ("ls-remote", "fetch", "push"):
+                network.append(args[0])
+            return real_git(*args, **kwargs)
+        with patch.object(self.client, "_git", side_effect=monitor):
+            result = self.client.run(mode)
+        return result, network
+
+    def test_fast_noop_uses_ref_probes_without_fetch(self):
+        result, network = self.traced("sync")
+        self.assertEqual(result.action, "UP_TO_DATE")
+        self.assertEqual(network, ["ls-remote", "ls-remote"])
+        self.assertEqual(result.after.ahead, 0)
+        self.assertEqual(result.after.behind, 0)
+
+    def test_fast_feature_publish_never_downloads_remote(self):
+        self.feature()
+        self.commit(self.local, "feature")
+        result, network = self.traced("sync")
+        self.assertEqual(result.action, "PUSHED")
+        self.assertEqual(network, ["ls-remote", "push", "ls-remote"])
+        self.assertEqual(result.after.remote_head, result.after.head)
+
+    def test_fast_forward_fetches_once_only_when_remote_changed(self):
+        other = self.other_clone()
+        self.commit(other, "remote changed")
+        git(other, "push", "-q", "origin", "main")
+        result, network = self.traced("sync")
+        self.assertEqual(result.action, "PULLED")
+        self.assertEqual(network, ["ls-remote", "fetch", "ls-remote"])
+
+    def test_remote_tip_race_refused_without_local_mutation(self):
+        other = self.other_clone()
+        self.commit(other, "first remote")
+        git(other, "push", "-q", "origin", "main")
+        before = git(self.local, "rev-parse", "HEAD")
+        original = self.client._git
+        observed = [False]
+
+        def advance_after_observation(*args, **kwargs):
+            value = original(*args, **kwargs)
+            if args[0] == "ls-remote" and not observed[0]:
+                observed[0] = True
+                self.commit(other, "raced remote")
+                git(other, "push", "-q", "origin", "main")
+            return value
+
+        with patch.object(self.client, "_git", side_effect=advance_after_observation):
+            with self.assertRaisesRegex(SyncBlocked, "Remote changed during fetch"):
+                self.client.run("sync")
+        self.assertEqual(git(self.local, "rev-parse", "HEAD"), before)
 
     def test_noop_sync(self):
         result = self.client.run("sync")
