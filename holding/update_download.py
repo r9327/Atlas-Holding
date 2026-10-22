@@ -10,6 +10,7 @@ import hashlib
 import os
 from pathlib import Path
 import re
+from typing import Callable
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
@@ -53,6 +54,7 @@ def download_staged_artifact(
     timeout: float = 30.0,
     chunk_bytes: int = 1024 * 1024,
     allow_test_loopback: bool = False,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> Path:
     """Download to destination.part; replace destination only after size/hash match.
 
@@ -67,6 +69,8 @@ def download_staged_artifact(
             or type(expected_size) is not int or not 0 <= expected_size <= _MAX_BYTES
             or not 0 < timeout <= 300 or not 4096 <= chunk_bytes <= 8 * 1024 * 1024):
         raise ArtifactDownloadError("invalid download requirements")
+    if on_progress is not None and not callable(on_progress):
+        raise ArtifactDownloadError("invalid progress callback")
     if destination.exists() or destination.is_symlink():
         raise ArtifactDownloadError("staged destination already exists")
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -125,6 +129,8 @@ def download_staged_artifact(
                         digest.update(block)
             received = offset
             with partial.open("ab" if offset else "wb") as file:
+                if on_progress is not None:
+                    on_progress(received, expected_size)
                 while True:
                     block = response.read(chunk_bytes)
                     if not block:
@@ -134,6 +140,8 @@ def download_staged_artifact(
                         raise ArtifactDownloadError("response exceeds manifest size")
                     digest.update(block)
                     file.write(block)
+                    if on_progress is not None:
+                        on_progress(received, expected_size)
                 file.flush()
                 os.fsync(file.fileno())
             if received != expected_size:
