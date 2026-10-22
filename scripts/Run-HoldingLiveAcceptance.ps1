@@ -35,7 +35,8 @@ if ($manifest.schema -ne 1 -or $manifest.release_ready -ne $false -or
 }
 $names = @('AtlasHoldingAgent.exe', 'AtlasHoldingAcceptance.exe')
 $actualNames = @($manifest.files.PSObject.Properties.Name)
-if ((Compare-Object $actualNames $names).Count -ne 0) {
+$unexpected = @(Compare-Object -ReferenceObject $actualNames -DifferenceObject $names)
+if ($unexpected.Count -ne 0) {
     throw 'Candidate manifest contains an unexpected binary list'
 }
 foreach ($name in $names) {
