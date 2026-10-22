@@ -186,6 +186,7 @@ jobs:
           }
 
       - name: Upload tested no-Python Windows live-model acceptance kit (NOT RELEASE)
+        id: nonrelease_kit_upload
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
@@ -194,3 +195,14 @@ jobs:
           if-no-files-found: error
           retention-days: 3
           compression-level: 0
+
+      - name: Log independently checkable nonrelease archive SHA256
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $digest = '${{ steps.nonrelease_kit_upload.outputs.artifact-digest }}'
+          if ($digest -cnotmatch '^sha256:[0-9a-f]{64}$') {
+            throw 'No checked artifact archive SHA256 emitted by GitHub upload'
+          }
+          Write-Output "NONRELEASE_ACCEPTANCE_ARTIFACT_DIGEST=$digest"
+          Write-Output "NONRELEASE_ACCEPTANCE_SOURCE_SHA=${{ github.event.pull_request.head.sha }}"
