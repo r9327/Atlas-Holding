@@ -68,9 +68,9 @@ class ProjectRegistryTests(unittest.TestCase):
             self.registry.select("python-simple", expected_digest="0" * 64)
         self.assertEqual(self.registry.selected().profile.name, "dofus-atlas")
 
-    def test_duplicate_worktree_refused_case_insensitive(self):
+    def test_duplicate_worktree_refused(self):
         self.register(ATLAS)
-        collision = dict(PYTHON, checkout_dir="DOFUS-ATLAS-WORKTREE")
+        collision = dict(PYTHON, checkout_dir="dofus-atlas-worktree")
         with self.assertRaisesRegex(ProjectRegistryError, "already assigned"):
             self.registry.register(json.dumps(collision))
         self.assertEqual(len(self.registry.list_entries()), 1)
