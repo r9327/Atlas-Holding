@@ -48,3 +48,14 @@ Future work: a true code change proposed by a local model in a disposable
 Atlas worktree, verified against a real scoped test and independently certified
 through existing GitHub Doctor/CI grants. Never allow the code worker to
 self-certify or use this nonrelease diagnostic as production authorization.
+
+## Git LFS — charge réseau volontairement limitée
+
+Le premier checkout clone test a révélé un besoin de blobs LFS
+(`data/cartography/assets/_rejected/...`). Les métadonnées Git et le
+README suffisent pour l'exercice Doctor : les objets volumineux ne doivent
+**pas** être téléchargés dans cette CI. Toutes les invocations Git du
+candidat utilisent désormais `GIT_LFS_SKIP_SMUDGE=1` et
+`GIT_TERMINAL_PROMPT=0`, avec refus des sorties non zéro et journal
+d'erreur Git borné. Ces contrôles ne sont **pas** des substituts à la
+certification des données binaires d'Atlas, qui garde ses propres gates.
