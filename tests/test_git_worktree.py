@@ -45,6 +45,22 @@ class GitWorktreeTests(unittest.TestCase):
                     self.root.resolve(),
                 )
 
+    @unittest.skipUnless(os.name == 'nt', 'Requires real Windows Job Objects')
+    def test_failed_job_assignment_cleans_up_unassigned_suspended_git(self):
+        from holding.windows_job import WindowsJob, WindowsJobError
+        started = []
+
+        def deny_before_attach(_job, process):
+            started.append(process)
+            raise WindowsJobError('Test refuses assignment', code='TEST_DENIED')
+
+        with patch.object(WindowsJob, 'attach_suspended', deny_before_attach):
+            with self.assertRaises(WindowsJobError):
+                self.manager._git('rev-parse', '--verify', 'HEAD')
+        self.assertEqual(len(started), 1)
+        self.assertIsNotNone(started[0].poll(),
+                             'Suspended Git escaped cleanup after rejected Job')
+
     def test_real_git_nul_delimited_staging_and_commit(self):
         original = git(self.root, 'rev-parse', 'HEAD')
         work = self.manager.create('feature1')
