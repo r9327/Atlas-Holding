@@ -12,8 +12,13 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
+
+# Direct invocation starts inside tests/, not at the checked-out project root.
+# Import only the exact CI checkout; never a similarly named installed package.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tests.native_windows_code_mission_smoke import (
     LocalOllamaStub, MODEL, DIGEST,
