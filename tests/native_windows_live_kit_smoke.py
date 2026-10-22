@@ -37,6 +37,7 @@ class _FaultInjectingOllamaStub(LocalOllamaStub):
     fail_after_chat_calls = 0
     side_effect_sentinel = ""
     unsafe_patch_calls = 0
+    drift_after_chat_count = 0
 
     def _reply(self, obj: dict) -> None:
         if self.path == "/api/chat" and type(self).mode == "unsafe_patch":
@@ -60,10 +61,13 @@ class _FaultInjectingOllamaStub(LocalOllamaStub):
     def do_GET(self):
         if self.path == "/api/tags":
             type(self).inventory_calls += 1
-            if type(self).mode == "digest_drift":
-                digest = (DIGEST if type(self).inventory_calls == 1
-                          else "b" * 64)
-                self._reply({"models": [{"name": MODEL, "digest": digest}]})
+            if type(self).mode in ("digest_drift", "drift_after_first_trial"):
+                if type(self).mode == "digest_drift":
+                    okay = type(self).inventory_calls == 1
+                else:
+                    okay = type(self).chat_calls < type(self).drift_after_chat_count
+                self._reply({"models": [{
+                    "name": MODEL, "digest": DIGEST if okay else "b" * 64}]})
                 return
         super().do_GET()
 
@@ -255,6 +259,24 @@ def run(kit: Path, *, shell: str = "pwsh") -> None:
                 raise RuntimeError("Digest drift produced a false success receipt or session")
             if list(drift_dir.glob("model-*.json")):
                 raise RuntimeError("Digest drift left its temporary model pin")
+            # The model can silently be replaced AFTER trial 1 passed.
+            # Every new trial must check its digest independently, and the
+            # preceding isolated receipt must never create a session PASS.
+            _FaultInjectingOllamaStub.mode = "drift_after_first_trial"
+            before_chat = _FaultInjectingOllamaStub.chat_calls
+            _FaultInjectingOllamaStub.drift_after_chat_count = before_chat + 1
+            replaced_dir = root / "model-replaced-after-first-trial"
+            replaced = launch(replaced_dir, trials=3)
+            if replaced.returncode == 0:
+                raise RuntimeError("Changed Ollama model was accepted in later trial")
+            if _FaultInjectingOllamaStub.chat_calls != before_chat + 1:
+                raise RuntimeError("Changed model reached another generation")
+            if len(list(replaced_dir.glob("receipt-*.json"))) != 1:
+                raise RuntimeError("No exact first-trial evidence before replacement")
+            if (list(replaced_dir.glob("session-*.json"))
+                    or list(replaced_dir.glob("model-*.json"))):
+                raise RuntimeError("Changed model left session PASS or pin")
+
             # Adversarial actual frozen-agent path: the generated code
             # contains an import-time decorator which could write to a file
             # if any checker incorrectly imports or executes that source.
