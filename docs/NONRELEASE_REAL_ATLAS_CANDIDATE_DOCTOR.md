@@ -74,3 +74,22 @@ Un `PASS` exige toujours une vraie liste non vide de modules nommes,
 un code retour coherent et un statut d'execution valide. Des tests
 negatifs protegent ce comportement; il ne dispense **jamais** d'une QA
 independante ni des CI/FULL du vrai Atlas.
+
+## Analyse bornée des statuts REVIEW
+
+Le test initial du candidat documentaire a produit sur Windows
+`plan=PLANNED_LOCAL`, `check=REVIEW`, `validate=REVIEW`. Il est interdit
+de convertir ces avis en `PASS` simplement parce que les commandes n'ont
+pas planté. Un `check` qui n'a aucun module ciblé exécutable peut rester
+`PLANNED` ou `PARTIAL_REVIEW` en interne; ces états sont consultatifs.
+
+Le nouveau diagnostic relance chaque action restant en `REVIEW`
+**sans autorisation supplémentaire**, lit le véritable JSON Doctor et le
+soumet de nouveau au consommateur exact-SHA de Holding (code retour, action,
+scope, base, worktree propre, certification toujours fausse).
+Seuls l'état d'exécution, le nombre de modules sélectionnés et au maximum
+quatre explications de 180 caractères apparaissent dans les logs.
+Il refuse toute dérive du SHA, tout nouveau verdict non-REVIEW, toute sortie
+mal formée et toute modification du dépôt. Un second diagnostic est
+informatif; le reçu original continue d'être l'unique preuve de la première
+exécution, et n'autorise pas de fusion.
