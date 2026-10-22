@@ -100,13 +100,28 @@ def _seal_doctor_receipt(target: Path, receipt: dict) -> str:
         raise RuntimeError("Doctor proof must be a new canonical runner-temp JSON")
     payload = (json.dumps(receipt, sort_keys=True, ensure_ascii=True,
                           separators=(",", ":")) + "\n").encode("utf-8")
-    if (len(payload) > 4096
+    scope = receipt.get("scope")
+    if (not isinstance(scope, str) or scope not in SCOPE_PATHS
+            or receipt.get("schema") != 1
             or receipt.get("kind") != "NONRELEASE_ATLAS_DOCTOR_REAL_PLAN"
+            or receipt.get("source_repository") != "r9327/Dof-Atlas"
+            or not isinstance(receipt.get("source_sha"), str)
+            or not _SHA40.fullmatch(receipt["source_sha"])
+            or receipt.get("path") != SCOPE_PATHS[scope]
+            or receipt.get("status") not in ("REVIEW", "PLANNED_LOCAL")
+            or not isinstance(receipt.get("doctor_report_sha256"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", receipt["doctor_report_sha256"])
+            or receipt.get("decision_marker") != (
+                "NONRELEASE_REAL_ATLAS_DOCTOR_PLAN_READY"
+                if receipt["status"] == "PLANNED_LOCAL"
+                else "NONRELEASE_REAL_ATLAS_DOCTOR_REVIEW_NOT_READY")
             or receipt.get("doctor_tests_executed") is not False
             or receipt.get("doctor_full_certified") is not False
             or receipt.get("github_push_permitted") is not False
-            or receipt.get("release_ready") is not False):
+            or receipt.get("release_ready") is not False
+            or len(payload) > 4096):
         raise RuntimeError("Untrusted or oversized Doctor evidence")
+    _verify_pinned_scope_decision(scope, receipt["status"])
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(fd, "wb") as output:
