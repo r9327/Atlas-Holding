@@ -163,6 +163,9 @@ def _candidate_summary(*, source_sha: str, candidate_sha: str,
                    or not _DIGEST.fullmatch(s.get("doctor_report_sha256", ""))
                    for s in stages)):
         raise RuntimeError("Incomplete real Doctor candidate session")
+    if (stages[0]["state"] != "PLANNED_LOCAL"
+            or any(step["state"] in ("BLOCKED", "FAIL") for step in stages)):
+        raise RuntimeError("Doctor review/blocker cannot produce a complete candidate QA session")
     return {
         "schema": 1,
         "kind": "NONRELEASE_REAL_ATLAS_DISPOSABLE_CANDIDATE",
@@ -204,6 +207,10 @@ def run(source: Path, sha: str) -> None:
             run_tests=(stage == "check"),
         )
         observation = _verify_advisory(advice, stage=stage, sha=candidate)
+        if (stage == "plan" and advice.status != "PLANNED_LOCAL"):
+            raise RuntimeError("Doctor plan requested REVIEW: no further QA stages authorized")
+        if advice.status in ("BLOCKED", "FAIL"):
+            raise RuntimeError(f"Doctor {stage} blocked or failed: no QA continuation")
         collected.append(observation)
         print("NONRELEASE_REAL_ATLAS_CANDIDATE_STAGE="
               + stage + ":" + advice.status, flush=True)
