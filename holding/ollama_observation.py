@@ -12,7 +12,7 @@ import re
 import threading
 from urllib.request import Request, ProxyHandler, build_opener
 
-_DIGEST = re.compile(r"^[0-9a-f]{64}$")
+_MODEL = re.compile(r"^[A-Za-z0-9_.:-]+(?:/[A-Za-z0-9_.:-]+)*$")
 _MAX_RESPONSE = 128 * 1024
 _MAX_ALLOCATED = 1024 ** 5  # Reject implausible >1 PiB API values.
 
@@ -65,7 +65,8 @@ class OllamaAllocationObserver:
 
     def __init__(self, name: str, *, interval_seconds: float = 0.5) -> None:
         if (not isinstance(name, str) or not 1 <= len(name) <= 100
-                or any(c in name for c in "\n\r\x00/?#")
+                or not _MODEL.fullmatch(name)
+                or any(part in (".", "..") for part in name.split("/"))
                 or type(interval_seconds) not in (float, int)
                 or not 0.2 <= interval_seconds <= 5):
             raise ValueError("Invalid local Ollama observation")
