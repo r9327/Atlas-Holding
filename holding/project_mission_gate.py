@@ -66,6 +66,8 @@ def import_verified_project_missions(
     try:
         document = json.loads(operations_text, object_pairs_hook=_unique,
                               parse_constant=lambda x: (_ for _ in ()).throw(ValueError(x)))
+    except ProjectMissionGateError:
+        raise
     except (ValueError, RecursionError, UnicodeError) as exc:
         raise ProjectMissionGateError("invalid operational roadmap JSON") from exc
     if (not isinstance(document, dict) or set(document) != {"repo", "missions"}
@@ -106,7 +108,8 @@ def import_verified_project_missions(
             lot = lots[identifier]
             if lot.autonomy not in {"AUTO", "AUTO_WITH_STANDING_GRANT"}:
                 raise ProjectMissionGateError("restricted lot requires separate human decision")
-            if mission["operation"] not in _ALLOWED_OPERATIONS:
+            if (not isinstance(mission["operation"], str)
+                    or mission["operation"] not in _ALLOWED_OPERATIONS):
                 raise ProjectMissionGateError("unsupported or privileged operation")
             if (mission.get("depends_on", []) != list(lot.dependencies)
                     or mission["acceptance"] != list(lot.acceptance)
