@@ -112,23 +112,29 @@ def _git(root: Path, *args: str) -> str:
     return proc.stdout.decode("utf-8", errors="replace").strip()
 
 
-def _check_answer(candidate: Path) -> None:
-    """Independent STATIC criterion; never execute model-generated code."""
-    if candidate.stat().st_size > 8192:
-        raise RuntimeError("Unbounded candidate source")
-    syntax = ast.parse(candidate.read_text(encoding="utf-8"),
-                       filename=str(candidate))
-    if (len(syntax.body) != 1
-            or not isinstance(syntax.body[0], ast.FunctionDef)
-            or syntax.body[0].name != "answer"
-            or syntax.body[0].args.args
-            or len(syntax.body[0].body) != 1
-            or not isinstance(syntax.body[0].body[0], ast.Return)
-            or not isinstance(syntax.body[0].body[0].value, ast.Constant)
-            or syntax.body[0].body[0].value.value != 42
-            or type(syntax.body[0].body[0].value.value) is not int):
-        raise RuntimeError("Independent static acceptance check failed")
+# Compare the FULL syntax tree, not only the function body. An otherwise
+# correct `return 42` may hide side effects in decorators, default values,
+# annotations, type parameters, positional-only/keyword-only arguments, or
+# global expressions evaluated later on import. Comments/whitespace are fine.
+_EXACT_ANSWER_AST = ast.dump(
+    ast.parse("def answer():\\n    return 42\\n"),
+    include_attributes=False,
+)
 
+
+def _check_answer(candidate: Path) -> None:
+    """Static, NON-EXECUTING checker for exactly one harmless function."""
+    if (not isinstance(candidate, Path) or candidate.is_symlink()
+            or not candidate.is_file()
+            or not 1 <= candidate.stat().st_size <= 8192):
+        raise RuntimeError("Unsafe or oversized candidate source")
+    try:
+        syntax = ast.parse(candidate.read_text(encoding="utf-8"),
+                           filename=str(candidate))
+    except (SyntaxError, UnicodeError, ValueError) as exc:
+        raise RuntimeError("Invalid candidate Python source") from exc
+    if ast.dump(syntax, include_attributes=False) != _EXACT_ANSWER_AST:
+        raise RuntimeError("Independent static acceptance check failed")
 
 def run(agent: Path, *, real_model: Path | None = None) -> None:
     if os.name != "nt":
