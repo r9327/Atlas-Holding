@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
+import tempfile
 import unittest
 
 from holding.atlas_doctor_evidence import LocalPassport
 from tests.native_real_atlas_candidate_doctor import (
-    _candidate_summary, _verify_advisory, LEVELS, SCOPE,
+    _candidate_summary, _verify_advisory, _same_canonical_checkout,
+    LEVELS, SCOPE,
 )
 
 SOURCE = "a" * 40
@@ -26,6 +29,15 @@ def passport(stage: str, *, state: str | None = None,
 
 
 class NativeCandidateDoctorTests(unittest.TestCase):
+    def test_real_git_root_is_verified_as_resolved_path_not_raw_text(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve(strict=True)
+            self.assertTrue(_same_canonical_checkout(root, str(root)))
+            self.assertTrue(_same_canonical_checkout(root, str(root) + "/."))
+            self.assertFalse(_same_canonical_checkout(root, "../outside"))
+            self.assertFalse(_same_canonical_checkout(root, ""))
+            self.assertFalse(_same_canonical_checkout(root, str(root.parent)))
+
     def test_all_three_valid_advisory_shapes_remain_uncertified(self):
         self.assertEqual(LEVELS, ("plan", "check", "validate"))
         self.assertEqual(SCOPE, ("README.md",))
