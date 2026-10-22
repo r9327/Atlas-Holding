@@ -199,8 +199,51 @@ class GitWorktrees:
         except GitSafetyError:
             return False
 
+    def _sync_trusted_atlas_context_index(self, root: Path) -> str | None:
+        """Regenerate the canonical index using Git objects, NOT Atlas hooks.
+
+        Only the actual Dof-Atlas repository with its scope map is eligible.
+        No model-controlled path, imported target module, shell or hook can
+        influence which generated file is permitted.
+        """
+        if self.repository.casefold() != 'r9327/dof-atlas':
+            return None
+        from .atlas_context_index import (
+            AtlasContextIndexError, INDEX_PATH, render_atlas_context_index,
+        )
+        scope_map = root / '.ai/context-map.yaml'
+        if not scope_map.exists():
+            # Old/minimal unit-test repositories may not have AI Context yet.
+            return None
+        target = root / INDEX_PATH
+        if (scope_map.is_symlink() or not scope_map.is_file()
+                or target.parent.is_symlink() or target.is_symlink()
+                or not target.is_file()
+                or not target.resolve(strict=True).is_relative_to(root)
+                or target.stat().st_size > 512 * 1024):
+            raise GitSafetyError('Invalid canonical Atlas AI Context metadata')
+        if self._git('ls-files', '--error-unmatch', '--', INDEX_PATH,
+                     cwd=root, timeout=10) != INDEX_PATH:
+            raise GitSafetyError('AI Context index is not tracked')
+        staged_sha = self._git('write-tree', cwd=root, timeout=20)
+        if not _SHA.fullmatch(staged_sha):
+            raise GitSafetyError('Invalid staged Git tree before AI Context sync')
+        try:
+            expected = render_atlas_context_index(
+                self._git('ls-tree', staged_sha, cwd=root, timeout=20))
+        except AtlasContextIndexError as exc:
+            raise GitSafetyError('Invalid Git tree for Atlas context index') from exc
+        with target.open('w', encoding='utf-8', newline='\n') as output:
+            output.write(expected)
+            output.flush()
+            os.fsync(output.fileno())
+        self._git('add', '--', INDEX_PATH, cwd=root, timeout=20)
+        return expected
+
     def commit(self, mission_id: str, paths: tuple[str, ...], message: str) -> str:
         tree = self.inspect(mission_id)
+        if '.ai/context_index.json' in paths:
+            raise GitSafetyError('Generated AI Context index is supervisor-owned')
         if not paths or len(message.strip()) < 5 or len(set(paths)) != len(paths):
             raise GitSafetyError('Explicit unique files and meaningful commit message required')
         if self._git('diff', '--cached', '--name-only', '-z', cwd=tree.path):
@@ -226,6 +269,15 @@ class GitWorktrees:
         actual = {item for item in staged.split('\0') if item}
         if not actual or actual - set(paths):
             raise GitSafetyError('Unexpected staged file (possible pathspec injection)')
+        canonical_index = self._sync_trusted_atlas_context_index(tree.path)
+        owned_paths = set(paths)
+        if canonical_index is not None:
+            owned_paths.add('.ai/context_index.json')
+            staged_after = self._git('diff', '--cached', '--name-only', '-z',
+                                     cwd=tree.path)
+            actual_after = {item for item in staged_after.split('\0') if item}
+            if not actual_after or actual_after - owned_paths:
+                raise GitSafetyError('Unexpected file staged with Atlas context index')
         self._git('diff', '--cached', '--check', cwd=tree.path)
         # --only restricts the commit to the exact chosen paths even if the
         # index were modified after the safety check by another process.
@@ -234,13 +286,18 @@ class GitWorktrees:
         # hooks directory is selected through trusted Git CLI config.
         with tempfile.TemporaryDirectory(prefix='atlas-holding-empty-hooks-') as hooks:
             self._git('-c', f'core.hooksPath={hooks}', '-c', 'commit.gpgsign=false',
-                      'commit', '--only', '-m', message, '--', *paths,
+                      'commit', '--only', '-m', message, '--', *sorted(owned_paths),
                       cwd=tree.path, timeout=120)
         sha = self._git('rev-parse', 'HEAD', cwd=tree.path).lower()
         if not _SHA.fullmatch(sha):
             raise GitSafetyError('Invalid commit')
         committed = {item for item in self._git('diff-tree', '--no-commit-id', '--name-only',
                                                 '-r', '-z', 'HEAD', cwd=tree.path).split('\0') if item}
-        if not committed or committed - set(paths):
+        if not committed or committed - owned_paths:
             raise GitSafetyError('Committed path set was unexpected: quarantine worktree')
+        if canonical_index is not None:
+            observed = self._git('show', 'HEAD:.ai/context_index.json',
+                                 cwd=tree.path, timeout=20)
+            if observed != canonical_index.strip():
+                raise GitSafetyError('Committed Atlas context index does not match staged tree')
         return sha
