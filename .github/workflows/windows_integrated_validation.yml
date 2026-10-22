@@ -45,6 +45,19 @@ jobs:
       - name: Require clean checkout after tests
         shell: bash
         run: 'test -z "$(git status --porcelain --untracked-files=normal)"'
+      - name: Parse no-Python live acceptance launcher on native Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          $path = (Resolve-Path -LiteralPath "scripts/Run-HoldingLiveAcceptance.ps1").Path
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            $path, [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -ne 0) {
+            throw "Native Windows live acceptance PowerShell syntax is invalid"
+          }
+          Write-Output "NONRELEASE_LIVE_ACCEPTANCE_POWERSHELL_AST_PASS"
       - name: Install exact nonrelease Windows bundle packager
         if: runner.os == 'Windows'
         run: |
