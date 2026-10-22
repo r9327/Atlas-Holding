@@ -7,7 +7,6 @@ canonical Atlas repository are never altered, and there is no push or merge.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import os
 from pathlib import Path
 import re
@@ -82,6 +81,37 @@ def run(atlas_root: Path, exact_sha: str) -> None:
     result = runner.run("plan", PATHS, candidate_sha=exact_sha,
                         base_ref="HEAD", structural=False, run_tests=False)
     decision = _verify_local_plan(result, exact_sha)
+    if result.status == "REVIEW":
+        # A separate bounded, still read-only diagnostic invocation. The
+        # first result is authoritative for the local passport; the second
+        # must match SHA, action, scope and REVIEW before its notes are shown.
+        import json
+        from holding.atlas_doctor_evidence import consume_doctor_report
+        command = (
+            str(Path(sys.executable).resolve()), "-B", "-m",
+            "tools.atlas_doctor", "--json", "agent", "plan", *PATHS,
+            "--base-ref", "HEAD", "--max-tests", "4",
+            "--timeout-seconds", "180",
+        )
+        diagnostic = runner._execute(command, timeout=195)
+        checked = consume_doctor_report(
+            diagnostic.stdout, observed_exit_code=diagnostic.returncode,
+            expected_sha=exact_sha, expected_action="plan",
+            expected_base_ref="HEAD", expected_paths=PATHS,
+            expected_dirty=False, expected_dirty_digest="", structural=False,
+        )
+        if checked.status != "REVIEW":
+            raise RuntimeError("Doctor changed decision during diagnostics")
+        parsed = json.loads(diagnostic.stdout)
+        messages = parsed.get("next_actions")
+        if not isinstance(messages, list) or len(messages) > 10:
+            raise RuntimeError("Doctor REVIEW lacks bounded next actions")
+        for index, message in enumerate(messages[:5], 1):
+            if not isinstance(message, str) or len(message) > 1500:
+                raise RuntimeError("Invalid Doctor REVIEW explanation")
+            # The project is public, but never stream raw Doctor JSON or code.
+            line = " ".join(message.split())[:320]
+            print(f"NONRELEASE_DOCTOR_REVIEW_ACTION_{index}: {line}", flush=True)
     if _git(root, "status", "--porcelain", "--untracked-files=all"):
         raise RuntimeError("Doctor plan unexpectedly modified the Atlas checkout")
     if _git(root, "rev-parse", "HEAD") != exact_sha:
