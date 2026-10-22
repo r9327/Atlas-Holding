@@ -35,6 +35,27 @@ class _FaultInjectingOllamaStub(LocalOllamaStub):
     inventory_calls = 0
     failed_chat_calls = 0
     fail_after_chat_calls = 0
+    side_effect_sentinel = ""
+    unsafe_patch_calls = 0
+
+    def _reply(self, obj: dict) -> None:
+        if self.path == "/api/chat" and type(self).mode == "unsafe_patch":
+            # If the independent AST checker ever imports/executes generated
+            # source, this decorator creates a witness file OUTSIDE the
+            # disposable candidate worktree. Merely parsing must not.
+            type(self).unsafe_patch_calls += 1
+            sentinel = repr(type(self).side_effect_sentinel)
+            generated = (
+                "@__import__('pathlib').Path(" + sentinel + ").touch()\\n"
+                "def answer():\\n    return 42\\n"
+            )
+            obj = {"message": {
+                "role": "assistant",
+                "content": json.dumps({
+                    "files": [{"path": "src/feature.py", "content": generated}],
+                    "commit_message": "test: deliberately unsafe decorator"}),
+            }}
+        super()._reply(obj)
 
     def do_GET(self):
         if self.path == "/api/tags":
@@ -103,6 +124,7 @@ def run(kit: Path, *, shell: str = "pwsh") -> None:
     _FaultInjectingOllamaStub.chat_calls = 0
     _FaultInjectingOllamaStub.failed_chat_calls = 0
     _FaultInjectingOllamaStub.inventory_calls = 0
+    _FaultInjectingOllamaStub.unsafe_patch_calls = 0
     _FaultInjectingOllamaStub.mode = "normal"
     service = ThreadingHTTPServer(
         ("127.0.0.1", 11434), _FaultInjectingOllamaStub)
@@ -233,6 +255,28 @@ def run(kit: Path, *, shell: str = "pwsh") -> None:
                 raise RuntimeError("Digest drift produced a false success receipt or session")
             if list(drift_dir.glob("model-*.json")):
                 raise RuntimeError("Digest drift left its temporary model pin")
+            # Adversarial actual frozen-agent path: the generated code
+            # contains an import-time decorator which could write to a file
+            # if any checker incorrectly imports or executes that source.
+            # The acceptance harness must REJECT it via static AST only.
+            _FaultInjectingOllamaStub.mode = "unsafe_patch"
+            marker_file = root / "must-never-execute-candidate.txt"
+            _FaultInjectingOllamaStub.side_effect_sentinel = str(marker_file)
+            previously = _FaultInjectingOllamaStub.chat_calls
+            unsafe_dir = root / "malicious-decorator"
+            malicious = launch(unsafe_dir)
+            if malicious.returncode == 0:
+                raise RuntimeError("Import-time decorator passed static QA")
+            if (_FaultInjectingOllamaStub.chat_calls != previously + 1
+                    or _FaultInjectingOllamaStub.unsafe_patch_calls != 1):
+                raise RuntimeError("Malicious patch was not delivered to native agent")
+            if marker_file.exists():
+                raise RuntimeError("Model-generated source WAS EXECUTED during QA")
+            if (list(unsafe_dir.glob("receipt-*.json"))
+                    or list(unsafe_dir.glob("session-*.json"))):
+                raise RuntimeError("Unsafe generated source created a fake PASS")
+            if list(unsafe_dir.glob("model-*.json")):
+                raise RuntimeError("Unsafe generated source left temporary pin")
     finally:
         service.shutdown()
         service.server_close()
