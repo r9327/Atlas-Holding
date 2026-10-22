@@ -102,7 +102,7 @@ def _seal_doctor_receipt(target: Path, receipt: dict) -> str:
                           separators=(",", ":")) + "\n").encode("utf-8")
     scope = receipt.get("scope")
     if (not isinstance(scope, str) or scope not in SCOPE_PATHS
-            or receipt.get("schema") != 1
+            or type(receipt.get("schema")) is not int or receipt["schema"] != 1
             or receipt.get("kind") != "NONRELEASE_ATLAS_DOCTOR_REAL_PLAN"
             or receipt.get("source_repository") != "r9327/Dof-Atlas"
             or not isinstance(receipt.get("source_sha"), str)
