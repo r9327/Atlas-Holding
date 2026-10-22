@@ -98,6 +98,15 @@ class CandidateEvidenceVerifierTests(unittest.TestCase):
             with self.subTest(length=len(raw)), self.assertRaises(EvidenceError):
                 verify_disposable_candidate(raw, source_sha=BASE)
 
+    def test_incomplete_or_failing_doctor_sequence_is_rejected(self):
+        for position, state in ((0, "REVIEW"), (1, "BLOCKED"),
+                                (1, "FAIL"), (2, "FAIL")):
+            with self.subTest(position=position, state=state):
+                data = copy.deepcopy(good())
+                data["stages"][position]["state"] = state
+                with self.assertRaises(EvidenceError):
+                    verify_disposable_candidate(encoded(data), source_sha=BASE)
+
     def test_extra_unknown_authority_field_is_rejected(self):
         payload = good()
         payload["release_certified"] = True
