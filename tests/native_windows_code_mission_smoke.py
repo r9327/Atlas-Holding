@@ -34,7 +34,7 @@ from holding.executor import AuthorizedGit
 from holding.git_worktree import GitWorktrees
 from holding.process_agent import AgentProgram, LocalProcessAgent
 from holding.roadmap_import import RoadmapImporter
-from holding.state_store import StateStore
+from holding.state_store import StateStore, StoreError
 
 REPOSITORY = "r9327/Dof-Atlas"
 MODEL = "atlas-native-code-smoke:Q4"
@@ -197,6 +197,7 @@ def _mission_receipt(*, live_model: bool, model_name: str,
         "ollama_loaded_model_vram_bytes_observed_high": (
             allocation.loaded_model_vram_bytes_high
             if allocation is not None else None),
+        "mission_state": "QA_PENDING_AWAITING_PRIVILEGED_DOCTOR",
         "doctor_status": "NOT_EXECUTED",
         "github_push_status": "NOT_PERMITTED",
         "release_ready": False,
@@ -356,7 +357,24 @@ def run(agent: Path, *, real_model: Path | None = None,
                     _check_answer(path / "src" / "feature.py")
                     state = store.missions()[0].state
                     if state != "RUNNING":
-                        raise RuntimeError("Local coding spoofed a QA/Doctor verdict")
+                        raise RuntimeError("Coding role must return with RUNNING state")
+                    store.checkpoint(
+                        "native-code-smoke", candidate_sha, lease_owner=lease.owner)
+                    if store.missions()[0].state != "QA_PENDING":
+                        raise RuntimeError("Candidate was not durably queued for QA")
+                    # Only independently authenticated Doctor/CI evidence can
+                    # advance this state, never a string supplied by an LLM.
+                    try:
+                        store.register_test_verdict(
+                            "native-code-smoke", candidate_sha=candidate_sha,
+                            evidence_sha="e" * 64, verdict="PASS",
+                            runner="untrusted-local-script", artifact_id="fake")
+                    except StoreError:
+                        pass
+                    else:
+                        raise RuntimeError("Untrusted local Doctor verdict was accepted")
+                    if store.missions()[0].state != "QA_PENDING":
+                        raise RuntimeError("Local test improperly promoted the mission")
                     if actual:
                         print("LIVE_MODEL_LOCAL_COMMIT_STATIC_ACCEPTANCE_PASS")
                     else:
