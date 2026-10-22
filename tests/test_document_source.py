@@ -80,7 +80,7 @@ class DocumentSourceTests(unittest.TestCase):
         self.assertEqual(result.bytes_received, len(JSON_BODY))
         self.assertEqual(result.batch.records[0].record_id, "42")
         self.assertEqual(json.loads(result.batch.records[0].canonical_json)["kind"], "quest")
-        self.assertTrue(result.batch.source.startswith(self.origin))
+        self.assertEqual(result.batch.source, "local:" + self.origin + "/json")
         self.assertEqual(DocumentHandler.calls, 1)
 
     def test_csv_over_real_http_preserves_leading_zeroes(self):
