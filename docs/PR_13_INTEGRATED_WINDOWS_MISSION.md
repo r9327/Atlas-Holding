@@ -220,3 +220,20 @@ CI Windows+Ubuntu PASS (#39730074863), artefact GitHub Actions
 `NONRELEASE-Windows-Ollama-Acceptance-39730074863` (environ 19,9 Mo,
 expiration le 25/10/2026). Les corrections postérieures doivent être
 recertifiées sur leur **propre SHA**.
+
+
+## 22 octobre — preuves négatives et intégrité du kit complet
+
+Le kit nonrelease épingle désormais dans son manifeste **les quatre fichiers**
+utilisateur (2 EXE, script PowerShell, README). Le script refuse une empreinte
+altérée avant la création de preuves et avant toute requête réseau vers
+l'API Ollama locale. Le smoke Windows exécute réellement le script pour
+chacun des quatre refus, et vérifie le nombre de requêtes au serveur factice.
+La CI exerce aussi le cas HTTP 503 lors de génération, le remplacement du
+digest après sélection du modèle, le nettoyage des pins et l'absence de
+reçu sur échec. La publication affiche enfin le digest SHA-256 de l'archive
+GitHub Actions pour une comparaison indépendante avant exécution.
+
+**Ce sont des contrôles de distribution nonrelease et de comportements sur
+API simulée** : ils ne prouvent ni la qualité du vrai modèle ni une signature
+Authenticode.
