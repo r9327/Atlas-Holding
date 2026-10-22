@@ -201,8 +201,13 @@ jobs:
         shell: pwsh
         run: |
           $digest = '${{ steps.nonrelease_kit_upload.outputs.artifact-digest }}'
-          if ($digest -cnotmatch '^sha256:[0-9a-f]{64}$') {
+          # upload-artifact@v4 emits its digest output as 64 hex chars;
+          # the GitHub REST artifact API presents the same value with a
+          # sha256: prefix. Normalize only for human-facing evidence.
+          if ($digest -cnotmatch '^[0-9a-f]{64}
+          Write-Output "NONRELEASE_ACCEPTANCE_SOURCE_SHA=${{ github.event.pull_request.head.sha }}"
+) {
             throw 'No checked artifact archive SHA256 emitted by GitHub upload'
           }
-          Write-Output "NONRELEASE_ACCEPTANCE_ARTIFACT_DIGEST=$digest"
+          Write-Output "NONRELEASE_ACCEPTANCE_ARTIFACT_DIGEST=sha256:$digest"
           Write-Output "NONRELEASE_ACCEPTANCE_SOURCE_SHA=${{ github.event.pull_request.head.sha }}"
