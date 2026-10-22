@@ -76,11 +76,11 @@ def run(kit: Path) -> None:
         raise RuntimeError("Kit falsely advertised a release")
     script = kit / "Run-HoldingLiveAcceptance.ps1"
 
-    def launch(evidence: Path) -> subprocess.CompletedProcess:
+    def launch(evidence: Path, *, trials: int = 1) -> subprocess.CompletedProcess:
         return subprocess.run(
             [ps, "-NoProfile", "-NonInteractive", "-File", str(script),
              "-Model", MODEL, "-NumCtx", "4096", "-TimeoutSeconds", "30",
-             "-EvidenceDirectory", str(evidence)],
+             "-Trials", str(trials), "-EvidenceDirectory", str(evidence)],
             shell=False, stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             timeout=150, check=False,
@@ -98,25 +98,41 @@ def run(kit: Path) -> None:
         with tempfile.TemporaryDirectory(prefix="atlas-frozen-live-kit-") as tmp:
             root = Path(tmp).resolve()
             evidence = root / "evidence"
-            result = launch(evidence)
+            result = launch(evidence, trials=3)
             if result.returncode:
                 raise RuntimeError(
                     "Real PowerShell/frozen kit failed against stub protocol: " +
                     result.stderr.decode("utf-8", errors="replace")[-800:])
-            if _FaultInjectingOllamaStub.chat_calls != 1:
-                raise RuntimeError("Kit did not perform exactly one Ollama stub chat")
-            proofs = list(evidence.glob("receipt-*.json"))
-            if len(proofs) != 1 or list(evidence.glob("model-*.json")):
-                raise RuntimeError("Live kit did not seal receipt or clean model pin")
-            receipt = json.loads(proofs[0].read_text(encoding="utf-8"))
-            if (receipt.get("source") != "LIVE_PINNED_OLLAMA"
-                    or receipt.get("model") != MODEL
-                    or receipt.get("model_digest") != DIGEST
-                    or receipt.get("doctor_status") != "NOT_EXECUTED"
-                    or receipt.get("mission_state") !=
-                    "QA_PENDING_AWAITING_PRIVILEGED_DOCTOR"
-                    or receipt.get("release_ready") is not False):
-                raise RuntimeError("PowerShell kit receipt misrepresented mission")
+            if _FaultInjectingOllamaStub.chat_calls != 3:
+                raise RuntimeError("Three independent mock coding trials were not executed")
+            proofs = sorted(evidence.glob("receipt-*.json"))
+            sessions = list(evidence.glob("session-*.json"))
+            if len(proofs) != 3 or len(sessions) != 1 or list(evidence.glob("model-*.json")):
+                raise RuntimeError("Native kit did not seal three receipts plus one session")
+            import hashlib
+            session = json.loads(sessions[0].read_text(encoding="utf-8"))
+            if (session.get("kind") != "NONRELEASE_REPEATED_LOCAL_ACCEPTANCE"
+                    or session.get("trials_requested") != 3
+                    or session.get("trials_passed") != 3
+                    or session.get("release_ready") is not False
+                    or session.get("model_quality_benchmark") != "NOT_CERTIFIED"
+                    or session.get("independent_doctor_qa") != "NOT_EXECUTED"
+                    or len(session.get("results", [])) != 3):
+                raise RuntimeError("Multiple trials falsely claimed quality certification")
+            receipt_digests = {
+                hashlib.sha256(path.read_bytes()).hexdigest() for path in proofs}
+            if {entry["receipt_sha256"] for entry in session["results"]} != receipt_digests:
+                raise RuntimeError("Session digest does not cover all three receipts")
+            for path in proofs:
+                receipt = json.loads(path.read_text(encoding="utf-8"))
+                if (receipt.get("source") != "LIVE_PINNED_OLLAMA"
+                        or receipt.get("model") != MODEL
+                        or receipt.get("model_digest") != DIGEST
+                        or receipt.get("doctor_status") != "NOT_EXECUTED"
+                        or receipt.get("mission_state") !=
+                        "QA_PENDING_AWAITING_PRIVILEGED_DOCTOR"
+                        or receipt.get("release_ready") is not False):
+                    raise RuntimeError("PowerShell kit receipt misrepresented mission")
             # This is STILL a deterministic mock despite the CLI selecting
             # the "live" HTTP path. Never label the CI result as real inference.
             source = kit / "nonrelease-manifest.json"
@@ -158,6 +174,8 @@ def run(kit: Path) -> None:
                 raise RuntimeError("Ollama HTTP 503 falsely passed acceptance")
             if _FaultInjectingOllamaStub.failed_chat_calls != 1:
                 raise RuntimeError("Model failure did not reach real agent")
+            if list(failed_dir.glob("session-*.json")):
+                raise RuntimeError("Failed model emitted a false session PASS")
             if list(failed_dir.glob("receipt-*.json")):
                 raise RuntimeError("Failed model generation emitted a success receipt")
             if list(failed_dir.glob("model-*.json")):
@@ -176,8 +194,8 @@ def run(kit: Path) -> None:
                 raise RuntimeError("Native runner did not independently recheck digest")
             if _FaultInjectingOllamaStub.chat_calls != previous_chats:
                 raise RuntimeError("Digest drift reached model generation")
-            if list(drift_dir.glob("receipt-*.json")):
-                raise RuntimeError("Digest drift produced a false success receipt")
+            if list(drift_dir.glob("receipt-*.json")) or list(drift_dir.glob("session-*.json")):
+                raise RuntimeError("Digest drift produced a false success receipt or session")
             if list(drift_dir.glob("model-*.json")):
                 raise RuntimeError("Digest drift left its temporary model pin")
     finally:
