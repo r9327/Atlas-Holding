@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from holding.project_profile import ProjectProfile
-from holding.project_registry import ProjectRegistry, ProjectRegistryError
+from holding.project_registry import ProjectRegistry, ProjectRegistryError, _registry_lock
 
 ATLAS = {
     "schema": "project-profile/v1",
@@ -113,6 +113,26 @@ class ProjectRegistryTests(unittest.TestCase):
         self.registry.select("python-simple", expected_digest=entry.digest)
         self.registry.clear_selection()
         self.assertIsNone(ProjectRegistry(self.root).selected())
+
+    def test_second_process_style_writer_is_refused_while_lock_held(self):
+        self.register(ATLAS)
+        with _registry_lock(self.root):
+            with self.assertRaisesRegex(ProjectRegistryError, "another registry writer"):
+                self.register(PYTHON)
+        self.assertEqual([e.profile.name for e in self.registry.list_entries()], ["dofus-atlas"])
+        self.register(PYTHON)
+        self.assertEqual(len(self.registry.list_entries()), 2)
+
+    def test_unsafe_registry_lock_is_refused(self):
+        lock = self.root / ".project-registry.lock"
+        if lock.exists():
+            lock.unlink()
+        try:
+            lock.symlink_to(self.root / "other")
+        except (OSError, NotImplementedError):
+            self.skipTest("Windows runner does not permit symlink creation")
+        with self.assertRaisesRegex(ProjectRegistryError, "symlink"):
+            self.register(ATLAS)
 
     def test_never_run_commands_or_git(self):
         profile = self.register(ATLAS)
