@@ -79,3 +79,26 @@ measured**. The separately running Ollama server RAM/VRAM remain `null`
 nonrelease; no existing receipt can be silently overwritten. It contains
 no generated code or credentials. The CI checks this schema for the stub
 rather than mislabeling it as real model proof.
+
+
+## 22 octobre — observation facultative du vrai modèle local
+
+En mode \`--model-json\` uniquement, le banc de mission enregistre les relevés
+\`GET http://127.0.0.1:11434/api/ps\` du **modèle demandé par son nom exact**
+au cours de la génération. L'interrogation est en lecture seule, sans proxy,
+avec timeout, plafond de taille de réponse, intervalle borné et thread arrêté
+à la fin. Le rapport nonrelease comprend :
+
+- \`ollama_allocation_observations\` : nombre de relevés où ce modèle était chargé ;
+- \`ollama_allocation_failed_polls\` : erreurs ou timeouts de relevé ;
+- \`ollama_loaded_model_bytes_observed_high\` : maximum des tailles chargées observées ;
+- \`ollama_loaded_model_vram_bytes_observed_high\` : maximum des tailles GPU déclarées observées.
+
+**Ces champs ne mesurent ni le maximum de RSS du serveur Ollama ni un pic
+réel de mémoire GPU.** Les champs \`ollama_ram_peak_bytes\` et
+\`ollama_vram_peak_bytes\` restent donc \`null\`, et zéro relevé veut dire
+valeur inconnue, jamais zéro consommation. Ces valeurs ne sont pas
+attestées contre un serveur local éventuellement contrefait : le digest de
+\`/api/tags\` et \`/api/ps\` provient du même service. Une expérimentation
+qualité réelle doit encore valider plusieurs tâches, les échecs, les ressources
+par processus et la promotion par le Doctor/CI du vrai dépôt Atlas.
