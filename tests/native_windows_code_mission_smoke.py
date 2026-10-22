@@ -35,7 +35,7 @@ from holding.git_worktree import GitWorktrees
 from holding.process_agent import AgentProgram, LocalProcessAgent
 from holding.roadmap_import import RoadmapImporter
 from holding.state_store import StateStore, StoreError
-from holding.qa_scoped import ScopedDoctorRunner
+from holding.qa_scoped import ScopedDoctorRunner, ScopedQaError
 
 REPOSITORY = "r9327/Dof-Atlas"
 MODEL = "atlas-native-code-smoke:Q4"
@@ -400,6 +400,31 @@ def run(agent: Path, *, real_model: Path | None = None,
                         raise RuntimeError("Code-only grant executed Doctor QA")
                     if store.missions()[0].state != "QA_PENDING":
                         raise RuntimeError("Denied QA modified the mission state")
+                    # In this self-contained fixture, even a separate trusted
+                    # local_test grant cannot invent the genuine Atlas Doctor
+                    # scripts. The preflight must refuse missing Doctor, not
+                    # stamp the model's AST-only check as official QA.
+                    store.grant_for_onboarding(StandingGrant(
+                        REPOSITORY, frozenset({"local_test"}),
+                        int(time.time()) + 600))
+                    try:
+                        scoped.run_pending(store, "native-code-smoke")
+                    except ScopedQaError as exc:
+                        if "preflight" not in str(exc):
+                            raise
+                    else:
+                        raise RuntimeError("Missing Doctor accepted fabricated QA")
+                    if store.missions()[0].state != "QA_PENDING":
+                        raise RuntimeError("Missing Doctor promoted a mission")
+                    if store.db.execute(
+                        "SELECT count(*) FROM sqlite_master WHERE type='table' "
+                        "AND name='scoped_qa_advisories'"
+                    ).fetchone()[0]:
+                        prior = store.db.execute(
+                            "SELECT count(*) FROM scoped_qa_advisories"
+                        ).fetchone()[0]
+                        if prior:
+                            raise RuntimeError("Missing Doctor forged QA advisory")
                     if actual:
                         print("LIVE_MODEL_LOCAL_COMMIT_STATIC_ACCEPTANCE_PASS")
                     else:
