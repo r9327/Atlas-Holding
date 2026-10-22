@@ -1,0 +1,103 @@
+name: Nonrelease real Atlas Doctor Windows read-only
+
+on:
+  pull_request:
+    branches: [experiment/native-real-ollama-20261022]
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  real-atlas-doctor-plan:
+    if: >-
+      github.event.label.name == 'ci:real-atlas-doctor' &&
+      github.head_ref == 'experiment/atlas-doctor-real-readonly-20261022' &&
+      github.event.pull_request.head.repo.full_name == 'r9327/Atlas-Holding'
+    runs-on: windows-2025
+    timeout-minutes: 14
+    steps:
+      - name: Checkout Holding exact experimental SHA without credentials
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Checkout public Atlas exact source SHA without credentials
+        uses: actions/checkout@v7
+        with:
+          repository: r9327/Dof-Atlas
+          ref: 54d45478c88cd733d2127789c1bef7caa599b54d
+          path: atlas-target
+          persist-credentials: false
+      - name: Python 3.13
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Run strict portable local passport identity and downgrade tests
+        shell: pwsh
+        run: |
+          python -B -X utf8 -m unittest tests.test_native_real_atlas_doctor_probe -v
+          if ($LASTEXITCODE -ne 0) { throw "Local Doctor evidence contracts failed" }
+      - name: Execute actual Dof-Atlas Doctor plan on exact SHA read-only
+        shell: pwsh
+        timeout-minutes: 9
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+          PYTHONNOUSERSITE: "1"
+        run: |
+          $atlas = Join-Path $env:GITHUB_WORKSPACE "atlas-target"
+          python -B -X utf8 -m tests.native_real_atlas_doctor_probe `
+            --atlas-root "$atlas" `
+            --expected-atlas-sha "54d45478c88cd733d2127789c1bef7caa599b54d"
+          if ($LASTEXITCODE -ne 0) { throw "Real Dof-Atlas Doctor contract is not verified" }
+          python -B -X utf8 -m tests.native_real_atlas_doctor_probe `
+            --atlas-root "$atlas" `
+            --expected-atlas-sha "54d45478c88cd733d2127789c1bef7caa599b54d" `
+            --scope "owned_home"
+          if ($LASTEXITCODE -ne 0) { throw "Owned home scope Doctor contract is not verified" }
+      - name: Refuse mutations to either checkout
+        shell: pwsh
+        run: |
+          $changes = git status --porcelain --untracked-files=normal -- ':!atlas-target'
+          if ($changes) { throw "Holding test mutated checkout: $changes" }
+          $atlas = Join-Path $env:GITHUB_WORKSPACE "atlas-target"
+          $atlasChanges = git -C "$atlas" status --porcelain --untracked-files=all
+          if ($atlasChanges) { throw "Doctor mutated real Atlas source checkout: $atlasChanges" }
+      - name: Independently validate two sealed nonrelease Doctor receipts
+        shell: pwsh
+        run: |
+          $results = @(Get-ChildItem -LiteralPath $env:RUNNER_TEMP -File -Filter "atlas-doctor-*-$env:GITHUB_RUN_ID.json")
+          if ($results.Count -ne 2) { throw "Doctor evidence requires exactly two paths" }
+          $scopes = @{}
+          foreach ($result in $results) {
+            $json = Get-Content -LiteralPath $result.FullName -Raw | ConvertFrom-Json
+            if ($json.schema -ne 1 -or $json.kind -ne 'NONRELEASE_ATLAS_DOCTOR_REAL_PLAN' -or
+                $json.source_repository -ne 'r9327/Dof-Atlas' -or
+                $json.source_sha -ne '54d45478c88cd733d2127789c1bef7caa599b54d' -or
+                $json.doctor_tests_executed -ne $false -or
+                $json.doctor_full_certified -ne $false -or
+                $json.github_push_permitted -ne $false -or
+                $json.release_ready -ne $false -or
+                $json.doctor_report_sha256 -cnotmatch '^[0-9a-f]{64}$') {
+              throw "One Doctor report made an unverified certification claim"
+            }
+            if ($scopes.ContainsKey($json.scope)) { throw "Duplicated Doctor scope" }
+            $scopes[$json.scope] = $json
+          }
+          if (!$scopes.ContainsKey('unowned') -or
+              $scopes['unowned'].path -ne 'app/constants.py' -or
+              $scopes['unowned'].status -ne 'REVIEW' -or
+              !$scopes.ContainsKey('owned_home') -or
+              $scopes['owned_home'].path -ne 'app/pages/home_page.py' -or
+              $scopes['owned_home'].status -notin @('REVIEW','PLANNED_LOCAL')) {
+            throw "Doctor ownership scope comparison was not certified as advisory-only"
+          }
+          Write-Output "NONRELEASE_TWO_REAL_ATLAS_DOCTOR_SCOPE_RECEIPTS_PASS"
+      - name: Upload nonrelease Doctor exact-SHA advisory receipts
+        uses: actions/upload-artifact@v4
+        with:
+          name: NONRELEASE-Real-Atlas-Doctor-${{ github.run_id }}
+          path: ${{ runner.temp }}/atlas-doctor-*-${{ github.run_id }}.json
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
