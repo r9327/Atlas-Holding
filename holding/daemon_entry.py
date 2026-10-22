@@ -351,14 +351,43 @@ def _native_ipc_smoke(input_stream=None, *, output_stream=None) -> int:
             return 0 if server._server.valid_read_replied.wait(timeout=18) else 2
 
 
+def _verify_installed_config(filename: Path) -> int:
+    """Validate the actual pinned installation without starting a daemon.
+
+    This checks the same engine.json loader and canonical Git safety gate as
+    normal startup, but never starts a GUI, adapter, Ollama inference, broker,
+    database or mission. It is *not* a runtime health/certification proof.
+    """
+    from .git_worktree import GitSafetyError
+    try:
+        installation = Installation.load(filename)
+        GitWorktrees(installation.canonical_root, installation.workspace,
+                     installation.repository).inspect_canonical()
+    except (BootstrapError, GitSafetyError, OSError, ValueError):
+        print(json.dumps({'installation': 'REJECTED'}))
+        return 2
+    print(json.dumps({'installation': 'CONFIG_AND_GIT_VERIFIED',
+                      'ollama_inference': 'NOT_TESTED',
+                      'doctor_qa': 'NOT_EXECUTED',
+                      'github_push': 'NOT_PERMITTED'},
+                     sort_keys=True))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog='atlas-holding-daemon')
     parser.add_argument('--config',type=Path)
     parser.add_argument('--self-test',action='store_true')
     parser.add_argument('--native-ipc-smoke',action='store_true')
+    parser.add_argument('--verify-installation', action='store_true')
     args=parser.parse_args(argv)
-    if args.self_test and args.native_ipc_smoke:
+    if sum((args.self_test, args.native_ipc_smoke,
+            args.verify_installation)) > 1:
         return 2
+    if args.verify_installation:
+        if args.config is None:
+            return 2
+        return _verify_installed_config(args.config)
     if args.native_ipc_smoke:
         if args.config is not None:
             return 2
