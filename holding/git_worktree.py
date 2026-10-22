@@ -211,12 +211,14 @@ class GitWorktrees:
         from .atlas_context_index import (
             AtlasContextIndexError, INDEX_PATH, render_atlas_context_index,
         )
-        scope_map = root / '.ai/context-map.yaml'
-        if not scope_map.exists():
-            # Old/minimal unit-test repositories may not have AI Context yet.
+        source_map = self.root / '.ai/context-map.yaml'
+        if not source_map.exists():
+            # Older/test repositories without AI Context need no auto-sync.
             return None
+        scope_map = root / '.ai/context-map.yaml'
         target = root / INDEX_PATH
-        if (scope_map.is_symlink() or not scope_map.is_file()
+        if (source_map.is_symlink() or not source_map.is_file()
+                or scope_map.is_symlink() or not scope_map.is_file()
                 or target.parent.is_symlink() or target.is_symlink()
                 or not target.is_file()
                 or not target.resolve(strict=True).is_relative_to(root)
