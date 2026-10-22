@@ -90,6 +90,8 @@ class NativeMissionReceiptTests(unittest.TestCase):
     def test_stub_receipt_never_asserts_live_model_or_doctor_verdict(self):
         proof = self.receipt()
         self.assertEqual(proof["source"], "DETERMINISTIC_CI_STUB")
+        self.assertEqual(proof["mission_state"],
+                         "QA_PENDING_AWAITING_PRIVILEGED_DOCTOR")
         self.assertEqual(proof["doctor_status"], "NOT_EXECUTED")
         self.assertEqual(proof["github_push_status"], "NOT_PERMITTED")
         self.assertIs(proof["release_ready"], False)
@@ -161,6 +163,16 @@ class NativeMissionReceiptTests(unittest.TestCase):
                 _publish_receipt(Path("relative.json"), proof)
             with self.assertRaises(ValueError):
                 _publish_receipt(path.parent / "receipt.txt", proof)
+            for k, value in (
+                ("doctor_status", "PASS"),
+                ("mission_state", "DONE"),
+                ("github_push_status", "PUSHED"),
+                ("release_ready", True),
+                ("source", "UNTRUSTED"),
+            ):
+                altered = dict(proof, **{k: value})
+                with self.subTest(field=k), self.assertRaises(ValueError):
+                    _publish_receipt(path.parent / f"forged-{k}.json", altered)
 
 
 if __name__ == "__main__":
