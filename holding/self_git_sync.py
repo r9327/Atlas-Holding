@@ -127,8 +127,8 @@ class HoldingGitSync:
         dirty = bool(self._git("status", "--porcelain=v1", "--untracked-files=normal"))
         return Status(REPOSITORY, branch, head, dirty)
 
-    def _observe_remote(self, branch: str) -> str | None:
-        # Fetch only the current branch; never switch branches or update main.
+    def _remote_tip(self, branch: str) -> str | None:
+        """Read one exact remote branch tip without touching worktree or refs."""
         lines = self._git("ls-remote", "--heads", "origin", f"refs/heads/{branch}", timeout=90)
         if not lines:
             return None
@@ -138,11 +138,20 @@ class HoldingGitSync:
         pieces = parts[0].split("\t")
         if len(pieces) != 2 or pieces[1] != f"refs/heads/{branch}" or not _SHA.fullmatch(pieces[0]):
             raise SyncBlocked("Unexpected remote ref")
-        expected = pieces[0]
-        # FETCH_HEAD is refreshed without updating any local checkout/branch.
+        return pieces[0]
+
+    def _observe_remote(self, branch: str, *, local_head: str) -> str | None:
+        """Fast path: 1 GitHub ref probe, ZERO download when already current.
+
+        Only fetch a changed tip for a genuine Git ancestry comparison.
+        Re-check its exact SHA after fetch; never trust a racing remote.
+        """
+        tip = self._remote_tip(branch)
+        if tip is None or tip == local_head:
+            return tip
         self._git("fetch", "--no-tags", "origin", f"refs/heads/{branch}", timeout=180)
         fetched = self._git("rev-parse", "--verify", "FETCH_HEAD^{commit}")
-        if fetched != expected:
+        if fetched != tip:
             raise SyncBlocked("Remote changed during fetch; retry after inspection")
         return fetched
 
@@ -150,6 +159,9 @@ class HoldingGitSync:
         if remote_head is None:
             return Status(current.repository, current.branch, current.head, current.dirty,
                           remote_head=None, ahead=None, behind=None, remote_checked=True)
+        if remote_head == current.head:
+            return Status(current.repository, current.branch, current.head, current.dirty,
+                          remote_head=remote_head, ahead=0, behind=0, remote_checked=True)
         counts = self._git("rev-list", "--left-right", "--count", "HEAD...FETCH_HEAD")
         try:
             ahead, behind = (int(n) for n in counts.split())
@@ -165,7 +177,7 @@ class HoldingGitSync:
         local = self.status()
         if local.dirty:
             raise SyncBlocked("Working tree has changes; commit or set them aside first")
-        remote = self._observe_remote(local.branch)
+        remote = self._observe_remote(local.branch, local_head=local.head)
         before = self._status_remote(local, remote)
         if before.ahead and before.behind:
             raise SyncBlocked("Local and remote histories diverged; resolve manually (no reset/force)")
@@ -198,7 +210,14 @@ class HoldingGitSync:
 
         # A second remote observation is mandatory after every attempted mutation.
         after_local = self.status()
-        after = self._status_remote(after_local, self._observe_remote(after_local.branch))
+        # Post-condition requires only the current remote SHA. A second Git
+        # fetch would waste bandwidth and cannot strengthen exact-tip equality.
+        remote_after = self._remote_tip(after_local.branch)
+        after = Status(after_local.repository, after_local.branch, after_local.head,
+                       after_local.dirty, remote_head=remote_after,
+                       ahead=0 if remote_after == after_local.head else None,
+                       behind=0 if remote_after == after_local.head else None,
+                       remote_checked=True)
         if after.dirty or after.remote_head != after.head or after.ahead != 0 or after.behind != 0:
             raise SyncBlocked("Post-sync remote observation is inconsistent; inspect before retrying")
         return SyncResult(before, action, after)
