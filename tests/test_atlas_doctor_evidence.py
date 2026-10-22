@@ -146,6 +146,33 @@ class DoctorEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(DoctorEvidenceError, "certification status"):
             consume(payload)
 
+    def test_real_doctor_boolean_false_means_no_executed_modules(self):
+        payload = report(action="check", status="REVIEW")
+        payload["execution"]["tests_executed"] = False
+        passport = consume(payload)
+        self.assertEqual(passport.status, "REVIEW")
+        self.assertEqual(passport.tests_executed, ())
+        self.assertFalse(passport.certified_full)
+
+    def test_boolean_true_is_never_module_list_or_qa_pass(self):
+        for state in ("REVIEW", "PASS"):
+            # An empty LIST is legitimate when REVIEW ran no tests; it is
+            # never sufficient for a Doctor PASS. A boolean True is neither.
+            invalid = (True, 1, False, []) if state == "PASS" else (True, 1, None)
+            for raw in invalid:
+                with self.subTest(status=state, evidence=raw):
+                    payload = report(action="check", status=state)
+                    payload["execution"]["tests_executed"] = raw
+                    with self.assertRaises(DoctorEvidenceError):
+                        consume(payload)
+
+    def test_explicit_named_tests_still_required_for_scoped_pass(self):
+        payload = report(action="check", status="PASS")
+        payload["execution"]["tests_executed"] = ["tests.test_readme"]
+        result = consume(payload)
+        self.assertEqual(result.status, "CHECKED_LOCAL")
+        self.assertEqual(result.tests_executed, ("tests.test_readme",))
+
     def test_report_size_and_json_are_bounded(self):
         with self.assertRaises(DoctorEvidenceError):
             consume_doctor_report(
