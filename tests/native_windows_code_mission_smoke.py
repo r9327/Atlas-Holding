@@ -35,6 +35,7 @@ from holding.git_worktree import GitWorktrees
 from holding.process_agent import AgentProgram, LocalProcessAgent
 from holding.roadmap_import import RoadmapImporter
 from holding.state_store import StateStore, StoreError
+from holding.qa_scoped import ScopedDoctorRunner
 
 REPOSITORY = "r9327/Dof-Atlas"
 MODEL = "atlas-native-code-smoke:Q4"
@@ -386,6 +387,19 @@ def run(agent: Path, *, real_model: Path | None = None,
                         raise RuntimeError("Untrusted local Doctor verdict was accepted")
                     if store.missions()[0].state != "QA_PENDING":
                         raise RuntimeError("Local test improperly promoted the mission")
+                    # The coding grant does not grant permission to execute
+                    # Doctor. A separate scoped-QA role requires local_test.
+                    scoped = ScopedDoctorRunner(
+                        git, Path(sys.executable).resolve())
+                    try:
+                        scoped.run_pending(store, "native-code-smoke")
+                    except StoreError as exc:
+                        if "local_test" not in str(exc):
+                            raise
+                    else:
+                        raise RuntimeError("Code-only grant executed Doctor QA")
+                    if store.missions()[0].state != "QA_PENDING":
+                        raise RuntimeError("Denied QA modified the mission state")
                     if actual:
                         print("LIVE_MODEL_LOCAL_COMMIT_STATIC_ACCEPTANCE_PASS")
                     else:
