@@ -48,3 +48,18 @@ publication Windows et non une permission de passer au travers des gates
 du vrai Atlas. Une prochaine verification doit confronter le resultat
 aux sources exactes de `tools.ai_context check` sur un clone jetable et
 un vrai check Doctor, avant toute integration sur la branche principale.
+
+## Acceptation sur les vraies sources Dof-Atlas
+
+Un second job Windows checkout la source publique Dof-Atlas **au SHA exact**
+`54d45478c88cd733d2127789c1bef7caa599b54d` et une copie de Holding
+sans credentials persistants. Holding cree un vrai Git worktree local,
+modifie uniquement le README de test, calcule l'index depuis son Git tree,
+puis produit le commit candidat avec uniquement les deux chemins autorises.
+
+La derniere preuve vient **de l'outil d'Atlas lui-meme** :
+`python -B -m tools.ai_context check` doit retourner
+`AI context index: PASS` sur le vrai commit jetable. Le SHA d'origine,
+la proprete des checkouts et l'absence de push sont ensuite re-verifies.
+Le test ne demarre ni IA ni Doctor FULL. Un succes reste une preuve de
+compatibilite de l'index, pas une certification applicative.
