@@ -25,6 +25,33 @@ from tests.native_windows_code_mission_smoke import (
 )
 
 
+class _FaultInjectingOllamaStub(LocalOllamaStub):
+    """Deterministic failures exercised by the ACTUAL distributed PowerShell.
+
+    The CI server is fake in every mode. Even a "LIVE" receipt only proves
+    the pinned agent/launcher protocol, never genuine model inference.
+    """
+    mode = "normal"
+    inventory_calls = 0
+    failed_chat_calls = 0
+
+    def do_GET(self):
+        if self.path == "/api/tags" and type(self).mode == "digest_drift":
+            type(self).inventory_calls += 1
+            digest = (DIGEST if type(self).inventory_calls == 1
+                      else "b" * 64)
+            self._reply({"models": [{"name": MODEL, "digest": digest}]})
+            return
+        super().do_GET()
+
+    def do_POST(self):
+        if self.path == "/api/chat" and type(self).mode == "http_error":
+            type(self).failed_chat_calls += 1
+            self.send_error(503)
+            return
+        super().do_POST()
+
+
 def run(kit: Path) -> None:
     import os
     if os.name != "nt":
@@ -58,8 +85,12 @@ def run(kit: Path) -> None:
             timeout=150, check=False,
         )
 
-    LocalOllamaStub.chat_calls = 0
-    service = ThreadingHTTPServer(("127.0.0.1", 11434), LocalOllamaStub)
+    _FaultInjectingOllamaStub.chat_calls = 0
+    _FaultInjectingOllamaStub.failed_chat_calls = 0
+    _FaultInjectingOllamaStub.inventory_calls = 0
+    _FaultInjectingOllamaStub.mode = "normal"
+    service = ThreadingHTTPServer(
+        ("127.0.0.1", 11434), _FaultInjectingOllamaStub)
     thread = threading.Thread(target=service.serve_forever, daemon=True)
     thread.start()
     try:
@@ -71,7 +102,7 @@ def run(kit: Path) -> None:
                 raise RuntimeError(
                     "Real PowerShell/frozen kit failed against stub protocol: " +
                     result.stderr.decode("utf-8", errors="replace")[-800:])
-            if LocalOllamaStub.chat_calls != 1:
+            if _FaultInjectingOllamaStub.chat_calls != 1:
                 raise RuntimeError("Kit did not perform exactly one Ollama stub chat")
             proofs = list(evidence.glob("receipt-*.json"))
             if len(proofs) != 1 or list(evidence.glob("model-*.json")):
@@ -98,17 +129,49 @@ def run(kit: Path) -> None:
                 blocked = launch(root / "must-not-be-created")
                 if blocked.returncode == 0:
                     raise RuntimeError("Kit accepted a modified SHA256 pin")
-                if LocalOllamaStub.chat_calls != 1:
+                if _FaultInjectingOllamaStub.chat_calls != 1:
                     raise RuntimeError("Tampered kit reached Ollama")
                 if (root / "must-not-be-created").exists():
                     raise RuntimeError("Tampered kit created proof directories")
             finally:
                 source.write_bytes(previous)
+
+            # A genuine model can be unavailable mid-generation. Refuse to
+            # create a receipt and remove the temporary model pin on failure.
+            _FaultInjectingOllamaStub.mode = "http_error"
+            failed_dir = root / "ollama-unavailable"
+            unavailable = launch(failed_dir)
+            if unavailable.returncode == 0:
+                raise RuntimeError("Ollama HTTP 503 falsely passed acceptance")
+            if _FaultInjectingOllamaStub.failed_chat_calls != 1:
+                raise RuntimeError("Model failure did not reach real agent")
+            if list(failed_dir.glob("receipt-*.json")):
+                raise RuntimeError("Failed model generation emitted a success receipt")
+            if list(failed_dir.glob("model-*.json")):
+                raise RuntimeError("Failed model generation left its pin on disk")
+
+            # A model tag can change after the launcher selected its digest
+            # but before the real native adapter checks /api/tags again.
+            _FaultInjectingOllamaStub.mode = "digest_drift"
+            _FaultInjectingOllamaStub.inventory_calls = 0
+            previous_chats = _FaultInjectingOllamaStub.chat_calls
+            drift_dir = root / "model-digest-drift"
+            drift = launch(drift_dir)
+            if drift.returncode == 0:
+                raise RuntimeError("Digest changed in flight but mission passed")
+            if _FaultInjectingOllamaStub.inventory_calls < 2:
+                raise RuntimeError("Native runner did not independently recheck digest")
+            if _FaultInjectingOllamaStub.chat_calls != previous_chats:
+                raise RuntimeError("Digest drift reached model generation")
+            if list(drift_dir.glob("receipt-*.json")):
+                raise RuntimeError("Digest drift produced a false success receipt")
+            if list(drift_dir.glob("model-*.json")):
+                raise RuntimeError("Digest drift left its temporary model pin")
     finally:
         service.shutdown()
         service.server_close()
         thread.join(timeout=3)
-    print("NONRELEASE_POWERSHELL_FROZEN_AGENT_STUB_AND_TAMPER_PASS")
+    print("NONRELEASE_POWERSHELL_STUB_TAMPER_HTTP_FAILURE_AND_DIGEST_DRIFT_PASS")
 
 
 def main() -> None:
