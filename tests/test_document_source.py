@@ -36,6 +36,9 @@ class DocumentHandler(BaseHTTPRequestHandler):
         elif self.path == "/csv":
             content_type = "text/csv"
             payload = CSV_BODY
+        elif self.path == "/html":
+            content_type = "text/html"
+            payload = b"<table><tr><th>id</th><th>kind</th></tr><tr><td>009</td><td>quest</td></tr></table>"
         else:
             content_type = "application/json"
             payload = JSON_BODY
@@ -87,6 +90,11 @@ class DocumentSourceTests(unittest.TestCase):
         result = self.collect("/csv", format="csv")
         self.assertEqual([r.record_id for r in result.batch.records], ["001", "002"])
         self.assertEqual(result.content_type, "text/csv")
+
+    def test_html_table_over_real_http(self):
+        result = self.collect("/html", format="html")
+        self.assertEqual(result.batch.records[0].record_id, "009")
+        self.assertEqual(result.content_type, "text/html")
 
     def test_same_host_redirect_is_allowed(self):
         data = self.collect("/local-redirect")
