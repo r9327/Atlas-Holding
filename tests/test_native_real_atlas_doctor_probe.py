@@ -132,6 +132,29 @@ class RealAtlasDoctorProbeTests(unittest.TestCase):
                         _seal_doctor_receipt(target, receipt)
                     self.assertFalse(target.exists())
 
+    def test_receipt_seal_rejects_forged_sha_scope_and_state(self):
+        original = _evidence_receipt("unowned", SHA, advisory(status="REVIEW"))
+        mutations = (
+            ("source_repository", "attacker/alternate"),
+            ("source_sha", "wrong"),
+            ("scope", "owned_home"),
+            ("path", "../outside"),
+            ("status", "PLANNED_LOCAL"),
+            ("doctor_report_sha256", "z" * 64),
+            ("decision_marker", "NONRELEASE_REAL_ATLAS_DOCTOR_PLAN_READY"),
+            ("schema", True),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = Path(tmp).resolve()
+            with patch.dict(os.environ, {"RUNNER_TEMP": str(runner)}):
+                for index, (field, value) in enumerate(mutations):
+                    payload = dict(original)
+                    payload[field] = value
+                    target = runner / f"forged-{index}.json"
+                    with self.subTest(field=field), self.assertRaises(RuntimeError):
+                        _seal_doctor_receipt(target, payload)
+                    self.assertFalse(target.exists())
+
     def test_nonpassport_result_is_rejected(self):
         with self.assertRaises(RuntimeError):
             _verify_local_plan({"status": "PASS"}, SHA)
