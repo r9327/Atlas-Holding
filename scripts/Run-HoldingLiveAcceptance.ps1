@@ -155,16 +155,7 @@ try {
             $proof.github_push_status -cne 'NOT_PERMITTED' -or
             $proof.static_ast_exact_match -ne $true -or
             $proof.release_ready -ne $false -or
-            $proof.candidate_commit_sha -cnotmatch '^[0-9a-f]{40}
-}
-finally {
-    $client.Dispose()
-    $handler.Dispose()
-    if (Test-Path -LiteralPath $modelFile) {
-        Remove-Item -Force -LiteralPath $modelFile
-    }
-}
-) {
+            $proof.candidate_commit_sha -cnotmatch '^[0-9a-f]{40}$') {
             throw 'Receipt contradicts the selected model or claimed certification'
         }
         $receiptSha = (Get-FileHash -LiteralPath $receipt -Algorithm SHA256).Hash.ToLowerInvariant()
