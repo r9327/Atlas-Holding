@@ -12,7 +12,9 @@ import unittest
 # unittest discover -s tests adds this folder to sys.path, but direct execution
 # must also import the exact checked-out native mission helper.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from native_windows_code_mission_smoke import _check_answer
+from native_windows_code_mission_smoke import (
+    _check_answer, _mission_receipt, _publish_receipt,
+)
 
 
 class NativeCodeStaticAcceptanceTests(unittest.TestCase):
@@ -71,6 +73,69 @@ class NativeCodeStaticAcceptanceTests(unittest.TestCase):
         self.path.unlink()
         with self.assertRaises(RuntimeError):
             _check_answer(self.path)
+
+
+class NativeMissionReceiptTests(unittest.TestCase):
+    def receipt(self, **overrides):
+        details = dict(
+            live_model=False, model_name="atlas-ci-fixture:Q4",
+            model_digest="a" * 64, agent_sha="b" * 64,
+            base_sha="c" * 40, candidate_sha="d" * 40,
+            adapter_peak=None, duration_ms=154,
+        )
+        details.update(overrides)
+        return _mission_receipt(**details)
+
+    def test_stub_receipt_never_asserts_live_model_or_doctor_verdict(self):
+        proof = self.receipt()
+        self.assertEqual(proof["source"], "DETERMINISTIC_CI_STUB")
+        self.assertEqual(proof["doctor_status"], "NOT_EXECUTED")
+        self.assertEqual(proof["github_push_status"], "NOT_PERMITTED")
+        self.assertIs(proof["release_ready"], False)
+        self.assertIsNone(proof["ollama_ram_peak_bytes"])
+        self.assertIsNone(proof["ollama_vram_peak_bytes"])
+        self.assertIsNone(proof["adapter_job_peak_bytes"])
+
+    def test_real_model_receipt_does_not_invent_ram_or_release_certificate(self):
+        proof = self.receipt(live_model=True, adapter_peak=42_000_000)
+        self.assertEqual(proof["source"], "LIVE_PINNED_OLLAMA")
+        self.assertEqual(proof["adapter_job_peak_bytes"], 42_000_000)
+        self.assertIsNone(proof["ollama_ram_peak_bytes"])
+        self.assertFalse(proof["release_ready"])
+
+    def test_receipt_rejects_fake_sha_or_invalid_peak_and_duration(self):
+        for changes in (
+            {"agent_sha": "bad"},
+            {"model_digest": "broken"},
+            {"base_sha": "d" * 40},
+            {"adapter_peak": 257 * 1024**2},
+            {"adapter_peak": -1},
+            {"adapter_peak": True},
+            {"duration_ms": 0},
+            {"duration_ms": 9_999_999},
+            {"live_model": "probably"},
+        ):
+            with self.subTest(changes=changes):
+                with self.assertRaises(ValueError):
+                    self.receipt(**changes)
+
+    def test_receipt_is_atomic_and_cannot_overwrite_existing_evidence(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root).resolve() / "real-test-receipt.json"
+            proof = self.receipt(live_model=True)
+            checksum = _publish_receipt(path, proof)
+            import hashlib
+            import json
+            self.assertEqual(
+                hashlib.sha256(path.read_bytes()).hexdigest(), checksum)
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), proof)
+            with self.assertRaisesRegex(ValueError, "replace"):
+                _publish_receipt(path, self.receipt())
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), proof)
+            with self.assertRaises(ValueError):
+                _publish_receipt(Path("relative.json"), proof)
+            with self.assertRaises(ValueError):
+                _publish_receipt(path.parent / "receipt.txt", proof)
 
 
 if __name__ == "__main__":
