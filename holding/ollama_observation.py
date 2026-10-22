@@ -13,6 +13,7 @@ import threading
 from urllib.request import Request, ProxyHandler, build_opener
 
 _MODEL = re.compile(r"^[A-Za-z0-9_.:-]+(?:/[A-Za-z0-9_.:-]+)*$")
+_DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _MAX_RESPONSE = 128 * 1024
 _MAX_ALLOCATED = 1024 ** 5  # Reject implausible >1 PiB API values.
 
@@ -25,7 +26,7 @@ class OllamaAllocation:
     failed_polls: int = 0
 
 
-def _read_active_model(name: str) -> tuple[int, int] | None:
+def _read_active_model(name: str, expected_digest: str) -> tuple[int, int] | None:
     """Query loopback only, no proxy, bounded bytes and deadline.
 
     /api/ps is advisory telemetry. No credentials or model prompt are sent.
@@ -48,6 +49,8 @@ def _read_active_model(name: str) -> tuple[int, int] | None:
             raise ValueError("Invalid Ollama process entry")
         if item.get("name") != name:
             continue
+        if item.get("digest") != expected_digest:
+            raise ValueError("Loaded Ollama model digest changed during mission")
         size, vram = item.get("size"), item.get("size_vram")
         if (type(size) is not int or type(vram) is not int
                 or not 0 <= vram <= size <= _MAX_ALLOCATED):
@@ -63,14 +66,16 @@ class OllamaAllocationObserver:
     the requested model. It never starts, pulls, or stops local Ollama.
     """
 
-    def __init__(self, name: str, *, interval_seconds: float = 0.5) -> None:
+    def __init__(self, name: str, digest: str, *, interval_seconds: float = 0.5) -> None:
         if (not isinstance(name, str) or not 1 <= len(name) <= 100
                 or not _MODEL.fullmatch(name)
                 or any(part in (".", "..") for part in name.split("/"))
+                or type(digest) is not str or not _DIGEST.fullmatch(digest)
                 or type(interval_seconds) not in (float, int)
                 or not 0.2 <= interval_seconds <= 5):
             raise ValueError("Invalid local Ollama observation")
         self.name = name
+        self.digest = digest
         self.interval_seconds = interval_seconds
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -82,7 +87,7 @@ class OllamaAllocationObserver:
 
     def _poll(self) -> None:
         try:
-            sizes = _read_active_model(self.name)
+            sizes = _read_active_model(self.name, self.digest)
         except (OSError, ValueError, UnicodeError, TimeoutError, OverflowError):
             with self._lock:
                 self._failures += 1
