@@ -159,3 +159,37 @@ Le smoke Windows utilise **les trois vrais EXE installés** et simule uniquement
 l'API Ollama `/api/tags`, avec une contre-épreuve modifiant son digest.
 Cette preuve certifie le câblage natif de diagnostic et le refus sur dérive
 d'empreinte ; elle ne prétend pas avoir fait tourner un véritable LLM.
+
+## 22 octobre — Kit Windows de vraie inférence, sans Python
+
+La CI Windows construit un **quatrième EXE**, strictement nonrelease :
+`AtlasHoldingAcceptance.exe`. Il contient le harnais de mission test dans
+l'exécutable PyInstaller : aucun interpréteur Python utilisateur n'est requis.
+
+Le pipeline doit lancer son `--self-test`, puis mener le flux natif :
+`AtlasHoldingAcceptance.exe` → `AtlasHoldingAgent.exe` → faux service Ollama
+local déterministe → permission `code`/`commit` → worktree Git jetable →
+commit réel → contrôle AST exact → `QA_PENDING` (sans verdict Doctor).
+
+**Seulement après** tous les tests Windows et l'autotest du setup, GitHub
+Actions publie pendant 3 jours un artefact explicitement appelé
+`NONRELEASE-Windows-Ollama-Acceptance-<run-id>`, contenant :
+`AtlasHoldingAcceptance.exe`, `AtlasHoldingAgent.exe`,
+`Run-HoldingLiveAcceptance.ps1`, `nonrelease-manifest.json`, `README.md`.
+
+Sur le PC de l'opérateur, le lanceur PowerShell :
+- vérifie les SHA-256 des deux EXE et le SHA exact du candidat ;
+- détecte le **modèle explicitement sélectionné** via `127.0.0.1`, sans
+  proxy, et épingle son digest sans téléchargement ;
+- crée un fichier de modèle temporaire en UTF-8 et un nom de reçu unique ;
+- exécute le modèle **réel** dans un Git **temporaire seulement**, puis vérifie
+  la source, le commit et le reçu `LIVE_PINNED_OLLAMA` ;
+- ne demande aucune permission GitHub, aucun mot de passe ni connexion cloud ;
+- ne touche pas au vrai dépôt Atlas. Le résultat est un essai de compétence
+  ponctuel, pas un PASS Doctor, une release ou un benchmark.
+
+La CI ne peut pas certifier la qualité d'un modèle qui n'est **pas installé
+sur le runner**. Cette distribution est un banc d'essai facultatif pour
+collecter les premières preuves réelles. La release signée et le vrai setup
+ne sont PAS diffusés : l'installateur de CI reste construit avec un manifeste
+de simulation et n'est pas destiné à l'utilisateur.
