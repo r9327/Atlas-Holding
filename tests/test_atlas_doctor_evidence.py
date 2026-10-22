@@ -156,7 +156,10 @@ class DoctorEvidenceTests(unittest.TestCase):
 
     def test_boolean_true_is_never_module_list_or_qa_pass(self):
         for state in ("REVIEW", "PASS"):
-            for raw in (True, 1, False if state == "PASS" else None, []):
+            # An empty LIST is legitimate when REVIEW ran no tests; it is
+            # never sufficient for a Doctor PASS. A boolean True is neither.
+            invalid = (True, 1, False, []) if state == "PASS" else (True, 1, None)
+            for raw in invalid:
                 with self.subTest(status=state, evidence=raw):
                     payload = report(action="check", status=state)
                     payload["execution"]["tests_executed"] = raw
