@@ -73,6 +73,15 @@ def _git(*args: str) -> None:
     )
 
 
+def _verify_frozen_engine(engine: Path, config: Path) -> subprocess.CompletedProcess:
+    """Use the actual packaged daemon, not the test runner's Python loader."""
+    return subprocess.run(
+        [str(engine), "--verify-installation", "--config", str(config)],
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, timeout=45, check=False, shell=False,
+    )
+
+
 def run(frozen_directory: Path) -> None:
     if os.name != "nt":
         raise RuntimeError("Real native Windows security checks required")
@@ -177,6 +186,20 @@ def run(frozen_directory: Path) -> None:
             git = GitWorktrees(canonical, installed / "workspaces",
                                "r9327/Dof-Atlas")
             git.inspect_canonical()
+            frozen_engine = runtime.directory / "AtlasHoldingEngine.exe"
+            verified = _verify_frozen_engine(frozen_engine, config)
+            if verified.returncode != 0:
+                raise RuntimeError("Frozen installed engine rejected its own valid pins")
+            status = json.loads(verified.stdout)
+            if status != {
+                "installation": "CONFIG_AND_GIT_VERIFIED",
+                "ollama_inference": "NOT_TESTED",
+                "doctor_qa": "NOT_EXECUTED",
+                "github_push": "NOT_PERMITTED",
+            }:
+                raise RuntimeError("Frozen installed engine returned false readiness")
+            if (installed / "data" / "engine.sqlite").exists():
+                raise RuntimeError("Frozen installation check unexpectedly started daemon")
             status2, pid2 = configure_and_launch_engine(
                 install_root=installed, atlas_root=canonical,
                 runtime_pins=expected, adapter_sha256=agent_pin,
@@ -185,6 +208,9 @@ def run(frozen_directory: Path) -> None:
             if status2 != "REUSED_CONFIG_HEALTH_PENDING" or pid2 is not None:
                 raise RuntimeError("Installer rewrote an existing pinned enrollment")
             model.write_bytes(b'{"model":"changed-by-unknown-process"}')
+            rejected = _verify_frozen_engine(frozen_engine, config)
+            if rejected.returncode != 2:
+                raise RuntimeError("Frozen engine accepted a tampered model file")
             try:
                 Installation.load(config)
             except BootstrapError:
