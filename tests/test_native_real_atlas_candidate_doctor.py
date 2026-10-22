@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 from holding.atlas_doctor_evidence import LocalPassport
 from tests.native_real_atlas_candidate_doctor import (
     _candidate_summary, _verify_advisory, _same_canonical_checkout, _git,
+    _review_diagnostics,
     LEVELS, SCOPE,
 )
 
@@ -107,6 +108,46 @@ class NativeCandidateDoctorTests(unittest.TestCase):
             with self.subTest(stage=stage, state=state), self.assertRaises(RuntimeError):
                 _verify_advisory(
                     passport(stage, state=state), stage=stage, sha=CANDIDATE)
+
+    def test_authenticated_review_reasons_are_bounded_and_never_a_pass(self):
+        envelope = {
+            "action": "check", "status": "REVIEW",
+            "execution": {"status": "PLANNED", "tests_executed": False},
+            "selected_checks": {"tests": []},
+            "next_actions": ["No runnable focused tests were selected."],
+        }
+        observed = _review_diagnostics(envelope, stage="check")
+        self.assertIn("execution=PLANNED", observed)
+        self.assertIn("selected_test_modules=0", observed)
+        self.assertNotIn("PASS", " ".join(observed))
+        envelope["status"] = "PASS"
+        with self.assertRaises(RuntimeError):
+            _review_diagnostics(envelope, stage="check")
+
+    def test_review_diagnostics_reject_unbounded_or_incomplete_report(self):
+        valid = {
+            "action": "validate", "status": "REVIEW",
+            "execution": {"status": "REVIEW", "tests_executed": []},
+            "selected_checks": {"tests": ["tests.test_example"]},
+            "next_actions": ["Review policy."],
+        }
+        for field, value in (
+            ("next_actions", ["a" * 1501]),
+            ("next_actions", ["x"] * 11),
+            ("execution", {}),
+            ("selected_checks", {"tests": [True]}),
+            ("selected_checks", {"tests": []}),
+        ):
+            if field == "selected_checks" and value == {"tests": []}:
+                # Empty selected tests is a legitimate evidence-bearing REVIEW.
+                self.assertIn("selected_test_modules=0",
+                              _review_diagnostics({**valid, field: value},
+                                                  stage="validate"))
+                continue
+            with self.subTest(field=field, value=str(value)[:30]):
+                with self.assertRaises(RuntimeError):
+                    _review_diagnostics({**valid, field: value},
+                                        stage="validate")
 
     def test_a_review_plan_or_failed_later_stage_cannot_seal(self):
         good_stages = [
