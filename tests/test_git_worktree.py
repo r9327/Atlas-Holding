@@ -32,6 +32,19 @@ class GitWorktreeTests(unittest.TestCase):
         self.assertNotEqual(sha,original)
         self.assertEqual(git(self.root,'rev-parse','HEAD'),original)
         self.assertFalse((self.root/'feature.py').exists())
+    @unittest.skipUnless(os.name == 'nt', 'Requires real Windows Job Objects')
+    def test_fast_git_commands_never_use_racy_running_process_attach(self):
+        from holding.windows_job import WindowsJob
+        # All Git calls are CREATE_SUSPENDED and attached before execution.
+        # The legacy attach() must never be used, including for fast queries.
+        with patch.object(WindowsJob, 'attach',
+                          side_effect=AssertionError('unsafe legacy Git attach')):
+            for _ in range(12):
+                self.assertEqual(
+                    self.manager._git('rev-parse', '--show-toplevel'),
+                    str(self.root.resolve()),
+                )
+
     def test_real_git_nul_delimited_staging_and_commit(self):
         original = git(self.root, 'rev-parse', 'HEAD')
         work = self.manager.create('feature1')
