@@ -166,7 +166,10 @@ class GitWorktrees:
         self.workspace.mkdir(parents=True, exist_ok=True)
         if self.workspace.is_symlink() or dest.parent.resolve() != self.workspace.resolve():
             raise GitSafetyError('Unsafe workspace path')
-        self._git('worktree','add','-b',branch,str(dest),sha)
+        # Real Atlas contains thousands of files; a bounded 30s lightweight
+        # Git deadline is not appropriate for the one-time full worktree add.
+        # Keep Windows Job containment and output limits, but allow up to 180s.
+        self._git('worktree','add','-b',branch,str(dest),sha,timeout=180)
         self.inspect(mission_id)
         return Worktree(dest, branch, sha)
 
