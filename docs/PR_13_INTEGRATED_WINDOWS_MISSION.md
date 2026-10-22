@@ -279,3 +279,16 @@ hors du worktree doit rester absent, et aucun reçu/session `PASS` n'est admis.
 Ces tests ne font tourner que des modèles **fictifs** en CI. Un résultat
 réel avec Ollama installé, l'isolation de l'IA et Doctor Atlas restent à
 certifier sur un environnement Windows utilisateur. La PR reste en brouillon.
+
+
+### Gate Doctor manquant dans une vraie mission jetable
+
+Le smoke natif couvre maintenant **deux refus de QA indépendants** une fois le
+commit local enregistré en `QA_PENDING` : (1) sans permission
+`local_test`, toute tentative de Doctor scoped est rejetée ; (2) même avec
+une permission `local_test` ajoutée **uniquement au dépôt de test jetable**
+après le travail du codeur, le Doctor réel est absent et le préflight refuse
+l'exécution. Les deux refus sont attestés sans avis `SCOPED_TESTS_PASS`, sans
+promotion à `DONE` et sans certification. Sur le vrai dépôt, Doctor Atlas
+devra être trouvé, exécuté sous identité restreinte et confirmé par des preuves
+signées du CI/Doctor officiel avant toute promotion.
