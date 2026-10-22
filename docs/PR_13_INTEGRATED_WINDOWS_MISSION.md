@@ -260,3 +260,22 @@ exerce le même kit des deux EXE compilés, 3 essais Git/AST, altérations
 d'empreinte, HTTP 503, digest changé et 1 réussite suivie d'un échec.
 Le kit reste nonrelease : le vrai modèle et les performances GPU du PC
 utilisateur ne sont pas simulables par cette validation.
+
+
+### Contre-épreuves QA : modèle remplacé et décorateur malveillant
+
+Le nouveau smoke Windows de l'archive fournie exercera la chaîne réelle
+PowerShell → EXE d'acceptation → agent EXE sur API Ollama **simulée**, sur
+PowerShell Windows 5.1 et PowerShell 7. Deux scénarios supplémentaires :
+
+- Modèle portant le bon digest au premier essai, remplacé ensuite : le second
+essai est refusé **avant le prochain /api/chat**, le premier reçu individuel
+reste consultable mais aucun résumé de session `PASS` n'est créé.
+- Réponse d'agent qui propose `def answer(): return 42` avec un décorateur
+malveillant effectuant un effet de bord **à l'import** : l'analyseur indépendant
+rejette l'AST complet sans importer ni exécuter le code. Un fichier témoin
+hors du worktree doit rester absent, et aucun reçu/session `PASS` n'est admis.
+
+Ces tests ne font tourner que des modèles **fictifs** en CI. Un résultat
+réel avec Ollama installé, l'isolation de l'IA et Doctor Atlas restent à
+certifier sur un environnement Windows utilisateur. La PR reste en brouillon.
