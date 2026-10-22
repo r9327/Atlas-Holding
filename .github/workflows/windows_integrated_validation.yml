@@ -172,11 +172,15 @@ jobs:
           [System.IO.File]::WriteAllText(
             (Join-Path $kit "nonrelease-manifest.json"), $kitManifest,
             [System.Text.UTF8Encoding]::new($false))
-          python -B -X utf8 tests/native_windows_live_kit_smoke.py --kit "$kit"
+          python -B -X utf8 tests/native_windows_live_kit_smoke.py --kit "$kit" --shell pwsh
           if ($LASTEXITCODE -ne 0) {
-            throw "Real PowerShell and frozen EXEs failed deterministic no-Python kit acceptance or tamper refusal"
+            throw "PowerShell 7 and frozen EXEs failed native nonrelease kit acceptance"
           }
-          Write-Output "NONRELEASE_NO_PYTHON_WINDOWS_LIVE_KIT_PASS"
+          python -B -X utf8 tests/native_windows_live_kit_smoke.py --kit "$kit" --shell powershell
+          if ($LASTEXITCODE -ne 0) {
+            throw "Stock Windows PowerShell 5.1 and frozen EXEs failed native kit acceptance"
+          }
+          Write-Output "NONRELEASE_NO_PYTHON_WINDOWS_LIVE_KIT_PS51_AND_PS7_PASS"
           Write-Output "Acceptance EXE SHA256: $acceptanceKitSha"
           Write-Output "Kit candidate SHA: $candidateSha"
           Remove-Item -Force -Recurse "$output"
