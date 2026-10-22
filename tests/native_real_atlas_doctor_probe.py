@@ -50,6 +50,20 @@ def _verify_local_plan(passport: LocalPassport, expected_sha: str) -> str:
             else "NONRELEASE_REAL_ATLAS_DOCTOR_REVIEW_NOT_READY")
 
 
+def _verify_pinned_scope_decision(scope: str, status: str) -> None:
+    """The PINNED Atlas source declares constants.py UNOWNED.
+
+    If it suddenly becomes READY, treat it as unexpected policy drift rather
+    than silently giving this demonstration a green editing authorization.
+    A declared owner is necessary but not sufficient for a READY decision.
+    """
+    _approved_scope(scope)
+    if status not in {"REVIEW", "PLANNED_LOCAL"}:
+        raise RuntimeError("Invalid real Atlas Doctor planning status")
+    if scope == "unowned" and status != "REVIEW":
+        raise RuntimeError("Unowned Atlas path was unexpectedly authorized")
+
+
 def _git(root: Path, *args: str) -> str:
     command = subprocess.run(
         ["git", "-C", str(root), *args],
@@ -93,6 +107,7 @@ def run(atlas_root: Path, exact_sha: str, *, scope: str = "unowned") -> None:
     result = runner.run("plan", paths, candidate_sha=exact_sha,
                         base_ref="HEAD", structural=False, run_tests=False)
     decision = _verify_local_plan(result, exact_sha)
+    _verify_pinned_scope_decision(scope, result.status)
     if result.status == "REVIEW":
         # A separate bounded, still read-only diagnostic invocation. The
         # first result is authoritative for the local passport; the second
