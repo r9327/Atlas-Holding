@@ -5,10 +5,11 @@ from dataclasses import replace
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import Mock, patch
 
 from holding.atlas_doctor_evidence import LocalPassport
 from tests.native_real_atlas_candidate_doctor import (
-    _candidate_summary, _verify_advisory, _same_canonical_checkout,
+    _candidate_summary, _verify_advisory, _same_canonical_checkout, _git,
     LEVELS, SCOPE,
 )
 
@@ -37,6 +38,16 @@ class NativeCandidateDoctorTests(unittest.TestCase):
             self.assertFalse(_same_canonical_checkout(root, "../outside"))
             self.assertFalse(_same_canonical_checkout(root, ""))
             self.assertFalse(_same_canonical_checkout(root, str(root.parent)))
+
+    def test_local_git_disables_network_prompt_and_lfs_smudge(self):
+        completed = Mock(returncode=0, stdout="safe\\n", stderr="")
+        with patch("tests.native_real_atlas_candidate_doctor.subprocess.run",
+                   return_value=completed) as spawn:
+            self.assertEqual(_git(Path("C:/dummy"), "status"), "safe")
+        env = spawn.call_args.kwargs["env"]
+        self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
+        self.assertEqual(env["GIT_LFS_SKIP_SMUDGE"], "1")
+        self.assertEqual(spawn.call_args.args[0][0], "git")
 
     def test_all_three_valid_advisory_shapes_remain_uncertified(self):
         self.assertEqual(LEVELS, ("plan", "check", "validate"))
