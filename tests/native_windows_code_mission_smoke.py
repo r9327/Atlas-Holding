@@ -117,7 +117,7 @@ def _git(root: Path, *args: str) -> str:
 # annotations, type parameters, positional-only/keyword-only arguments, or
 # global expressions evaluated later on import. Comments/whitespace are fine.
 _EXACT_ANSWER_AST = ast.dump(
-    ast.parse("def answer():\\n    return 42\\n"),
+    ast.parse("def answer():\n    return 42\n"),
     include_attributes=False,
 )
 
