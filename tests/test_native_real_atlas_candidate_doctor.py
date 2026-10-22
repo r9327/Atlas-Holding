@@ -97,6 +97,23 @@ class NativeCandidateDoctorTests(unittest.TestCase):
                 _verify_advisory(
                     passport(stage, state=state), stage=stage, sha=CANDIDATE)
 
+    def test_a_review_plan_or_failed_later_stage_cannot_seal(self):
+        good_stages = [
+            _verify_advisory(passport("plan"), stage="plan", sha=CANDIDATE),
+            _verify_advisory(passport("check", state="REVIEW"),
+                             stage="check", sha=CANDIDATE),
+            _verify_advisory(passport("validate", state="REVIEW"),
+                             stage="validate", sha=CANDIDATE),
+        ]
+        for position, state in ((0, "REVIEW"), (1, "BLOCKED"),
+                                (1, "FAIL"), (2, "FAIL")):
+            with self.subTest(position=position, state=state):
+                stages = [dict(x) for x in good_stages]
+                stages[position]["state"] = state
+                with self.assertRaises(RuntimeError):
+                    _candidate_summary(source_sha=SOURCE,
+                                       candidate_sha=CANDIDATE, stages=stages)
+
     def test_incomplete_or_reordered_qa_session_never_seals(self):
         stages = [
             _verify_advisory(passport("plan"), stage="plan", sha=CANDIDATE),
