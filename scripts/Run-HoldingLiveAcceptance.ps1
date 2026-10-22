@@ -75,8 +75,38 @@ $handler.UseProxy = $false
 $client = [System.Net.Http.HttpClient]::new($handler)
 $client.Timeout = [TimeSpan]::FromSeconds(5)
 try {
-    $json = $client.GetStringAsync('http://127.0.0.1:11434/api/tags').GetAwaiter().GetResult()
-    if ($json.Length -gt 262144) { throw 'Ollama model inventory is too large' }
+    $response = $client.GetAsync(
+        'http://127.0.0.1:11434/api/tags',
+        [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead
+    ).GetAwaiter().GetResult()
+    try {
+        if (!$response.IsSuccessStatusCode) { throw 'Local Ollama inventory is unavailable' }
+        $length = $response.Content.Headers.ContentLength
+        if ($null -ne $length -and $length -gt 262144) {
+            throw 'Local Ollama inventory exceeds 256 KiB'
+        }
+        $stream = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+        $buffer = New-Object byte[] 4096
+        $memory = [System.IO.MemoryStream]::new()
+        try {
+            while ($true) {
+                $count = $stream.Read($buffer, 0, $buffer.Length)
+                if ($count -eq 0) { break }
+                if ($memory.Length + $count -gt 262144) {
+                    throw 'Local Ollama inventory exceeds 256 KiB'
+                }
+                $memory.Write($buffer, 0, $count)
+            }
+            $json = [System.Text.Encoding]::UTF8.GetString($memory.ToArray())
+        }
+        finally {
+            $memory.Dispose()
+            $stream.Dispose()
+        }
+    }
+    finally {
+        $response.Dispose()
+    }
     $tags = $json | ConvertFrom-Json
     $matches = @($tags.models | Where-Object { $_.name -ceq $Model })
     if ($matches.Count -ne 1) { throw 'Select one exact installed Ollama model' }
