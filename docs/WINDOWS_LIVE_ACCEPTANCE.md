@@ -132,3 +132,14 @@ mais **n'est pas un benchmark comparatif de qualité** :
 `model_quality_benchmark: NOT_CERTIFIED`, `independent_doctor_qa:
 NOT_EXECUTED` et `release_ready: false`. Elle n'inclut pas la RAM/VRAM
 réelle d'Ollama ni les contraintes d'un projet de production.
+
+
+## Compatibilité Windows PowerShell
+
+Le lanceur déclare `#requires -Version 5.1`. La CI exécute désormais le
+**même kit binaire et le même script** avec les deux interpréteurs natifs :
+Windows PowerShell **5.1** (`powershell.exe`) et PowerShell **7** (`pwsh`).
+Chaque variante doit réussir les 3 missions de simulation, puis refuser les
+altérations d'empreintes, l'erreur Ollama et le changement de digest, sans
+produire de faux bilan de réussite. Ces preuves portent sur une API Ollama
+**simulée**, pas sur un véritable LLM et ne certifient pas la production.
