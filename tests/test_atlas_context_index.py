@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from holding.atlas_context_index import (
     AtlasContextIndexError, render_atlas_context_index,
@@ -66,6 +67,16 @@ class TrustedAtlasContextIndexTests(unittest.TestCase):
                     "q" * (4 * 1024 * 1024 + 1)):
             with self.subTest(bad=bad[:30]), self.assertRaises(AtlasContextIndexError):
                 render_atlas_context_index(bad)
+
+    def test_large_atlas_worktree_uses_explicit_bounded_setup_budget(self):
+        with patch.object(self.manager, "_git", wraps=self.manager._git) as calls:
+            self.manager.create("large-atlas")
+        worktree_add = [
+            call for call in calls.call_args_list
+            if len(call.args) >= 2 and call.args[:2] == ("worktree", "add")
+        ]
+        self.assertEqual(len(worktree_add), 1)
+        self.assertEqual(worktree_add[0].kwargs["timeout"], 180)
 
     def test_real_commit_syncs_index_without_executing_atlas_hooks(self):
         tree = self.manager.create("context")
