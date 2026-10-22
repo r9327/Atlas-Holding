@@ -134,3 +134,28 @@ scoped **sans** grant `local_test` (seuls `code` et `commit` sont permis).
 Le superviseur la refuse explicitement : la mission demeure `QA_PENDING` et
 aucun faux verdict `PASS` n'est emis. C'est un test du refus de permission,
 non une certification du vrai Doctor.
+
+
+## Diagnostic du modèle depuis le vrai EXE Windows
+
+Le moteur compilé `AtlasHoldingEngine.exe` expose désormais un diagnostic
+supplémentaire **sans interpréteur Python utilisateur** :
+
+```powershell
+& "C:\\chemin\\AtlasHoldingEngine.exe" --check-model-health --config "C:\\chemin\\installation\\config\\engine.json"
+```
+
+Il valide d'abord l'empreinte des vrais binaires, les fichiers d'arguments
+épinglés et le clone Git canonique propre, puis démarre **seulement** le vrai
+`AtlasHoldingAgent.exe` en action `health` pour vérifier le modèle exact
+dans `/api/tags`. Aucun début de mission, changement de dépôt, démarrage
+du Control Center, ouverture de base SQLite, push GitHub ni inférence
+`/api/chat` n'est permis. Le résultat signale explicitement
+`ollama_inference: NOT_TESTED`, `doctor_qa: NOT_EXECUTED` et
+`github_push: NOT_PERMITTED`. Une erreur ou un digest changé renvoie
+`local_model_health: REJECTED` (code retour 2).
+
+Le smoke Windows utilise **les trois vrais EXE installés** et simule uniquement
+l'API Ollama `/api/tags`, avec une contre-épreuve modifiant son digest.
+Cette preuve certifie le câblage natif de diagnostic et le refus sur dérive
+d'empreinte ; elle ne prétend pas avoir fait tourner un véritable LLM.
