@@ -1,0 +1,109 @@
+name: Selected Project -> real Holding engine import (opt-in)
+on:
+  pull_request:
+    types: [labeled]
+permissions:
+  contents: read
+jobs:
+  real-import:
+    if: github.event.label.name == 'ci:project-engine-e2e'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: r9327/Atlas-Holding
+          ref: c7407b5828d75a6a97101aa06e952d1316739c8a
+          path: engine-src
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Bind exact-SHA selected project to real ControlPlane importer
+        shell: bash
+        run: |
+          cp holding/project_profile.py holding/project_registry.py holding/roadmap_contract.py holding/project_plan_binding.py holding/project_mission_gate.py engine-src/holding/
+          cd engine-src
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import tempfile
+
+          from holding.control import ControlPlane
+          from holding.project_registry import ProjectRegistry
+          from holding.project_mission_gate import ProjectMissionGateError, import_verified_project_missions
+
+          sha = "a" * 40
+          digest = "b" * 64
+          profile = {
+              "schema": "project-profile/v1", "name": "dofus-atlas",
+              "repository": "r9327/Dof-Atlas", "branch": "feat/integration",
+              "checkout_dir": "dofus-worktree",
+              "commands": {"test": ["python", "-m", "unittest", "discover"]},
+              "adapters": [],
+          }
+          planner = {
+              "schema_version": 1, "repository": "r9327/Dof-Atlas",
+              "snapshot_sha": sha, "source_uri": "ROADMAP.md", "source_digest": digest,
+              "requirements": [{"id": "r1", "statement": "Implement"},
+                               {"id": "r2", "statement": "Verify"}],
+              "lots": [
+                  {"id": "lot-1", "title": "Implement", "dependencies": [],
+                   "requirement_ids": ["r1"], "acceptance": ["code passes tests"],
+                   "autonomy": "AUTO", "state": "READY",
+                   "external_evidence_required": False,
+                   "external_review_pending": False},
+                  {"id": "lot-2", "title": "Verify", "dependencies": ["lot-1"],
+                   "requirement_ids": ["r2"], "acceptance": ["signed CI"],
+                   "autonomy": "AUTO_WITH_STANDING_GRANT", "state": "TRIAGED",
+                   "external_evidence_required": True,
+                   "external_review_pending": True},
+              ],
+          }
+          operational = {"repo": "r9327/Dof-Atlas", "missions": [
+              {"id": "lot-1", "operation": "code",
+               "acceptance": ["code passes tests"]},
+              {"id": "lot-2", "operation": "read_ci", "depends_on": ["lot-1"],
+               "acceptance": ["signed CI"], "external_required": True},
+          ]}
+          with tempfile.TemporaryDirectory() as folder:
+              root = Path(folder)
+              registry = ProjectRegistry(root / "profile")
+              selected = registry.register(json.dumps(profile))
+              registry.select(profile["name"], expected_digest=selected.digest)
+              with ControlPlane(root / "engine.sqlite") as control:
+                  kwargs = {
+                      "expected_profile_digest": selected.digest,
+                      "expected_snapshot_sha": sha,
+                      "expected_source_digest": digest,
+                      "source": "trusted:e2e",
+                      "trusted_importer": control.import_roadmap,
+                  }
+                  import_verified_project_missions(
+                      registry, json.dumps(planner).encode(),
+                      json.dumps(operational), **kwargs,
+                  )
+                  stored = control.store.missions()
+                  assert {m.id for m in stored} == {"lot-1", "lot-2"}, stored
+                  assert {m.repo for m in stored} == {"r9327/Dof-Atlas"}
+                  assert {m.state for m in stored} == {"READY"}
+                  bad = dict(operational, repo="r9327/Atlas-Holding")
+                  try:
+                      import_verified_project_missions(
+                          registry, json.dumps(planner).encode(),
+                          json.dumps(bad), **kwargs)
+                  except ProjectMissionGateError:
+                      pass
+                  else:
+                      raise AssertionError("foreign repo imported")
+                  assert len(control.store.missions()) == 2
+                  assert not (root / ".git").exists()
+                  print("Selected project -> actual Holding ControlPlane.import_roadmap PASS")
+          PY
