@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from native_windows_code_mission_smoke import (
     _check_answer, _mission_receipt, _publish_receipt,
 )
+from holding.ollama_observation import OllamaAllocation
 
 
 class NativeCodeStaticAcceptanceTests(unittest.TestCase):
@@ -102,6 +103,30 @@ class NativeMissionReceiptTests(unittest.TestCase):
         self.assertEqual(proof["adapter_job_peak_bytes"], 42_000_000)
         self.assertIsNone(proof["ollama_ram_peak_bytes"])
         self.assertFalse(proof["release_ready"])
+
+    def test_live_ollama_allocation_is_advisory_not_actual_server_peak(self):
+        observed = OllamaAllocation(
+            observations=2, loaded_model_bytes_high=4_000_000_000,
+            loaded_model_vram_bytes_high=3_000_000_000, failed_polls=1)
+        proof = self.receipt(live_model=True, allocation=observed)
+        self.assertEqual(proof["ollama_allocation_observations"], 2)
+        self.assertEqual(proof["ollama_allocation_failed_polls"], 1)
+        self.assertEqual(proof["ollama_loaded_model_bytes_observed_high"],
+                         4_000_000_000)
+        self.assertEqual(proof["ollama_loaded_model_vram_bytes_observed_high"],
+                         3_000_000_000)
+        self.assertIsNone(proof["ollama_ram_peak_bytes"])
+        self.assertIsNone(proof["ollama_vram_peak_bytes"])
+        self.assertFalse(proof["release_ready"])
+        with self.assertRaises(ValueError):
+            self.receipt(allocation=observed)
+        with self.assertRaises(ValueError):
+            self.receipt(live_model=True, allocation=OllamaAllocation(
+                observations=1, loaded_model_bytes_high=10,
+                loaded_model_vram_bytes_high=20))
+        with self.assertRaises(ValueError):
+            self.receipt(live_model=True, allocation=OllamaAllocation(
+                observations=0, loaded_model_bytes_high=1))
 
     def test_receipt_rejects_fake_sha_or_invalid_peak_and_duration(self):
         for changes in (
