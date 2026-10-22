@@ -6,11 +6,13 @@ the repository/branch and adapter independently before running a mission.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
 import tempfile
+from functools import wraps
 
 from .project_profile import (
     InvalidProjectProfile, ProjectProfile, load_profile,
@@ -99,6 +101,50 @@ def _write(folder: Path, content: dict) -> None:
             os.unlink(temporary)
 
 
+@contextmanager
+def _registry_lock(folder: Path):
+    """Fail closed if another process is changing profile selection.
+
+    Win32 byte locks and POSIX flock both protect read-modify-write. The
+    lockfile is held only for short local config operations, never model work.
+    """
+    lockfile = folder / ".project-registry.lock"
+    if lockfile.is_symlink():
+        raise ProjectRegistryError("registry lock is a symlink")
+    with lockfile.open("a+b") as handle:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"0")
+            handle.flush()
+        handle.seek(0)
+        try:
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            raise ProjectRegistryError("another registry writer is active") from exc
+        try:
+            yield
+        finally:
+            handle.seek(0)
+            if os.name == "nt":
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _exclusive_registry_write(method):
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with _registry_lock(self.directory):
+            return method(self, *args, **kwargs)
+    return wrapped
+
+
 class ProjectRegistry:
     def __init__(self, directory: Path):
         self.directory = _root(directory)
@@ -117,6 +163,7 @@ class ProjectRegistry:
                 return entry
         return None
 
+    @_exclusive_registry_write
     def register(self, raw_profile: str, *, expected_digest: str | None = None) -> ProfileEntry:
         profile = load_profile(raw_profile)
         data = _read(self.directory)
@@ -135,6 +182,7 @@ class ProjectRegistry:
         _write(self.directory, data)
         return ProfileEntry(profile, profile.digest, data["selected"] == profile.name)
 
+    @_exclusive_registry_write
     def select(self, name: str, *, expected_digest: str) -> ProfileEntry:
         data = _read(self.directory)
         row = data["profiles"].get(name)
@@ -144,6 +192,7 @@ class ProjectRegistry:
         _write(self.directory, data)
         return ProfileEntry(ProjectProfile.parse(row["data"]), row["digest"], True)
 
+    @_exclusive_registry_write
     def clear_selection(self) -> None:
         data = _read(self.directory)
         if data["selected"] is not None:
