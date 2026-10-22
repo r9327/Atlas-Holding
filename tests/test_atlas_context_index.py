@@ -117,6 +117,14 @@ class TrustedAtlasContextIndexTests(unittest.TestCase):
         self.assertEqual(private.read_text(encoding="utf-8"),
                          "never overwrite me")
 
+    def test_deleted_canonical_scope_map_does_not_disable_index_guard(self):
+        tree = self.manager.create("lost-scope")
+        (tree.path / ".ai/context-map.yaml").unlink()
+        (tree.path / "feature.py").write_text("TEST = 1\n", encoding="utf-8")
+        with self.assertRaisesRegex(GitSafetyError, "metadata"):
+            self.manager.commit("lost-scope", ("feature.py",),
+                                "feat: scope cannot silently disappear")
+
     def test_missing_tracked_index_in_real_atlas_blocks_commit(self):
         tree = self.manager.create("missing-index")
         (tree.path / ".ai/context_index.json").unlink()
