@@ -37,7 +37,9 @@ class _FaultInjectingOllamaStub(LocalOllamaStub):
     fail_after_chat_calls = 0
     side_effect_sentinel = ""
     unsafe_patch_calls = 0
-    drift_after_chat_count = 0
+    # The simulated replacement happens only AFTER trial 1 writes its receipt.
+    # A /api/chat response alone is not proof that the whole trial passed.
+    drift_after_receipt_directory: Path | None = None
 
     def _reply(self, obj: dict) -> None:
         if self.path == "/api/chat" and type(self).mode == "unsafe_patch":
@@ -65,7 +67,9 @@ class _FaultInjectingOllamaStub(LocalOllamaStub):
                 if type(self).mode == "digest_drift":
                     okay = type(self).inventory_calls == 1
                 else:
-                    okay = type(self).chat_calls < type(self).drift_after_chat_count
+                    directory = type(self).drift_after_receipt_directory
+                    okay = (directory is not None and
+                            not any(directory.glob("receipt-*.json")))
                 self._reply({"models": [{
                     "name": MODEL, "digest": DIGEST if okay else "b" * 64}]})
                 return
@@ -264,18 +268,28 @@ def run(kit: Path, *, shell: str = "pwsh") -> None:
             # preceding isolated receipt must never create a session PASS.
             _FaultInjectingOllamaStub.mode = "drift_after_first_trial"
             before_chat = _FaultInjectingOllamaStub.chat_calls
-            _FaultInjectingOllamaStub.drift_after_chat_count = before_chat + 1
             replaced_dir = root / "model-replaced-after-first-trial"
+            _FaultInjectingOllamaStub.drift_after_receipt_directory = replaced_dir
             replaced = launch(replaced_dir, trials=3)
             if replaced.returncode == 0:
                 raise RuntimeError("Changed Ollama model was accepted in later trial")
             if _FaultInjectingOllamaStub.chat_calls != before_chat + 1:
                 raise RuntimeError("Changed model reached another generation")
-            if len(list(replaced_dir.glob("receipt-*.json"))) != 1:
-                raise RuntimeError("No exact first-trial evidence before replacement")
+            first_receipts = list(replaced_dir.glob("receipt-*.json"))
+            if len(first_receipts) != 1:
+                raise RuntimeError(
+                    "No exact first-trial evidence before replacement; runner: " +
+                    replaced.stderr.decode("utf-8", errors="replace")[-500:])
+            first_proof = json.loads(first_receipts[0].read_text(encoding="utf-8"))
+            if (first_proof.get("source") != "LIVE_PINNED_OLLAMA"
+                    or first_proof.get("model_digest") != DIGEST
+                    or first_proof.get("release_ready") is not False):
+                raise RuntimeError("Trial 1 receipt has invalid model identity or status")
             if (list(replaced_dir.glob("session-*.json"))
                     or list(replaced_dir.glob("model-*.json"))):
                 raise RuntimeError("Changed model left session PASS or pin")
+
+            _FaultInjectingOllamaStub.drift_after_receipt_directory = None
 
             # Adversarial actual frozen-agent path: the generated code
             # contains an import-time decorator which could write to a file
