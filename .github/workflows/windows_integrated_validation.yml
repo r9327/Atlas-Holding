@@ -95,6 +95,7 @@ jobs:
           if (!(Test-Path $missionReceipt)) { throw "Nonrelease mission receipt missing" }
           $mission = Get-Content -Raw "$missionReceipt" | ConvertFrom-Json
           if ($mission.source -ne "DETERMINISTIC_CI_STUB" -or
+              $mission.mission_state -ne "QA_PENDING_AWAITING_PRIVILEGED_DOCTOR" -or
               $mission.doctor_status -ne "NOT_EXECUTED" -or
               $mission.github_push_status -ne "NOT_PERMITTED" -or
               $mission.release_ready -ne $false -or
