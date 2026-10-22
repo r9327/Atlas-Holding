@@ -78,6 +78,15 @@ class UpdateDownloadTests(unittest.TestCase):
         self.assertFalse(self.path.with_name(self.path.name + ".part").exists())
         self.assertEqual(ArtifactHandler.requests, [(None, None)])
 
+    def test_progress_callback_reports_received_bytes(self):
+        points = []
+        self.download(on_progress=lambda got, total: points.append((got, total)))
+        self.assertTrue(points)
+        self.assertEqual(points[0], (0, len(PAYLOAD)))
+        self.assertEqual(points[-1], (len(PAYLOAD), len(PAYLOAD)))
+        self.assertEqual([x[0] for x in points], sorted(x[0] for x in points))
+        self.assertTrue(all(total == len(PAYLOAD) for _, total in points))
+
     def test_resume_requires_etag_and_validates_content_range(self):
         self.path.parent.mkdir()
         self.path.with_name(self.path.name + ".part").write_bytes(PAYLOAD[:4096])
