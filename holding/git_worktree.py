@@ -117,6 +117,11 @@ class GitWorktrees:
                             LocalProcessAgent._stop_tree(process)
                     finally:
                         job.close()
+                        # A failed AssignProcessToJobObject leaves an unassigned
+                        # suspended Git child outside the Job. Never leak it.
+                        if process is not None and process.poll() is None:
+                            from .process_agent import LocalProcessAgent
+                            LocalProcessAgent._stop_tree(process)
                 elif process is not None:
                     if os.name != 'nt':
                         import signal
