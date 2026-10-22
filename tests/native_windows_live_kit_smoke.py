@@ -278,8 +278,17 @@ def run(kit: Path, *, shell: str = "pwsh") -> None:
             first_receipts = list(replaced_dir.glob("receipt-*.json"))
             if len(first_receipts) != 1:
                 raise RuntimeError(
-                    "No exact first-trial evidence before replacement; runner: " +
-                    replaced.stderr.decode("utf-8", errors="replace")[-500:])
+                    "First coding trial did not seal its exact receipt before "
+                    "the Ollama replacement; returncode="
+                    + str(replaced.returncode)
+                    + " model_inventory_calls="
+                    + str(_FaultInjectingOllamaStub.inventory_calls)
+                    + " successful_chat_calls="
+                    + str(_FaultInjectingOllamaStub.chat_calls - before_chat)
+                    + " stdout_tail="
+                    + repr(replaced.stdout.decode("utf-8", errors="replace")[-2500:])
+                    + " stderr_tail="
+                    + repr(replaced.stderr.decode("utf-8", errors="replace")[-2500:]))
             first_proof = json.loads(first_receipts[0].read_text(encoding="utf-8"))
             if (first_proof.get("source") != "LIVE_PINNED_OLLAMA"
                     or first_proof.get("model_digest") != DIGEST
