@@ -76,6 +76,8 @@ def store_batch(root: Path, batch: DocumentBatch, *, format: str,
         raise DocumentCacheError("expected DocumentBatch")
     if not 1 <= max_entries <= 20_000:
         raise DocumentCacheError("invalid cache entry limit")
+    _source(batch.source)
+    _timestamp(batch.collected_at)
     key = _key(batch.source, format, id_field, table_index)
     wire = export_document_batch(batch)
     if len(wire) > _MAX_WIRE:
@@ -105,6 +107,7 @@ def store_batch(root: Path, batch: DocumentBatch, *, format: str,
 def load_cached_batch(root: Path, *, source: str, format: str,
                       id_field: str = "id", table_index: int = 0
                       ) -> CachedBatch | None:
+    _source(source)
     key = _key(source, format, id_field, table_index)
     entries, objects = _dirs(root)
     pointer = entries / (key + ".json")
@@ -151,6 +154,10 @@ def load_cached_batch(root: Path, *, source: str, format: str,
             if not isinstance(row, dict) or set(row) != {"id", "sha256", "payload"}:
                 raise DocumentCacheError("invalid cached record")
             rec_id = _identifier(row["id"])
+            payload = row["payload"]
+            if (not isinstance(payload, dict) or "id" not in payload
+                    or _identifier(payload["id"]) != rec_id):
+                raise DocumentCacheError("cached record identity mismatch")
             if rec_id in seen:
                 raise DocumentCacheError("duplicate cached ID")
             seen.add(rec_id)
@@ -161,5 +168,7 @@ def load_cached_batch(root: Path, *, source: str, format: str,
             rows.append(Record(rec_id, canonical, record_sha))
         rows.sort(key=lambda row: row.record_id)
         return CachedBatch(DocumentBatch(source, timestamp, raw_sha, tuple(rows)), wire_sha)
+    except DocumentCacheError:
+        raise
     except (OSError, ValueError, KeyError, TypeError, RecursionError, DocumentIntakeError) as exc:
         raise DocumentCacheError("cached exchange cannot be verified") from exc
