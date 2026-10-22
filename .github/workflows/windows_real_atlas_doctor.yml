@@ -63,3 +63,41 @@ jobs:
           $atlas = Join-Path $env:GITHUB_WORKSPACE "atlas-target"
           $atlasChanges = git -C "$atlas" status --porcelain --untracked-files=all
           if ($atlasChanges) { throw "Doctor mutated real Atlas source checkout: $atlasChanges" }
+      - name: Independently validate two sealed nonrelease Doctor receipts
+        shell: pwsh
+        run: |
+          $results = @(Get-ChildItem -LiteralPath $env:RUNNER_TEMP -File -Filter "atlas-doctor-*-$env:GITHUB_RUN_ID.json")
+          if ($results.Count -ne 2) { throw "Doctor evidence requires exactly two paths" }
+          $scopes = @{}
+          foreach ($result in $results) {
+            $json = Get-Content -LiteralPath $result.FullName -Raw | ConvertFrom-Json
+            if ($json.schema -ne 1 -or $json.kind -ne 'NONRELEASE_ATLAS_DOCTOR_REAL_PLAN' -or
+                $json.source_repository -ne 'r9327/Dof-Atlas' -or
+                $json.source_sha -ne '54d45478c88cd733d2127789c1bef7caa599b54d' -or
+                $json.doctor_tests_executed -ne $false -or
+                $json.doctor_full_certified -ne $false -or
+                $json.github_push_permitted -ne $false -or
+                $json.release_ready -ne $false -or
+                $json.doctor_report_sha256 -cnotmatch '^[0-9a-f]{64}) {
+              throw "One Doctor report made an unverified certification claim"
+            }
+            if ($scopes.ContainsKey($json.scope)) { throw "Duplicated Doctor scope" }
+            $scopes[$json.scope] = $json
+          }
+          if (!$scopes.ContainsKey('unowned') -or
+              $scopes['unowned'].path -ne 'app/constants.py' -or
+              $scopes['unowned'].status -ne 'REVIEW' -or
+              !$scopes.ContainsKey('owned_home') -or
+              $scopes['owned_home'].path -ne 'app/pages/home_page.py' -or
+              $scopes['owned_home'].status -notin @('REVIEW','PLANNED_LOCAL')) {
+            throw "Doctor ownership scope comparison was not certified as advisory-only"
+          }
+          Write-Output "NONRELEASE_TWO_REAL_ATLAS_DOCTOR_SCOPE_RECEIPTS_PASS"
+      - name: Upload nonrelease Doctor exact-SHA advisory receipts
+        uses: actions/upload-artifact@v4
+        with:
+          name: NONRELEASE-Real-Atlas-Doctor-${{ github.run_id }}
+          path: ${{ runner.temp }}/atlas-doctor-*-${{ github.run_id }}.json
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
