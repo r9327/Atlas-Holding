@@ -237,3 +237,16 @@ GitHub Actions pour une comparaison indépendante avant exécution.
 **Ce sont des contrôles de distribution nonrelease et de comportements sur
 API simulée** : ils ne prouvent ni la qualité du vrai modèle ni une signature
 Authenticode.
+
+
+### 22 octobre — répétition de l'essai Ollama sans privilèges
+
+Le lanceur Windows nonrelease accepte `-Trials 1..5`. Chaque essai
+utilise un nouveau dépôt Git jetable et un reçu individuel épinglé au
+digest Ollama exact. La session récapitulative n'est publiée qu'après la
+réussite de **tous** les essais, avec les empreintes et durées de chacun ;
+aucune donnée ne peut conclure à une comparaison multi-modèles, Doctor ou
+release. Le test Windows exécutant le vrai script et les vrais EXE vérifie
+**3/3 sur serveur Ollama simulé**, les SHA des trois reçus et la
+contre-épreuve **1 essai réussi puis HTTP 503 au deuxième** : aucun bilan
+PASS dans ce dernier cas. Essai avec un véritable LLM Windows encore requis.
