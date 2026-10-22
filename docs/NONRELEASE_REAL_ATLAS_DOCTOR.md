@@ -36,3 +36,28 @@ raccordement independant entre la Holding et le **vrai Doctor du vrai depot**.
 Une prochaine etape devra creer une branche candidate totalement isolee,
 executer `check`/`validate` avec un test cible, puis demander les preuves
 privilegiees exact-SHA sans permettre au codeur de s'auto-certifier.
+
+## 22 octobre — difference de proprietaire entre deux chemins
+
+La premiere CI du vrai Doctor est **PASS cote execution** sur
+[39799116731](https://github.com/r9327/Atlas-Holding/actions/runs/39799116731),
+mais son resultat metier est **REVIEW_NOT_READY** :
+`NONRELEASE_DOCTOR_REVIEW_ACTION_1: Resolve scope ownership before editing:
+app/constants.py`. C'est un refus legitime de la cartographie d'Atlas, pas
+une erreur du modele Ollama.
+
+Sur le meme SHA d'Atlas, la CI suivante compare desormais deux cibles
+**explicitement allowlistees**, et non une entree libre du modele :
+
+- `unowned` = `app/constants.py` : le Doctor DOIT retourner REVIEW.
+  Toute autorisation inattendue bloque la CI.
+- `owned_home` = `app/pages/home_page.py` : ce fichier est le
+  `working_set` declare du scope `home` dans
+  `.ai/scopes/home.yaml`. Doctor peut retourner READY ou REVIEW suivant
+  ses **autres** regles, qui ne sont pas assouplies.
+
+Chaque appel est relie au HEAD exact, au remote canonique et a un arbre
+Git propre avant/apres. Le diagnostic REVIEW est un second appel plan-only
+dont le rapport est relu a travers le meme protocole strict. Ne jamais
+interpréter un proprietaire unique comme un passe-droit pour pousser,
+modifier, tester ou fusionner.
