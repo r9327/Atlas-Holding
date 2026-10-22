@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 import unittest
+from unittest.mock import patch
 from holding.windows_job import CREATE_SUSPENDED, WindowsJob, WindowsJobError
 
 
@@ -50,6 +51,40 @@ class WindowsJobTests(unittest.TestCase):
             stdout, _ = process.communicate(timeout=5)
         self.assertEqual(process.returncode, 0)
         self.assertEqual(stdout.strip(), b'42')
+
+    @unittest.skipUnless(os.name == 'nt', 'Requires real Windows Job Objects')
+    def test_suspended_child_assignment_does_not_trust_a_poll_result(self):
+        # Simulate a stale/false "exited" poll while the native process is
+        # still CREATE_SUSPENDED. The kernel handle, not poll(), must decide.
+        process = None
+        try:
+            with WindowsJob() as job:
+                process = subprocess.Popen(
+                    [sys.executable, '-c', 'print(42)'],
+                    stdout=subprocess.PIPE,
+                    creationflags=CREATE_SUSPENDED,
+                )
+                with patch.object(process, 'poll', return_value=0):
+                    job.attach_suspended(process)
+                stdout, _ = process.communicate(timeout=8)
+            self.assertEqual(process.returncode, 0)
+            self.assertEqual(stdout.strip(), b'42')
+        finally:
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+
+    @unittest.skipUnless(os.name == 'nt', 'Requires real Windows Job Objects')
+    def test_legacy_attach_still_rejects_a_stopped_process(self):
+        with WindowsJob() as job:
+            process = subprocess.Popen(
+                [sys.executable, '-c', 'pass'],
+                stdout=subprocess.DEVNULL,
+            )
+            process.wait(timeout=8)
+            with self.assertRaises(WindowsJobError) as raised:
+                job.attach(process)
+            self.assertEqual(raised.exception.code, 'PROCESS_EXITED_BEFORE_ATTACH')
 
     @unittest.skipUnless(os.name == 'nt', 'Requires real Windows Job Objects')
     def test_atomically_assigned_child_is_terminated_by_job(self):
