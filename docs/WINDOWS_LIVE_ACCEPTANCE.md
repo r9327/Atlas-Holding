@@ -41,7 +41,7 @@ Paramètres facultatifs :
 .\Run-HoldingLiveAcceptance.ps1 -Model "nom-exact" -NumCtx 4096 -TimeoutSeconds 600 -EvidenceDirectory "D:\AtlasHoldingEssais"
 ```
 
-Le script vérifie le SHA-256 exact des deux EXE contre le manifeste,
+Le script vérifie le SHA-256 exact **des deux EXE, du lanceur PowerShell et de ce README** contre le manifeste,
 demande la liste `/api/tags` **uniquement via loopback, sans proxy**, fixe le
 digest du modèle choisi, puis exécute la mission via le vrai EXE de test
 `AtlasHoldingAcceptance.exe`. Les fichiers JSON de preuve nonrelease
@@ -81,3 +81,28 @@ dans ce kit.
 Pour une future release : essais sur PC réel, isolation OS du code proposé,
 Doctor/CI sur le vrai dépôt, benchmarks RAM/VRAM et modèles, installation et
 upgrade fiables, et signature officielle restent nécessaires.
+
+
+## Intégrité de l'archive complète (nonrelease)
+
+La CI Windows calcule aussi le SHA-256 de l'archive téléchargée, sous la
+ligne de log `NONRELEASE_ACCEPTANCE_ARTIFACT_DIGEST=sha256:...`. Vérifier
+**avant toute extraction/exécution** que ce digest correspond au ZIP obtenu
+depuis l'exécution GitHub Actions qui a testé le même SHA :
+
+```powershell
+(Get-FileHash -Algorithm SHA256 ".\\NONRELEASE-Windows-Ollama-Acceptance-XXXX.zip").Hash.ToLowerInvariant()
+```
+
+Le manifeste interne doit ensuite contenir exactement quatre empreintes :
+l'agent, le binaire d'acceptation, `Run-HoldingLiveAcceptance.ps1` et
+`README.md`. Un décalage bloque le lanceur **avant tout accès à Ollama**.
+Cela protège contre les corruptions et erreurs de distribution lorsqu'on
+part d'une CI et d'un digest fiables, **pas** contre une CI compromise ou
+un attaquant remplaçant ensemble le script, le manifeste et les preuves.
+Ne considérer ce kit ni comme signé ni comme une version de production.
+
+La CI exerce également les refus si `/api/chat` renvoie une erreur 503 ou
+si le digest du modèle change entre le choix PowerShell et la revérification
+par l'agent natif : aucun reçu de succès n'est créé, le JSON temporaire
+est supprimé, et aucune PR ni aucun push n'est effectué.
