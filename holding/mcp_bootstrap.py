@@ -86,10 +86,10 @@ def load_bootstrap_manifest(path: Path) -> McpBootstrapConfig:
                           parse_constant=_nonfinite)
     except (UnicodeError, ValueError, RecursionError) as exc:
         raise McpBootstrapError("Invalid trusted manifest JSON") from exc
-    if type(data) is not dict or set(data) != {
-            "schema_version", "cache_database", "pins"} or
-            type(data["schema_version"]) is not int or
-            data["schema_version"] != 1:
+    if (type(data) is not dict
+            or set(data) != {"schema_version", "cache_database", "pins"}
+            or type(data["schema_version"]) is not int
+            or data["schema_version"] != 1):
         raise McpBootstrapError("Unsupported trusted manifest schema")
     cache = data["cache_database"]
     if cache is not None:
