@@ -11,8 +11,10 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+from queue import Empty, Queue
 import subprocess
 import sys
+from threading import Thread
 
 from .mcp_local_inventory import PinnedLocalPlugin, inspect_pinned_plugin
 from .mcp_stdio import PROTOCOL_VERSION
@@ -125,14 +127,37 @@ def probe_local_hub(*, interpreter_pin: PinnedLocalPlugin,
         )
     except OSError:
         return HubProbeResult("LAUNCH_FAILED")
+    responses: Queue[bytes | None] = Queue(maxsize=1)
+    def read_bounded():
+        try:
+            # Never materialize a malicious/unbounded subprocess stdout.
+            responses.put(process.stdout.read(MAX_PROBE_BYTES + 1))
+        except OSError:
+            responses.put(None)
+
+    reader = Thread(target=read_bounded, daemon=True)
+    reader.start()
     try:
-        stdout, _stderr = process.communicate(
-            input=_discover_packet(), timeout=timeout_seconds,
-        )
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.communicate()
-        return HubProbeResult("TIMEOUT")
+        try:
+            process.stdin.write(_discover_packet())
+            process.stdin.close()
+        except OSError:
+            pass
+        try:
+            stdout = responses.get(timeout=timeout_seconds)
+        except Empty:
+            return HubProbeResult("TIMEOUT")
+        if stdout is None or len(stdout) > MAX_PROBE_BYTES:
+            return HubProbeResult("OUTPUT_LIMIT")
+        try:
+            process.wait(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired:
+            return HubProbeResult("TIMEOUT")
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+        reader.join(timeout=1)
     # Re-hash after response; this cannot replace the supervisor's private
     # installation/ACL guarantee against hash-to-exec races.
     if inspect_pinned_plugin(interpreter_pin).binary_state != "BINARY_VERIFIED":
