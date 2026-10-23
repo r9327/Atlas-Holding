@@ -158,7 +158,7 @@ class LocalHubProbeTests(unittest.TestCase):
                     interpreter_pin=pinned(), repository_root=ROOT)
                 self.assertEqual(result.status, "PROTOCOL_RESPONSIVE")
                 kwargs = popen.call_args.kwargs
-                self.assertIs(kwargs["interpreter_pin"].executable, PYTHON)
+                self.assertEqual(kwargs["interpreter_pin"].executable, PYTHON)
                 self.assertEqual(kwargs["repository_root"], ROOT)
                 self.assertNotIn("OPENAI_API_KEY", kwargs["env"])
                 self.assertNotIn("PRIVATE_ACCESS_TOKEN", kwargs["env"])
