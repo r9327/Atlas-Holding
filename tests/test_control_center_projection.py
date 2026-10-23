@@ -47,7 +47,7 @@ class ControlCenterProjectionTests(unittest.TestCase):
 
     def test_durable_pause_stop_are_projected_atomically(self):
         payload, state = self.project()
-        self.assertEqual(payload["schema_version"], 3)
+        self.assertEqual(payload["schema_version"], 4)
         self.assertEqual(payload["services"], [])
         self.assertIs(state.paused, False)
         self.assertIs(state.stop_requested, False)
@@ -151,7 +151,7 @@ class ControlCenterProjectionTests(unittest.TestCase):
                  "Authorization header leak", NOW - 901),
             )
         payload, state = self.project()
-        self.assertEqual(payload["schema_version"], 3)
+        self.assertEqual(payload["schema_version"], 4)
         by_name = {service.name: service for service in state.services}
         self.assertEqual(by_name["github"].status, "ONLINE")
         self.assertEqual(by_name["github"].age_seconds, 12)
@@ -176,6 +176,62 @@ class ControlCenterProjectionTests(unittest.TestCase):
         _, state = self.project()
         self.assertEqual(state.services[0].status, "STALE")
         self.assertNotEqual(state.network, "ONLINE_STABLE")
+
+    def test_recorded_model_usage_is_historical_not_live_agent(self):
+        from holding.schema import MODEL_SCHEMA_V1
+        with StateStore(self.path) as store:
+            apply_schema(store.db, MODEL_SCHEMA_V1)
+            store.db.execute(
+                "INSERT INTO model_profiles VALUES (?,?,?,?,?,?,?,?,?)",
+                ("c" * 64, "qwen2.5-coder:7b", "Ollama", "Q4",
+                 8192, 100_000_000, 0, "d" * 64, NOW - 60),
+            )
+            store.db.execute(
+                "INSERT INTO mission_model_usage "
+                "(mission_id,role,model_digest_sha256,candidate_sha,observed_at)"
+                " VALUES(?,?,?,?,?)",
+                ("first", "coder", "c" * 64, "", NOW - 18),
+            )
+        payload, state = self.project()
+        self.assertEqual(payload["schema_version"], 4)
+        self.assertEqual(len(state.model_history), 1)
+        usage = state.model_history[0]
+        self.assertEqual(usage.role, "CODER")
+        self.assertEqual(usage.task_id, "first")
+        self.assertEqual(usage.model_name, "qwen2.5-coder:7b")
+        self.assertEqual(usage.model_digest, "c" * 64)
+        self.assertEqual(usage.benchmark_digest, "d" * 64)
+        self.assertEqual(usage.observed_at, NOW - 18)
+        self.assertEqual(state.agents, ())
+        self.assertEqual(state.plugins, ())
+        self.assertNotIn("RUNNING", json.dumps(payload))
+
+    def test_model_usage_is_scoped_to_visible_missions_and_bounded(self):
+        from holding.schema import MODEL_SCHEMA_V1
+        with StateStore(self.path) as store:
+            apply_schema(store.db, MODEL_SCHEMA_V1)
+            store.add_missions([Mission("hidden", "r9327/Dof-Atlas")])
+            store.db.execute(
+                "INSERT INTO model_profiles VALUES (?,?,?,?,?,?,?,?,?)",
+                ("f" * 64, "qwen", "Ollama", "Q4",
+                 4096, 1_000_000, 0, "e" * 64, NOW - 40),
+            )
+            for index in range(31):
+                store.db.execute(
+                    "INSERT INTO mission_model_usage "
+                    "(mission_id,role,model_digest_sha256,candidate_sha,observed_at)"
+                    " VALUES(?,?,?,?,?)",
+                    ("first" if index % 2 else "hidden", "coder",
+                     "f" * 64, "", NOW - index),
+                )
+        _, state = self.project()
+        self.assertEqual(len(state.model_history), 20)
+        self.assertEqual(
+            [row.observed_at for row in state.model_history],
+            sorted([row.observed_at for row in state.model_history], reverse=True),
+        )
+        self.assertTrue(all(row.model_digest == "f" * 64
+                            for row in state.model_history))
 
     def test_event_details_are_not_exposed_to_ui(self):
         with StateStore(self.path) as store:
