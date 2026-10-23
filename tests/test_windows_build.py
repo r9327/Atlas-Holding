@@ -42,6 +42,28 @@ class WindowsBuildTests(unittest.TestCase):
             output_dir=self.output, project_root=self.project,
         )
 
+    def test_cli_rejects_unpinned_or_partial_embedded_python(self):
+        from holding.windows_build import main
+        base = [
+            "--manifest", str(self.manifest),
+            "--manifest-sha256", self.digest,
+            "--output-dir", str(self.output),
+        ]
+        for extras in (
+            ["--mcp-archive", str(self.manifest)],
+            ["--mcp-archive-sha256", "a" * 64],
+            ["--mcp-archive", str(self.manifest),
+             "--mcp-archive-sha256", "0" * 64,
+             "--mcp-module-pins", str(self.manifest),
+             "--mcp-module-pins-sha256", "1" * 64,
+             "--mcp-python-minor", "13"],
+        ):
+            with self.subTest(extras=extras):
+                with self.assertRaises(SystemExit) as err:
+                    main(base + extras)
+                self.assertEqual(err.exception.code, 2)
+        self.assertFalse(self.output.exists())
+
     def test_non_windows_refused_before_outputs_created(self):
         with patch("holding.windows_build.sys.platform", "linux"):
             with self.assertRaisesRegex(RuntimeError, "Windows"):
