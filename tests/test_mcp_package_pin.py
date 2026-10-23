@@ -1,4 +1,5 @@
 """Pinned local package integrity across trusted MCP process launches."""
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -113,7 +114,8 @@ class McpPackagePinTests(unittest.TestCase):
             hashlib.sha256(executable.read_bytes()).hexdigest())
         pin = build_installation_module_pins(root)
         with patch("holding.mcp_package_pin.McpPackagePin.verify",
-                   side_effect=[True, False]):
+                   side_effect=(
+                       [True] * (3 if os.name == "nt" else 2) + [False])):
             with LocalMcpHubSession(
                     interpreter_pin=interpreter, package_root=root,
                     package_pin=pin, response_timeout=8) as session:
@@ -136,11 +138,10 @@ class McpPackagePinTests(unittest.TestCase):
         real = build_installation_module_pins(installed_root)
         forged = McpPackagePin.from_manifest(dict(
             real.entries, **{"mcp_entry.py": "0" * 64}))
-        session = LocalMcpHubSession(
-            interpreter_pin=interpreter, package_root=installed_root,
-            package_pin=forged)
         with patch("holding.mcp_hub_session._spawn_hub") as spawn:
-            with self.assertRaisesRegex(McpSessionError, "module digest"):
-                session.start()
+            with self.assertRaisesRegex(ValueError, "code digest changed"):
+                LocalMcpHubSession(
+                    interpreter_pin=interpreter,
+                    package_root=installed_root,
+                    package_pin=forged)
             spawn.assert_not_called()
-        session.close()

@@ -22,7 +22,9 @@ import time
 
 from .mcp_local_inventory import PinnedLocalPlugin, inspect_pinned_plugin
 from .mcp_package_pin import McpPackagePin
-from .mcp_companion_trust import verify_internal_hub_runtime
+from .mcp_companion_trust import (
+    McpCompanionTrustError, verify_internal_hub_runtime,
+)
 
 CREATE_SUSPENDED = 0x00000004
 KILL_ON_JOB_CLOSE = 0x00002000
@@ -263,13 +265,19 @@ def launch_verified_local_hub(*, interpreter_pin: PinnedLocalPlugin,
         raise WindowsJobError("Windows Job Objects are only available on Windows")
     if (type(interpreter_pin) is not PinnedLocalPlugin
             or not isinstance(package_root, Path) or not package_root.is_absolute()
+            or package_root.is_symlink() or not package_root.is_dir()
+            or (package_root / "holding").is_symlink()
+            or not (package_root / "holding").is_dir()
             or type(job_memory_mb) is not int or not 64 <= job_memory_mb <= 1024
             or type(active_limit) is not int or not 1 <= active_limit <= 8
             or (package_pin is not None and type(package_pin) is not McpPackagePin)):
         raise ValueError("Untrusted local hub launch configuration")
-    verify_internal_hub_runtime(
-        interpreter_pin=interpreter_pin,
-        package_root=package_root, package_pin=package_pin)
+    try:
+        verify_internal_hub_runtime(
+            interpreter_pin=interpreter_pin,
+            package_root=package_root, package_pin=package_pin)
+    except McpCompanionTrustError as exc:
+        raise WindowsJobError(str(exc)) from exc
     if inspect_pinned_plugin(interpreter_pin).binary_state != "BINARY_VERIFIED":
         raise WindowsJobError("Pinned Python runtime is not verified")
     kernel = _kernel32()

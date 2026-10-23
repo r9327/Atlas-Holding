@@ -12,6 +12,7 @@ from unittest.mock import patch
 from holding.mcp_hub_session import (
     LocalMcpHubSession, McpSessionError,
 )
+from holding.mcp_companion_trust import McpCompanionTrustError
 from holding.mcp_local_inventory import PinnedLocalPlugin
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -51,17 +52,17 @@ class LocalMcpHubSessionTests(unittest.TestCase):
         session.close()
 
     def test_wrong_hash_cannot_start_process(self):
-        session = LocalMcpHubSession(
-            interpreter_pin=pinned(digest="0" * 64), package_root=ROOT)
         with patch("holding.mcp_hub_session._spawn_hub") as spawn:
-            with self.assertRaisesRegex(McpSessionError, "unverified"):
-                session.start()
+            with self.assertRaisesRegex(
+                    McpCompanionTrustError, "not verified"):
+                LocalMcpHubSession(
+                    interpreter_pin=pinned(digest="0" * 64),
+                    package_root=ROOT)
             spawn.assert_not_called()
-        self.assertEqual(session.observe().state, "NOT_STARTED")
-        session.close()
 
     def test_forged_package_directory_cannot_start_hub(self):
-        with self.assertRaisesRegex(ValueError, "Untrusted"):
+        with self.assertRaisesRegex(
+                McpCompanionTrustError, "Linked or unavailable"):
             LocalMcpHubSession(
                 interpreter_pin=pinned(), package_root=ROOT.parent)
         with self.assertRaises(ValueError):
