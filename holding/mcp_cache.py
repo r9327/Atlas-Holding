@@ -62,7 +62,7 @@ class OfflineDocumentCache:
     """Finite SQLite cache; no network, shell, or implicit plugin execution."""
 
     def __init__(self, database: Path) -> None:
-        if type(database) is not Path or not database.is_absolute():
+        if not isinstance(database, Path) or not database.is_absolute():
             raise McpCacheError("Trusted absolute cache location required")
         if database.is_symlink():
             raise McpCacheError("Cache path must not be a symlink")
