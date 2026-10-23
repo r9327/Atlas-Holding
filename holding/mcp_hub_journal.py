@@ -13,6 +13,7 @@ import re
 import sqlite3
 
 from .mcp_hub_session import LocalMcpHubSession, McpSessionObservation
+from .schema import MCP_HUB_JOURNAL_SCHEMA, apply_schema
 from .mcp_stdio import PROTOCOL_VERSION
 
 
@@ -66,16 +67,7 @@ class HubObservationJournal:
                 self.db.execute("PRAGMA query_only=ON")
             else:
                 self.db.execute("PRAGMA journal_mode=WAL")
-                self.db.execute("""
-                    CREATE TABLE IF NOT EXISTS mcp_hub_observations (
-                        seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                        state TEXT NOT NULL,
-                        recorded_epoch INTEGER NOT NULL,
-                        pid INTEGER,
-                        source_sha256 TEXT NOT NULL,
-                        protocol_version TEXT
-                    )
-                """)
+                apply_schema(self.db, MCP_HUB_JOURNAL_SCHEMA)
             columns = self.db.execute(
                 "PRAGMA table_info(mcp_hub_observations)").fetchall()
             if [row[1] for row in columns] != [
