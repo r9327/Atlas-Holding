@@ -122,6 +122,54 @@ class HoldingGitSyncTests(unittest.TestCase):
                 self.client.run("sync")
         self.assertEqual(git(self.local, "rev-parse", "HEAD"), before)
 
+    def test_read_only_check_uses_one_ref_probe_if_identical(self):
+        observed = []
+        run_git = self.client._git
+
+        def trace(*args, **kwargs):
+            if args[0] in ("ls-remote", "fetch", "push", "merge"):
+                observed.append(args[0])
+            return run_git(*args, **kwargs)
+
+        with patch.object(self.client, "_git", side_effect=trace):
+            state = self.client.check()
+        self.assertTrue(state.remote_checked)
+        self.assertEqual(state.ahead, 0)
+        self.assertEqual(state.behind, 0)
+        self.assertEqual(state.head, state.remote_head)
+        self.assertEqual(observed, ["ls-remote"])
+
+    def test_read_only_check_reports_remote_ahead_even_with_local_edits(self):
+        other = self.other_clone()
+        self.commit(other, "remote update")
+        git(other, "push", "-q", "origin", "main")
+        original_head = git(self.local, "rev-parse", "HEAD")
+        local_file = self.local / "my-uncommitted-notes.txt"
+        local_file.write_text("keep this", encoding="utf-8")
+        result = self.client.check()
+        self.assertTrue(result.dirty)
+        self.assertEqual((result.ahead, result.behind), (0, 1))
+        self.assertEqual(git(self.local, "rev-parse", "HEAD"), original_head)
+        self.assertEqual(local_file.read_text(encoding="utf-8"), "keep this")
+
+    def test_read_only_check_reports_divergence_without_merge(self):
+        other = self.other_clone()
+        self.commit(self.local, "local commit")
+        self.commit(other, "remote commit")
+        git(other, "push", "-q", "origin", "main")
+        original = git(self.local, "rev-parse", "HEAD")
+        result = self.client.check()
+        self.assertEqual((result.ahead, result.behind), (1, 1))
+        self.assertEqual(git(self.local, "rev-parse", "HEAD"), original)
+
+    def test_read_only_check_reports_absent_remote_branch(self):
+        self.feature()
+        status = self.client.check()
+        self.assertIsNone(status.remote_head)
+        self.assertIsNone(status.ahead)
+        self.assertIsNone(status.behind)
+        self.assertTrue(status.remote_checked)
+
     def test_noop_sync(self):
         result = self.client.run("sync")
         self.assertEqual(result.action, "UP_TO_DATE")
