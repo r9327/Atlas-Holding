@@ -118,6 +118,31 @@ class InternalMcpSupervisorTests(unittest.TestCase):
                     background_allowed=True, resources_safe=True, now_epoch=True)
             self.assertEqual(supervisor._session.observe().state, "NOT_STARTED")
 
+    @unittest.skipUnless(os.name == "nt", "Native NTFS ACL gate on Windows")
+    def test_pinned_package_requires_private_acl_for_every_python_module(self):
+        from holding.mcp_package_pin import build_installation_module_pins
+        from holding.mcp_windows_acl import WindowsAclError
+        pin = build_installation_module_pins(ROOT)
+        with patch("holding.mcp_supervisor.require_private_windows_path",
+                   side_effect=WindowsAclError("Denied")) as acl:
+            with self.assertRaises(WindowsAclError):
+                InternalMcpSupervisor(
+                    database=self.db, interpreter_pin=self.pin,
+                    package_root=ROOT, package_pin=pin)
+            acl.assert_called_once_with(self.db)
+
+        with patch("holding.mcp_supervisor.require_private_windows_path") as acl:
+            with InternalMcpSupervisor(
+                    database=self.db, interpreter_pin=self.pin,
+                    package_root=ROOT, package_pin=pin):
+                pass
+            self.assertEqual(acl.call_count, len(pin.entries) + 3)
+            self.assertTrue(any(
+                str(call.args[0]).endswith("mcp_entry.py")
+                and call.kwargs.get("check_parent") is False
+                for call in acl.call_args_list
+            ))
+
     def test_corrupted_binary_is_never_launched(self):
         with self.supervisor() as supervisor:
             supervisor._session._pin = PinnedLocalPlugin(
