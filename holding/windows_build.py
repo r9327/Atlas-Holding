@@ -269,6 +269,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--engine-sha256")
     parser.add_argument("--adapter-executable", type=Path)
     parser.add_argument("--adapter-sha256")
+    parser.add_argument("--mcp-archive", type=Path)
+    parser.add_argument("--mcp-archive-sha256")
+    parser.add_argument("--mcp-module-pins", type=Path)
+    parser.add_argument("--mcp-module-pins-sha256")
+    parser.add_argument("--mcp-python-minor", type=int)
     args = parser.parse_args(argv)
     if (args.adapter_executable is None) != (args.adapter_sha256 is None):
         parser.error("Full adapter filename and SHA-256 required")
@@ -284,12 +289,53 @@ def main(argv: list[str] | None = None) -> int:
             "AtlasHoldingControlCenter.exe": args.viewer_sha256,
             "AtlasHoldingEngine.exe": args.engine_sha256,
         }
+    mcp_fields = (
+        args.mcp_archive, args.mcp_archive_sha256,
+        args.mcp_module_pins, args.mcp_module_pins_sha256,
+        args.mcp_python_minor,
+    )
+    mcp_release = None
+    if any(item is not None for item in mcp_fields):
+        if not all(item is not None for item in mcp_fields):
+            parser.error("Complete embedded MCP archive, module pins and SHA-256 required")
+        if (args.runtime_directory is None
+                or not args.mcp_archive.is_absolute()
+                or not args.mcp_module_pins.is_absolute()
+                or not isinstance(args.mcp_archive_sha256, str)
+                or not isinstance(args.mcp_module_pins_sha256, str)
+                or not _HEX64.fullmatch(args.mcp_archive_sha256)
+                or not _HEX64.fullmatch(args.mcp_module_pins_sha256)
+                or args.mcp_archive.is_symlink()
+                or args.mcp_module_pins.is_symlink()):
+            parser.error("Untrusted embedded MCP release inputs")
+        module_bytes = args.mcp_module_pins.read_bytes()
+        if (not 1 <= len(module_bytes) <= 32768
+                or _sha256(args.mcp_module_pins) != args.mcp_module_pins_sha256):
+            parser.error("Embedded MCP module inventory is not release-pinned")
+        def unique(pairs):
+            record = {}
+            for key, value in pairs:
+                if key in record:
+                    raise ValueError("Duplicated release module identity")
+                record[key] = value
+            return record
+        try:
+            module_hashes = json.loads(module_bytes, object_pairs_hook=unique)
+            mcp_release = EmbeddedPythonRelease(
+                python_minor=args.mcp_python_minor,
+                zip_sha256=args.mcp_archive_sha256,
+                module_sha256=module_hashes,
+            )
+        except (ValueError, UnicodeError):
+            parser.error("Invalid pinned embedded Python package inventory")
     result = build_windows_installer(
         manifest=args.manifest, expected_manifest_sha256=args.manifest_sha256,
         output_dir=args.output_dir, runtime_directory=args.runtime_directory,
         runtime_pins=pins,
         adapter_source=args.adapter_executable,
         adapter_sha256=args.adapter_sha256,
+        embedded_python_archive=args.mcp_archive,
+        embedded_python_pin=mcp_release,
     )
     print(json.dumps(asdict(result), sort_keys=True))
     return 0
