@@ -1,5 +1,6 @@
 """Real internal MCP supervisor lifecycle, pause and resource pressure tests."""
 import hashlib
+from contextlib import closing
 import os
 from pathlib import Path
 import sqlite3
@@ -30,9 +31,12 @@ class InternalMcpSupervisorTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.db = Path(self.temp.name) / "engine.sqlite"
-        with sqlite3.connect(self.db) as conn:
-            conn.execute("CREATE TABLE missions (id TEXT PRIMARY KEY)")
-            conn.execute("INSERT INTO missions VALUES ('task-1')")
+        # sqlite3.Connection's context manager does NOT close the handle.
+        # On native Windows this would leave engine.sqlite locked at teardown.
+        with closing(sqlite3.connect(self.db)) as conn:
+            with conn:
+                conn.execute("CREATE TABLE missions (id TEXT PRIMARY KEY)")
+                conn.execute("INSERT INTO missions VALUES ('task-1')")
         self.pin = interpreter_pin()
         if os.name == "nt":
             # GitHub runner's Python installation is not provisioned by
@@ -84,7 +88,7 @@ class InternalMcpSupervisorTests(unittest.TestCase):
                 background_allowed=True, resources_safe=True, now_epoch=NOW + 3)
             self.assertEqual(resumed.state, "RESPONSIVE")
             self.assertNotEqual(resumed.pid, first.pid)
-            with sqlite3.connect(self.db) as connection:
+            with closing(sqlite3.connect(self.db)) as connection:
                 self.assertEqual(
                     connection.execute("SELECT id FROM missions").fetchone()[0],
                     "task-1",
