@@ -44,6 +44,21 @@ class LiveDashboardTests(unittest.TestCase):
         self.client = DashboardIpcClient(
             port=self.server.port, secret=KEY, engine_id=ENGINE)
 
+    def _window(self, *args, **kwargs):
+        """Ensure every test joins its socket workers before Qt cleanup.
+
+        Production close remains nonblocking. Tests may block at teardown,
+        where it is essential that background socket operations finish before
+        the shared QApplication and temporary SQLite roots are destroyed.
+        """
+        window = LiveControlCenterWindow(*args, **kwargs)
+        def cleanup() -> None:
+            window.close()
+            window._executor.shutdown(wait=True, cancel_futures=True)
+            self.app.processEvents()
+        self.addCleanup(cleanup)
+        return window
+
     def until(self, condition, seconds=4):
         expiry = time.monotonic() + seconds
         while time.monotonic() < expiry:
@@ -54,7 +69,7 @@ class LiveDashboardTests(unittest.TestCase):
         self.fail("Qt did not display the authenticated state")
 
     def test_ui_consumes_real_engine_events_without_qt_blocking(self):
-        window = LiveControlCenterWindow(self.client, refresh_ms=250)
+        window = self._window(self.client, refresh_ms=250)
         try:
             self.until(lambda: window.tasks.rowCount() == 1)
             self.assertEqual(window.tasks.item(0, 1).text(), "READY")
@@ -73,7 +88,7 @@ class LiveDashboardTests(unittest.TestCase):
     def test_unchanged_authenticated_snapshots_keep_live_view_fresh(self):
         # SQLite may remain idle for minutes; fresh HMAC-verified polls are
         # healthy even when the durable event sequence does not increment.
-        window = LiveControlCenterWindow(self.client, refresh_ms=250)
+        window = self._window(self.client, refresh_ms=250)
         try:
             self.until(lambda: window.tasks.rowCount() == 1)
             initial_sequence = window.displayed_sequence
@@ -93,7 +108,7 @@ class LiveDashboardTests(unittest.TestCase):
             window.close()
 
     def test_lost_connection_is_not_presented_as_live(self):
-        window = LiveControlCenterWindow(self.client, refresh_ms=250)
+        window = self._window(self.client, refresh_ms=250)
         try:
             self.until(lambda: window.tasks.rowCount() == 1)
             self.server.close()
@@ -105,7 +120,7 @@ class LiveDashboardTests(unittest.TestCase):
             window.close()
 
     def test_closing_window_does_not_interrupt_running_headless_host(self):
-        window = LiveControlCenterWindow(self.client, refresh_ms=250)
+        window = self._window(self.client, refresh_ms=250)
         self.until(lambda: window.tasks.rowCount() == 1)
         self.assertTrue(window.close())
         self.assertEqual(self.client.fetch().tasks[0].state, "READY")
@@ -120,7 +135,7 @@ class LiveDashboardTests(unittest.TestCase):
                 port=trusted_host.port, secret=KEY, engine_id=ENGINE)
             write = DashboardControlClient(
                 port=trusted_host.port, secret=write_key)
-            window = LiveControlCenterWindow(
+            window = self._window(
                 read, control=write, refresh_ms=250)
             def flags():
                 with ControlPlane(self.db) as controller:
@@ -165,7 +180,7 @@ class LiveDashboardTests(unittest.TestCase):
                     raise RuntimeError("Timed out waiting for test writer")
                 return original_send(action)
 
-            window = LiveControlCenterWindow(
+            window = self._window(
                 read, control=write, refresh_ms=250)
             try:
                 self.until(lambda: window.pause_button.isEnabled())
@@ -206,7 +221,7 @@ class LiveDashboardTests(unittest.TestCase):
             read = DashboardIpcClient(
                 port=host.port, secret=KEY, engine_id=ENGINE)
             write = DashboardControlClient(port=host.port, secret=write_key)
-            window = LiveControlCenterWindow(read, control=write, refresh_ms=250)
+            window = self._window(read, control=write, refresh_ms=250)
             try:
                 self.until(lambda: window.pause_button.isEnabled())
                 with patch.object(write, "send",
@@ -235,7 +250,7 @@ class LiveDashboardTests(unittest.TestCase):
             reader = DashboardIpcClient(
                 port=host.port, secret=KEY, engine_id=ENGINE)
             writer = DashboardControlClient(port=host.port, secret=write_key)
-            window = LiveControlCenterWindow(
+            window = self._window(
                 reader, control=writer, refresh_ms=250)
             try:
                 self.until(lambda: window.pause_button.isEnabled())
@@ -261,7 +276,7 @@ class LiveDashboardTests(unittest.TestCase):
                 window.close()
 
     def test_readonly_view_disables_mutating_buttons(self):
-        window = LiveControlCenterWindow(self.client, refresh_ms=250)
+        window = self._window(self.client, refresh_ms=250)
         try:
             self.until(lambda: window.tasks.rowCount() == 1)
             self.assertFalse(window.pause_button.isEnabled())
@@ -275,9 +290,9 @@ class LiveDashboardTests(unittest.TestCase):
 
     def test_input_constraints_refuse_invalid_refresh_or_client(self):
         with self.assertRaises(ValueError):
-            LiveControlCenterWindow("unauthenticated")
+            self._window("unauthenticated")
         with self.assertRaises(ValueError):
-            LiveControlCenterWindow(self.client, refresh_ms=0)
+            self._window(self.client, refresh_ms=0)
 
 
 if __name__ == "__main__":
