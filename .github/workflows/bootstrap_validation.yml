@@ -125,6 +125,25 @@ jobs:
           python -B -X utf8 -m holding.native_embedded_setup_smoke --manifest "$candidate" --manifest-sha256 "$pin"
           if ($LASTEXITCODE -ne 0) { throw "Frozen setup did not verify embedded pinned runtime binaries" }
           Write-Output "NONRELEASE_SETUP_RUNTIME_BUNDLE_SMOKE_PASS"
+      - name: Real SHA-pinned Python 3.13 embeddable runtime native execution smoke
+        if: matrix.os == 'windows-latest' && (github.event_name == 'push' || github.event.label.name == 'ci:validate')
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          $url = "https://www.python.org/ftp/python/3.13.16/python-3.13.16-embed-amd64.zip"
+          $officialSha = "97dae5274cc54867065e8d5a3226e48c35017ed332a0fdb0e27d5b5821961297"
+          $archive = Join-Path $env:RUNNER_TEMP "python-3.13.16-embed-$officialSha.zip"
+          try {
+            Invoke-WebRequest -Uri $url -OutFile $archive -MaximumRedirection 3 -TimeoutSec 180
+            if (!(Test-Path $archive)) { throw "Official CPython ZIP missing" }
+            if ((Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $officialSha) {
+              throw "Downloaded CPython release SHA differs from Python.org release checksum"
+            }
+            python -B -X utf8 -m holding.embedded_python_native_smoke --archive "$archive"
+            if ($LASTEXITCODE -ne 0) { throw "Native Python embeddable execution failed" }
+          } finally {
+            Remove-Item -Force -ErrorAction SilentlyContinue $archive
+          }
       - name: Remove nonrelease EXE and verify checkout
         if: matrix.os == 'windows-latest' && (github.event_name == 'push' || github.event.label.name == 'ci:validate')
         shell: pwsh
