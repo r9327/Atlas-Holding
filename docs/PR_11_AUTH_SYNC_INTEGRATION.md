@@ -451,3 +451,55 @@ encore l'interface graphique de Setup ni un interpréteur Python embeddable
 livré dans une release**. Le binaire et les empreintes doivent venir d'une
 chaîne de distribution autorisée avant toute activation. Aucun nouvel EXE
 installable n'est déclaré prêt.
+
+
+## Installateur Windows unifié : Python compagnon et schéma v6 (23 octobre 2026)
+
+La PR #2 (`e9c6acd48929c9e4672bfb7aa0d3e2ec35007d2a`,
+CI Ubuntu/Windows PASS #39996826618) a été importée dans la
+branche Draft PR #11 par un commit Git à deux parents
+`529d1ba06d686d81e49d2e34a257b9e60b6792b4`, sans toucher
+à `main`.
+
+Le chemin d'installation Windows est désormais relié aux composants
+d'exécution MCP, plutôt que de promettre une distribution tout-en-un
+sans runtime compatible :
+
+- Le builder `AtlasHoldingSetup.exe` sait embarquer un CPython Windows
+  embeddable officiel, un manifeste source `holding/*.py` et tous
+  leurs SHA attendus. Le wizard pose les fichiers sur le disque choisi,
+  sous répertoire NTFS protégé ; il refuse la modification d'un binaire,
+  d'un module ou de `python3XX._pth`. La relance sans modification
+  réutilise l'installation précédente.
+- Le moteur accepte **schema=6** avec un package Python compagnon installé :
+  `mcp.package_root`, `mcp.interpreter`, `mcp.interpreter_sha256`,
+  `mcp.source_release_zip_sha256`, `mcp.python_minor`,
+  `mcp.module_sha256` et `mcp.response_timeout`. Le chemin du
+  compagnon doit correspondre à la version sous
+  `<install_root>/mcp-python/python-embedded-<sha16>`, et non à un
+  binaire choisi par une roadmap.
+- L'inscription initiale `EngineEnrollmentRequest` publie atomiquement
+  **directement** la configuration `engine.json` en schéma v6 lorsqu'un
+  compagnon est vérifié. Aucun remplacement implicite d'un JSON v3 déjà
+  en place ; il faut le flux de réparation explicite pour une migration
+  d'installation existante.
+- `InstalledEngineSpec` valide le schéma v6, les hashes natifs/sources
+  et les ACL du compagnon avant de lancer l'exécutable Engine.
+  `Installation.load` répète les contrôles au sein du moteur.
+  L'enregistrement d'une machine sans MCP reste en schéma v3.
+- `LocalMcpHubSession` et le Job Object autorisent uniquement le Python
+  natif actuel **ou** un compagnon CPython `python.exe` versionné,
+  effectivement apparié à un manifeste de sources épinglé. Ce n'est
+  pas une autorisation de lancer n'importe quel plugin ou interpréteur.
+  Le supervisor conserve Pause/Stop, limites CPU/processus/mémoire et
+  arrêts sans enfants orphelins.
+
+Une étape CI Windows distincte télécharge l'archive officielle CPython
+3.13.16 x64 sous le SHA-256 publié par Python.org
+`97dae5274cc54867065e8d5a3226e48c35017ed332a0fdb0e27d5b5821961297`,
+puis exécute le **véritable** `holding.mcp_entry` depuis cet
+interpréteur installé. La suite vérifie discovery MCP, PID conservé,
+Job Object réel, limite mémoire/processus et arrêt en cas de
+falsification d'un module. Cela ne prouve pas encore les plugins tiers,
+la signature Authenticode ou une installation manuelle complète avec
+réparation et mise à jour de tous les composants.
