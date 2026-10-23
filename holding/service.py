@@ -81,6 +81,7 @@ class HoldingService:
         self._dashboard_session = None
         self._mcp_supervisor = None
         self._mcp_last_refresh = 0.0
+        self._mcp_blocked = False
         self.last_mcp_error: str | None = None
 
     @classmethod
@@ -160,11 +161,18 @@ class HoldingService:
         if supervisor is None:
             return
         when = time.monotonic()
-        if allowed and resources_safe and 0 < self._mcp_last_refresh and (
-                when - self._mcp_last_refresh < 15):
-            return  # Signed hub proof expires at 30 s; avoid frequent subprocess I/O.
-        # After Pause/STOP/pressure, resume must not wait for the old throttle.
-        self._mcp_last_refresh = when if allowed and resources_safe else 0.0
+        if not allowed or not resources_safe:
+            # A paused daemon must not write SQLite 20 times/sec. Record one
+            # durable CLOSED transition; STOP and pressure remain fail-closed.
+            if self._mcp_blocked:
+                return
+            self._mcp_blocked = True
+            self._mcp_last_refresh = 0.0
+        else:
+            self._mcp_blocked = False
+            if 0 < self._mcp_last_refresh and when - self._mcp_last_refresh < 15:
+                return  # Hub observation refreshed before 30s expiry.
+            self._mcp_last_refresh = when
         try:
             supervisor.step(
                 background_allowed=allowed, resources_safe=resources_safe,
