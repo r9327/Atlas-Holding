@@ -49,21 +49,23 @@ class WindowsPrivateAclTests(unittest.TestCase):
         apply_private_acl(self.file)
 
     def test_private_file_and_private_parent_admitted(self):
-        try:
-            require_private_windows_path(self.file)
-        except WindowsAclError:
-            # CI-only diagnostics: show names and rights from newly generated
-            # disposable test ACLs, never production secrets or manifest bytes.
-            reports = []
-            for target in (self.root, self.file):
-                output = subprocess.run(
-                    ["icacls", str(target)], stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE, text=True, timeout=10)
-                reports.append(output.stdout[:2000])
-            self.fail("Unexpected disposable fixture ACLs: " + repr(reports))
+        require_private_windows_path(self.file)
         config = load_bootstrap_manifest(self.file)
         self.assertEqual(config.pins, ())
         self.assertIsNone(config.cache_database)
+
+    def test_owner_rights_do_not_weaken_untrusted_sid_denial(self):
+        # OWNER RIGHTS is the built-in owner-restricted pseudo-SID; its
+        # permissions are safe only because the resource owner is checked.
+        subprocess.run(
+            ["icacls", str(self.root), "/grant", "*S-1-3-4:(OI)(CI)F"],
+            check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+        require_private_windows_path(self.file)
+        subprocess.run(
+            ["icacls", str(self.root), "/grant", "*S-1-1-0:(OI)(CI)M"],
+            check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+        with self.assertRaisesRegex(WindowsAclError, "untrusted write"):
+            require_private_windows_path(self.file)
 
     def test_world_write_to_manifest_is_rejected_before_parsing(self):
         subprocess.run(
