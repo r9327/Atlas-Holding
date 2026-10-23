@@ -171,6 +171,36 @@ class LiveDashboardTests(unittest.TestCase):
                 allow_write.set()
                 window.close()
 
+    def test_ambiguous_command_ack_does_not_reenable_or_replay(self):
+        from holding.dashboard_ipc import DashboardIpcError
+        write_key = b"u" * 32
+        with DashboardIpcServer.for_database(
+                self.db, engine_id=ENGINE, secret=KEY,
+                control_secret=write_key) as host:
+            read = DashboardIpcClient(
+                port=host.port, secret=KEY, engine_id=ENGINE)
+            write = DashboardControlClient(port=host.port, secret=write_key)
+            window = LiveControlCenterWindow(read, control=write, refresh_ms=250)
+            try:
+                self.until(lambda: window.pause_button.isEnabled())
+                with patch.object(write, "send",
+                                  side_effect=DashboardIpcError(
+                                      "Control acknowledgement unavailable")) as send:
+                    window.pause_button.click()
+                    self.until(lambda: window._control_pending is None
+                               and window._awaiting_confirmation is not None)
+                    self.until(lambda: "non confirmée" in window.status.text())
+                    self.assertFalse(window.pause_button.isEnabled())
+                    self.assertFalse(window.resume_button.isEnabled())
+                    self.assertFalse(window.stop_button.isEnabled())
+                    window.request_pause()
+                    window.request_stop()
+                    self.assertEqual(send.call_count, 1)
+                with ControlPlane(self.db) as controller:
+                    self.assertFalse(controller.snapshot().paused)
+            finally:
+                window.close()
+
     def test_readonly_view_disables_mutating_buttons(self):
         window = LiveControlCenterWindow(self.client, refresh_ms=250)
         try:
