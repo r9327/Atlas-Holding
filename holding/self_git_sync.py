@@ -171,6 +171,20 @@ class HoldingGitSync:
                       remote_head=remote_head, ahead=ahead, behind=behind,
                       remote_checked=True)
 
+    def check(self) -> Status:
+        """Observe remote divergence without changing local files or branches.
+
+        A matching GitHub SHA needs only one ls-remote probe; a changed tip
+        fetches objects to check ancestry, but never merges/pushes. This is
+        suitable for an explicitly requested Control Center remote check.
+        """
+        local = self.status()
+        remote = self._observe_remote(local.branch, local_head=local.head)
+        result = self._status_remote(local, remote)
+        if self.status() != local:
+            raise SyncBlocked("Checkout changed during remote status inspection")
+        return result
+
     def run(self, mode: Literal["pull", "push", "sync"]) -> SyncResult:
         if mode not in ("pull", "push", "sync"):
             raise ValueError("Unknown synchronization mode")
@@ -225,15 +239,16 @@ class HoldingGitSync:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Synchroniser sans écrasement le Git source Atlas-Holding")
-    parser.add_argument("operation", choices=("status", "pull", "push", "sync"))
+    parser.add_argument("operation", choices=("status", "check", "pull", "push", "sync"))
     parser.add_argument("--repo", type=Path, default=Path.cwd(), help="Racine du checkout Holding")
     parser.add_argument("--json", action="store_true", help="Sortie exploitable par le Control Center")
     args = parser.parse_args(argv)
     client = HoldingGitSync(args.repo)
     try:
-        if args.operation == "status":
-            result: dict = {"ok": True, "operation": "status",
-                            "status": asdict(client.status())}
+        if args.operation in ("status", "check"):
+            state = client.status() if args.operation == "status" else client.check()
+            result: dict = {"ok": True, "operation": args.operation,
+                            "status": asdict(state)}
         else:
             sync = client.run(args.operation)
             result = {"ok": True, "operation": args.operation,
