@@ -1,0 +1,40 @@
+name: Ollama native Windows installation probe
+
+on:
+  pull_request:
+    branches: [main]
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  native-ollama-smoke:
+    if: >-
+      github.event.label.name == 'ci:native-ollama' &&
+      github.head_ref == 'feat/02-windows-bootstrap'
+    name: Real WinGet Ollama installation and live API (storage status explicit)
+    runs-on: windows-2025
+    timeout-minutes: 16
+    steps:
+      - name: Checkout exact candidate SHA
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Python 3.13
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Check out no preinstalled Ollama and execute user-scoped installation
+        shell: pwsh
+        timeout-minutes: 12
+        run: |
+          if ($env:GITHUB_ACTIONS -ne "true") { throw "Runner gate not active" }
+          python -B -X utf8 -m holding.ollama_native_smoke
+          if ($LASTEXITCODE -ne 0) { throw "Real Ollama setup and API check failed" }
+      - name: Require unmodified repository
+        shell: pwsh
+        run: |
+          $changes = git status --porcelain --untracked-files=normal
+          if ($changes) { throw "Native probe changed tracked workspace: $changes" }
