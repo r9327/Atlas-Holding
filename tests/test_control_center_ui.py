@@ -5,6 +5,7 @@ import gc
 import json
 import unittest
 import weakref
+from unittest.mock import patch
 
 from PySide6.QtWidgets import QApplication, QAbstractItemView, QProgressBar
 
@@ -137,6 +138,60 @@ class ControlCenterUiTests(unittest.TestCase):
         self.assertEqual(window.tasks.item(0, 4).text(), "—")
         self.assertEqual(window.tasks.item(0, 5).text(), "Aucune")
         window.close()
+
+
+    def test_protection_view_shows_only_exact_sha_completed_evidence(self):
+        window = ControlCenterWindow(trusted_engine_id="engine-1")
+        window.render_state(self.state())
+        self.assertEqual(window.proofs.rowCount(), 1)
+        self.assertEqual(window.proofs.item(0, 1).text(), "CI FULL")
+        self.assertEqual(window.proofs.item(0, 2).text(), "a" * 40)
+        self.assertEqual(window.proofs.item(0, 3).text(), "b" * 64)
+        self.assertIn("Tâches avec preuve CI FULL : 1 / 1",
+                      window.protection_status.text())
+
+        payload = snapshot()
+        payload["sequence"] = 43
+        payload["log_page"]["items"][0]["sequence"] = 42
+        payload["tasks"][0].update({
+            "state": "QA_PENDING", "phase": "TESTS", "progress": "WAITING",
+            "completion_evidence": None,
+        })
+        unverified = consume_dashboard_snapshot(
+            json.dumps(payload).encode("utf-8"),
+            trusted_engine_id="engine-1", expected_sequence=43, now_epoch=NOW,
+        )
+        window.render_state(unverified)
+        self.assertEqual(window.proofs.rowCount(), 0)
+        self.assertIn("Tâches avec preuve CI FULL : 0 / 1",
+                      window.protection_status.text())
+        self.assertIn("En attente QA : 1", window.protection_status.text())
+        window.close()
+
+    def test_silent_connection_expires_and_recovers_only_on_new_snapshot(self):
+        window = ControlCenterWindow(trusted_engine_id="engine-1")
+        with patch("holding.control_center_ui.monotonic", return_value=100):
+            window.render_state(self.state())
+        self.assertIn("CI_PENDING", window.status.text())
+        self.assertTrue(window._status_timer.isActive())
+
+        with patch("holding.control_center_ui.monotonic", return_value=131):
+            window._refresh_connection_status()
+        self.assertIn("ÉTAT PÉRIMÉ", window.status.text())
+        self.assertNotIn("CI_PENDING", window.status.text())
+
+        # Replay cannot revive an expired engine status.
+        with patch("holding.control_center_ui.monotonic", return_value=132):
+            self.assertFalse(window.render_state(self.state()))
+            window._refresh_connection_status()
+        self.assertIn("ÉTAT PÉRIMÉ", window.status.text())
+
+        with patch("holding.control_center_ui.monotonic", return_value=133):
+            self.assertTrue(window.render_state(self.state(sequence=43)))
+        self.assertIn("CI_PENDING", window.status.text())
+        self.assertNotIn("ÉTAT PÉRIMÉ", window.status.text())
+        window.close()
+        self.assertFalse(window._status_timer.isActive())
 
 
 if __name__ == "__main__":
