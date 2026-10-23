@@ -96,6 +96,44 @@ class EmbeddedPythonStageTests(unittest.TestCase):
             self.stage()
         self.assertEqual(len(list(self.dest.iterdir())), 1)
 
+    def test_installed_runtime_receipt_detects_module_native_and_policy_tamper(self):
+        from holding.embedded_python_stage import verify_staged_embedded_python
+        observed = self.stage()
+        verified = verify_staged_embedded_python(
+            directory=observed.directory, pin=self.pin)
+        self.assertEqual(verified.python_exe, observed.python_exe)
+        self.assertEqual(verified.status, "STAGED_NOT_EXECUTED")
+        binary = observed.directory / "python3.dll"
+        good = binary.read_bytes()
+        binary.write_bytes(b"tampered DLL")
+        with self.assertRaises(EmbeddedRuntimeError):
+            verify_staged_embedded_python(directory=observed.directory, pin=self.pin)
+        binary.write_bytes(good)
+        code = observed.directory / "holding" / "mcp_entry.py"
+        module_before = code.read_bytes()
+        code.write_bytes(b"print('attacker')")
+        with self.assertRaises(EmbeddedRuntimeError):
+            verify_staged_embedded_python(directory=observed.directory, pin=self.pin)
+        code.write_bytes(module_before)
+        policy = observed.directory / "python313._pth"
+        policy.write_text("python313.zip\\n.\\nimport site\\n", encoding="ascii")
+        with self.assertRaises(EmbeddedRuntimeError):
+            verify_staged_embedded_python(directory=observed.directory, pin=self.pin)
+
+    def test_installed_runtime_receipt_rejects_forged_extra_files(self):
+        from holding.embedded_python_stage import verify_staged_embedded_python
+        observed = self.stage()
+        (observed.directory / "evil.dll").write_bytes(b"untrusted")
+        with self.assertRaises(EmbeddedRuntimeError):
+            verify_staged_embedded_python(directory=observed.directory, pin=self.pin)
+        (observed.directory / "evil.dll").unlink()
+        receipt = observed.directory / "atlas-python-embedded-receipt.json"
+        data = json.loads(receipt.read_text())
+        data["source_release_zip_sha256"] = "0" * 64
+        receipt.write_text(json.dumps(data))
+        with self.assertRaisesRegex(EmbeddedRuntimeError, "release pins"):
+            verify_staged_embedded_python(directory=observed.directory, pin=self.pin)
+
     def test_tampered_zip_refuses_install_without_creating_install_directory(self):
         self.members["python.exe"] = b"not publisher's python"
         self.make_archive()
