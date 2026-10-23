@@ -76,7 +76,7 @@ def _sha_file(path: Path) -> str:
 
 
 def _canonical_parent(path: Path) -> None:
-    if (type(path) is not Path or not path.is_absolute()
+    if (not isinstance(path, Path) or not path.is_absolute()
             or path.is_symlink() or not path.is_dir()
             or path.resolve(strict=True) != path):
         raise EmbeddedRuntimeError("Trusted canonical installer target required")
@@ -125,9 +125,9 @@ def stage_pinned_embedded_python(
     untrusted local bytes. Files are only read, never executed.
     """
     if (type(pin) is not EmbeddedPythonRelease
-            or type(archive) is not Path or not archive.is_absolute()
+            or not isinstance(archive, Path) or not archive.is_absolute()
             or archive.is_symlink() or not archive.is_file()
-            or type(approved_package_root) is not Path
+            or not isinstance(approved_package_root, Path)
             or not approved_package_root.is_absolute()
             or approved_package_root.is_symlink()
             or approved_package_root.resolve(strict=True) != approved_package_root):
