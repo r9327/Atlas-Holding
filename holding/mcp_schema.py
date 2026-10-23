@@ -22,7 +22,9 @@ MAX_SCHEMA_DEPTH = 8
 def validate_schema(schema: object, depth: int = 0) -> None:
     """Reject unsupported claims before advertising the tool to a client."""
     if (type(schema) is not dict or depth > MAX_SCHEMA_DEPTH
-            or not set(schema) <= _FIELDS or schema.get("type") not in _TYPES):
+            or not set(schema) <= _FIELDS
+            or type(schema.get("type")) is not str
+            or schema["type"] not in _TYPES):
         raise ValueError("Unsupported bounded MCP input schema")
     kind = schema["type"]
     if "enum" in schema:
@@ -85,7 +87,9 @@ def matches_schema(value: object, schema: dict, depth: int = 0) -> bool:
             return False
     elif type(value) is not required:
         return False
-    if "enum" in schema and value not in schema["enum"]:
+    if "enum" in schema and not any(
+            type(value) is type(candidate) and value == candidate
+            for candidate in schema["enum"]):
         return False
     if kind == "object":
         properties = schema.get("properties", {})
