@@ -88,6 +88,16 @@ class ModelUsageView:
 
 
 @dataclass(frozen=True)
+class LocalHubView:
+    state: str
+    pid: int | None
+    observed_epoch: int
+    age_seconds: int
+    source_sha256: str
+    protocol_version: str | None
+
+
+@dataclass(frozen=True)
 class ServiceView:
     name: str
     status: str
@@ -120,6 +130,7 @@ class DashboardState:
     stop_requested: bool | None = None
     services: tuple[ServiceView, ...] = ()
     model_history: tuple[ModelUsageView, ...] = ()
+    hub: LocalHubView | None = None
 
 
 def _object(value: Any, required: set[str]) -> dict[str, Any]:
@@ -303,6 +314,40 @@ def _model_use(value: Any, task_ids: set[str],
     )
 
 
+def _local_hub(value: Any, generated_at: int) -> LocalHubView:
+    item = _object(value, {
+        "state", "pid", "observed_epoch", "age_seconds",
+        "source_sha256", "protocol_version",
+    })
+    state = item["state"]
+    if type(state) is not str or state not in {
+            "NOT_STARTED", "UNVERIFIED", "RESPONSIVE", "STALE",
+            "EXITED", "TIMEOUT", "OUTPUT_LIMIT", "BAD_PROTOCOL",
+            "BINARY_CHANGED", "IO_ERROR", "CLOSED"}:
+        raise ControlCenterStateError("Invalid MCP hub observation status")
+    pid = item["pid"]
+    if pid is not None:
+        pid = _integer(pid, "MCP hub pid", maximum=2**32 - 1)
+        if pid == 0:
+            raise ControlCenterStateError("Invalid MCP hub process identity")
+    observed = _integer(
+        item["observed_epoch"], "MCP hub observation epoch",
+        maximum=4_102_444_800)
+    age = _integer(item["age_seconds"], "MCP hub age", maximum=31_536_000)
+    if observed > generated_at or age != min(generated_at - observed, 31_536_000):
+        raise ControlCenterStateError("MCP hub freshness contradicts snapshot time")
+    digest = item["source_sha256"]
+    if type(digest) is not str or not _DIGEST.fullmatch(digest):
+        raise ControlCenterStateError("MCP hub source lacks exact binary digest")
+    version = item["protocol_version"]
+    if state == "RESPONSIVE":
+        if version != "2026-07-28" or age > 30 or pid is None:
+            raise ControlCenterStateError("MCP hub live proof is not current")
+    elif version is not None:
+        raise ControlCenterStateError("MCP hub inactive state cannot claim protocol")
+    return LocalHubView(state, pid, observed, age, digest, version)
+
+
 def _service(value: Any) -> ServiceView:
     item = _object(value, {"name", "status", "age_seconds"})
     name = item["name"]
@@ -372,17 +417,19 @@ def consume_dashboard_snapshot(
         "schema_version", "engine_id", "sequence", "generated_at", "network",
         "pending_external", "tasks", "agents", "plugins", "log_page",
     }
-    if type(version) is int and version in (2, 3, 4):
+    if type(version) is int and version in (2, 3, 4, 5):
         keys |= {"paused", "stop_requested"}
-    if type(version) is int and version in (3, 4):
+    if type(version) is int and version in (3, 4, 5):
         keys.add("services")
-    if type(version) is int and version == 4:
+    if type(version) is int and version in (4, 5):
         keys.add("model_history")
+    if type(version) is int and version == 5:
+        keys.add("hub")
     data = _object(payload, keys)
-    if (type(version) is not int or version not in (1, 2, 3, 4)
+    if (type(version) is not int or version not in (1, 2, 3, 4, 5)
             or data["engine_id"] != trusted_engine_id):
         raise ControlCenterStateError("Snapshot identity mismatch")
-    if version in (2, 3, 4) and (type(data["paused"]) is not bool
+    if version in (2, 3, 4, 5) and (type(data["paused"]) is not bool
                           or type(data["stop_requested"]) is not bool):
         raise ControlCenterStateError("Invalid durable operator control state")
     sequence = _integer(data["sequence"], "snapshot sequence", maximum=2**63 - 1)
@@ -420,7 +467,7 @@ def consume_dashboard_snapshot(
         raise ControlCenterStateError("Duplicate plugin name")
 
     services: tuple[ServiceView, ...] = ()
-    if version in (3, 4):
+    if version in (3, 4, 5):
         raw_services = data["services"]
         if not isinstance(raw_services, list) or len(raw_services) > 3:
             raise ControlCenterStateError("Invalid bounded service list")
@@ -429,7 +476,7 @@ def consume_dashboard_snapshot(
             raise ControlCenterStateError("Duplicate service identities")
 
     model_history: tuple[ModelUsageView, ...] = ()
-    if version == 4:
+    if version in (4, 5):
         raw_history = data["model_history"]
         if not isinstance(raw_history, list) or len(raw_history) > 20:
             raise ControlCenterStateError("Invalid bounded model usage history")
@@ -439,6 +486,10 @@ def consume_dashboard_snapshot(
         observed_times = [item.observed_at for item in model_history]
         if observed_times != sorted(observed_times, reverse=True):
             raise ControlCenterStateError("Model history order mismatch")
+
+    hub = None
+    if version == 5 and data["hub"] is not None:
+        hub = _local_hub(data["hub"], generated_at)
 
     page = _object(data["log_page"], {"items", "next_cursor"})
     if not isinstance(page["items"], list) or len(page["items"]) > MAX_LOG_PAGE:
@@ -458,7 +509,7 @@ def consume_dashboard_snapshot(
         data["network"],
         _integer(data["pending_external"], "pending external count", maximum=100_000),
         tasks, agents, plugins, logs, cursor,
-        data["paused"] if version in (2, 3, 4) else None,
-        data["stop_requested"] if version in (2, 3, 4) else None,
-        services, model_history,
+        data["paused"] if version in (2, 3, 4, 5) else None,
+        data["stop_requested"] if version in (2, 3, 4, 5) else None,
+        services, model_history, hub,
     )
