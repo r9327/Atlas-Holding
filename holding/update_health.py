@@ -30,6 +30,10 @@ class AuthenticatedReleaseActivation:
     session: UpdateEngineSession
 
 
+class CandidateCleanupError(ReleaseSwitchError):
+    """Candidate stop was ambiguous; another engine must not be started."""
+
+
 def activate_staged_release_after_authenticated_ipc(
     root: Path,
     *,
@@ -55,7 +59,7 @@ def activate_staged_release_after_authenticated_ipc(
 
     candidate: UpdateEngineSession | None = None
     cleanup_attempted = False
-    cleanup_failure: ReleaseSwitchError | None = None
+    cleanup_failure: CandidateCleanupError | None = None
 
     def close_candidate() -> None:
         nonlocal cleanup_attempted, cleanup_failure
@@ -67,7 +71,7 @@ def activate_staged_release_after_authenticated_ipc(
         try:
             candidate.close()
         except Exception as exc:
-            cleanup_failure = ReleaseSwitchError(
+            cleanup_failure = CandidateCleanupError(
                 "candidate engine cleanup failed; inspect running processes"
             )
             raise cleanup_failure from exc

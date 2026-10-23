@@ -6,7 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 import zipfile
 
 from holding.dashboard_ipc import DashboardIpcClient, DashboardIpcServer
@@ -15,14 +15,19 @@ from holding.update_health import (
     UpdateEngineSession, activate_staged_release_after_authenticated_ipc,
 )
 from holding.update_lock import UpdateLockError, exclusive_update_lock
-from holding.update_stage import ReleaseStagingError, stage_release_archive
-from holding.update_runtime import EngineReleasePins, stage_windows_engine_release
+from holding.update_stage import (
+    ReleaseStagingError, StagedRelease, stage_release_archive,
+)
+from holding.update_runtime import (
+    EngineReleasePins, EngineReplacementError, StagedEngineRelease,
+    replace_windows_engine_release, stage_windows_engine_release,
+)
 from holding.update_switch import (
     ReleaseSwitchError, activate_staged_release,
     read_active_release, recover_interrupted_switch,
 )
 from holding.windows_runtime_launch import (
-    InstalledEngineSpec, _read_config, _validate_paths,
+    InstalledEngineSpec, RuntimeLaunchError, _read_config, _validate_paths,
 )
 
 
@@ -30,8 +35,9 @@ class ReleaseSwitchTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name) / "install"
-        self.zip_path = Path(self.tmp.name) / "package.zip"
+        temporary_root = Path(self.tmp.name).resolve()
+        self.root = temporary_root / "install"
+        self.zip_path = temporary_root / "package.zip"
         self.digests = {}
 
     def stage(self, release):
@@ -497,6 +503,163 @@ class ReleaseSwitchTests(unittest.TestCase):
                 current=current,
             )
         self.assertFalse((self.root / "versions" / "v2").exists())
+
+    def replacement_fixture(self, release="v1"):
+        digest = self.stage(release)
+        slot = self.root / "versions" / release
+        target_spec = InstalledEngineSpec(
+            self.root, slot / "runtime" / "pair",
+            slot / "config" / "engine.json", "1" * 64, "2" * 64,
+            "3" * 64, release_directory=slot,
+        )
+        target = StagedEngineRelease(
+            StagedRelease(release, slot, digest, 1, len("binary-" + release)),
+            target_spec,
+        )
+        current = InstalledEngineSpec(
+            self.root, self.root / "runtime" / "old",
+            self.root / "config" / "engine.json", "4" * 64, "5" * 64,
+            "6" * 64,
+        )
+        return target, current
+
+    def test_replacement_stops_old_engine_and_returns_live_candidate(self):
+        target, current = self.replacement_fixture()
+        database = Path(self.tmp.name) / "replacement.sqlite"
+        with StateStore(database):
+            pass
+        key = b"n" * 32
+        close = Mock()
+        stop = Mock(return_value=None)
+        with DashboardIpcServer.for_database(
+                database, engine_id="new-engine", secret=key) as server:
+            session = UpdateEngineSession(
+                DashboardIpcClient(
+                    port=server.port, secret=key, engine_id="new-engine"),
+                close,
+            )
+            with patch(
+                    "holding.update_runtime.launch_installed_engine_health_session",
+                    return_value=session) as launch:
+                result = replace_windows_engine_release(
+                    self.root, target=target, current=current,
+                    stop_current=stop, approved=True,
+                )
+        self.assertEqual(result.status, "ACTIVATED")
+        self.assertIs(result.session, session)
+        self.assertIsNotNone(result.activation)
+        stop.assert_called_once_with()
+        launch.assert_called_once_with(target.launch_spec, approved=True)
+        close.assert_not_called()
+
+    def test_failed_candidate_rolls_back_and_authenticates_previous_restart(self):
+        target, current = self.replacement_fixture()
+        database = Path(self.tmp.name) / "replacement.sqlite"
+        with StateStore(database):
+            pass
+        good_key = b"g" * 32
+        bad_close = Mock()
+        restored_close = Mock()
+        with DashboardIpcServer.for_database(
+                database, engine_id="engine", secret=good_key) as server:
+            bad = UpdateEngineSession(
+                DashboardIpcClient(
+                    port=server.port, secret=b"b" * 32, engine_id="engine"),
+                bad_close,
+            )
+            restored = UpdateEngineSession(
+                DashboardIpcClient(
+                    port=server.port, secret=good_key, engine_id="engine"),
+                restored_close,
+            )
+            with patch(
+                    "holding.update_runtime.launch_installed_engine_health_session",
+                    side_effect=[bad, restored]) as launch:
+                result = replace_windows_engine_release(
+                    self.root, target=target, current=current,
+                    stop_current=lambda: None, approved=True,
+                )
+        self.assertEqual(result.status, "ROLLED_BACK_RESTARTED")
+        self.assertIs(result.session, restored)
+        self.assertIsNone(result.activation)
+        self.assertEqual(launch.call_count, 2)
+        bad_close.assert_called_once_with()
+        restored_close.assert_not_called()
+        self.assertIsNone(read_active_release(self.root))
+
+    def test_ambiguous_candidate_cleanup_never_starts_second_engine(self):
+        target, current = self.replacement_fixture()
+        database = Path(self.tmp.name) / "replacement.sqlite"
+        with StateStore(database):
+            pass
+        close = Mock(side_effect=OSError("process control denied"))
+        with DashboardIpcServer.for_database(
+                database, engine_id="engine", secret=b"g" * 32) as server:
+            bad = UpdateEngineSession(
+                DashboardIpcClient(
+                    port=server.port, secret=b"b" * 32, engine_id="engine"),
+                close,
+            )
+            with patch(
+                    "holding.update_runtime.launch_installed_engine_health_session",
+                    return_value=bad) as launch:
+                with self.assertRaisesRegex(
+                        EngineReplacementError, "not restarted"):
+                    replace_windows_engine_release(
+                        self.root, target=target, current=current,
+                        stop_current=lambda: None, approved=True,
+                    )
+        launch.assert_called_once_with(target.launch_spec, approved=True)
+        close.assert_called_once_with()
+        self.assertIsNone(read_active_release(self.root))
+
+    def test_stop_or_previous_restart_failure_is_explicit(self):
+        target, current = self.replacement_fixture()
+        with patch(
+                "holding.update_runtime.launch_installed_engine_health_session") as launch:
+            with self.assertRaisesRegex(EngineReplacementError, "stop failed"):
+                replace_windows_engine_release(
+                    self.root, target=target, current=current,
+                    stop_current=Mock(side_effect=OSError("denied")),
+                    approved=True,
+                )
+            launch.assert_not_called()
+        database = Path(self.tmp.name) / "replacement.sqlite"
+        with StateStore(database):
+            pass
+        with DashboardIpcServer.for_database(
+                database, engine_id="engine", secret=b"g" * 32) as server:
+            bad = UpdateEngineSession(
+                DashboardIpcClient(
+                    port=server.port, secret=b"b" * 32, engine_id="engine"),
+                Mock(),
+            )
+            with patch(
+                    "holding.update_runtime.launch_installed_engine_health_session",
+                    side_effect=[bad, RuntimeLaunchError("cannot restart")]):
+                with self.assertRaisesRegex(
+                        EngineReplacementError, "restart was not authenticated"):
+                    replace_windows_engine_release(
+                        self.root, target=target, current=current,
+                        stop_current=lambda: None, approved=True,
+                    )
+
+    def test_unapproved_or_pointer_mismatched_replacement_never_stops_engine(self):
+        target, current = self.replacement_fixture("v2")
+        stop = Mock()
+        with self.assertRaisesRegex(EngineReplacementError, "approved"):
+            replace_windows_engine_release(
+                self.root, target=target, current=current,
+                stop_current=stop, approved=False,
+            )
+        self.digests["v1"] = self.stage("v1")
+        self.activate("v1")
+        with self.assertRaisesRegex(EngineReplacementError, "does not match"):
+            replace_windows_engine_release(
+                self.root, target=target, current=current,
+                stop_current=stop, approved=True,
+            )
+        stop.assert_not_called()
 
     def test_bad_active_pointer_fails_closed(self):
         self.stage("v1")

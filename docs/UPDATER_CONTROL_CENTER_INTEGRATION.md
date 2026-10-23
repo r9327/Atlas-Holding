@@ -122,3 +122,14 @@ tree digest. `InstalledEngineSpec` now recognizes this exact
 root for durable data and MCP paths. Native launch still repeats binary,
 configuration and ACL verification; this materialization is not release
 signature verification or an automatic process replacement.
+
+## Coordinated process replacement
+
+`replace_windows_engine_release` now refuses a running-spec/active-pointer
+mismatch before shutdown, stops the owned current engine exactly once, activates
+the selected slot, and delegates candidate start to the native verified launcher.
+Candidate acceptance still requires the HMAC snapshot. On an ordinary failure,
+the restored pointer is checked and the previous pinned runtime is restarted and
+authenticated before returning `ROLLED_BACK_RESTARTED`. Ambiguous candidate
+cleanup deliberately prevents a second engine from starting; failure to stop or
+authenticate the previous engine is surfaced as an explicit recovery error.

@@ -13,14 +13,20 @@ import json
 import os
 from pathlib import Path
 import re
+from typing import Callable
 
+from .dashboard_ipc import DashboardIpcError
+from .update_health import (
+    AuthenticatedReleaseActivation, CandidateCleanupError,
+    UpdateEngineSession, activate_staged_release_after_authenticated_ipc,
+)
 from .update_stage import (
     _RELEASE, _RESERVED, ReleaseStagingError, StagedRelease,
     stage_release_archive,
 )
 from .windows_runtime_launch import (
     InstalledEngineSpec, RuntimeLaunchError, _read_config, _sha,
-    _unique_json, _validate_paths,
+    _unique_json, _validate_paths, launch_installed_engine_health_session,
 )
 from .windows_runtime_payload import RuntimePayloadError, verify_runtime_payload
 
@@ -39,6 +45,18 @@ class EngineReleasePins:
 class StagedEngineRelease:
     staged: StagedRelease
     launch_spec: InstalledEngineSpec
+
+
+@dataclass(frozen=True, slots=True)
+class EngineReplacementResult:
+    status: str  # ACTIVATED / ROLLED_BACK_RESTARTED
+    session: UpdateEngineSession
+    activation: AuthenticatedReleaseActivation | None
+    failure: str | None = None
+
+
+class EngineReplacementError(RuntimeError):
+    """Process ownership is ambiguous or the previous engine could not restart."""
 
 
 def _config_payload(current: InstalledEngineSpec, viewer: Path,
@@ -132,3 +150,89 @@ def stage_windows_engine_release(
         release_directory=final,
     )
     return StagedEngineRelease(staged, spec)
+
+
+def replace_windows_engine_release(
+    install_root: Path,
+    *,
+    target: StagedEngineRelease,
+    current: InstalledEngineSpec,
+    stop_current: Callable[[], None],
+    approved: bool,
+) -> EngineReplacementResult:
+    """Stop, switch, authenticate, and restart the previous engine on failure."""
+    from .update_switch import read_active_release
+
+    if (approved is not True
+            or not isinstance(target, StagedEngineRelease)
+            or not isinstance(current, InstalledEngineSpec)
+            or current.install_root != install_root
+            or target.launch_spec.install_root != install_root
+            or target.launch_spec.release_directory != target.staged.directory
+            or target.launch_spec.config_file.parent
+                != target.staged.directory / "config"
+            or target.launch_spec.runtime_directory.parent
+                != target.staged.directory / "runtime"
+            or not callable(stop_current)):
+        raise EngineReplacementError("approved staged engine replacement required")
+    previous = read_active_release(install_root)
+    if previous is None:
+        if current.release_directory is not None:
+            raise EngineReplacementError("running engine does not match active pointer")
+    elif current.release_directory != install_root / "versions" / previous.release:
+        raise EngineReplacementError("running engine does not match active pointer")
+    if previous is not None and previous.release == target.staged.release:
+        raise EngineReplacementError("target release is already active")
+    try:
+        stop_current()
+    except Exception as exc:
+        raise EngineReplacementError(
+            "current engine stop failed; replacement not attempted"
+        ) from exc
+    def start_target(slot: Path) -> UpdateEngineSession:
+        if slot != target.staged.directory:
+            raise EngineReplacementError("switch selected an unexpected engine slot")
+        return launch_installed_engine_health_session(
+            target.launch_spec, approved=True,
+        )
+
+    try:
+        activation = activate_staged_release_after_authenticated_ipc(
+            install_root,
+            release=target.staged.release,
+            approved_archive_sha256=target.staged.archive_sha256,
+            session_factory=start_target,
+        )
+        return EngineReplacementResult(
+            "ACTIVATED", activation.session, activation,
+        )
+    except CandidateCleanupError as exc:
+        raise EngineReplacementError(
+            "candidate cleanup failed; previous engine was not restarted"
+        ) from exc
+    except Exception as candidate_failure:
+        if read_active_release(install_root) != previous:
+            raise EngineReplacementError(
+                "rollback pointer is not restored; previous engine was not restarted"
+            ) from candidate_failure
+        restored = None
+        try:
+            restored = launch_installed_engine_health_session(
+                current, approved=True,
+            )
+            if not isinstance(restored, UpdateEngineSession):
+                raise EngineReplacementError("previous engine session unavailable")
+            restored.client.fetch()
+        except Exception as restart_failure:
+            if isinstance(restored, UpdateEngineSession):
+                try:
+                    restored.close()
+                except Exception:
+                    pass
+            raise EngineReplacementError(
+                "candidate failed and previous engine restart was not authenticated"
+            ) from restart_failure
+        return EngineReplacementResult(
+            "ROLLED_BACK_RESTARTED", restored, None,
+            failure=type(candidate_failure).__name__,
+        )
