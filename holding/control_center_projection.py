@@ -196,7 +196,7 @@ def _model_history(control: ControlPlane, mission_ids: set[str],
         "p.model_name,p.benchmark_digest "
         "FROM mission_model_usage u JOIN model_profiles p "
         "ON p.digest_sha256=u.model_digest_sha256 "
-        "ORDER BY u.seq DESC LIMIT 1000"
+        "ORDER BY u.observed_at DESC,u.seq DESC LIMIT 1000"
     )
     entries = []
     for row in rows:
