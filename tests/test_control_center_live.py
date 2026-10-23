@@ -11,6 +11,7 @@ import time
 import unittest
 from unittest.mock import patch
 
+from PySide6.QtCore import QCoreApplication, QEvent
 from PySide6.QtWidgets import QApplication, QMessageBox, QProgressBar
 
 from holding.autonomy import Mission
@@ -55,7 +56,8 @@ class LiveDashboardTests(unittest.TestCase):
         def cleanup() -> None:
             window.close()
             window._executor.shutdown(wait=True, cancel_futures=True)
-            self.app.processEvents()
+            window.deleteLater()
+            QCoreApplication.sendPostedEvents(window, QEvent.DeferredDelete)
         self.addCleanup(cleanup)
         return window
 
