@@ -90,6 +90,10 @@ class WindowsJobMcpTests(unittest.TestCase):
                     limits.BasicLimitInformation.ActiveProcessLimit, 2)
             finally:
                 kernel.CloseHandle(process)
+            self.assertEqual(
+                managed.process.args,
+                [str(PYTHON), "-E", "-S", "-B", "-m", "holding.mcp_entry"],
+            )
             stdout, stderr = managed.process.communicate(input=request(), timeout=8)
             self.assertEqual(managed.process.returncode, 0)
             self.assertIsNone(stderr)
