@@ -162,10 +162,12 @@ class LiveControlCenterWindow(ControlCenterWindow):
         except (DashboardIpcError, OSError, ValueError):
             # Old rows may remain for diagnosis, but are never presented as live.
             self._connected = False
+            self.mark_local_hub_unverified()
             self.status.setText(
                 "Déconnecté — dernier état conservé, non actualisé")
         except Exception:
             self._connected = False
+            self.mark_local_hub_unverified()
             self.status.setText("État indisponible — dernière vue non actualisée")
         else:
             self._connected = True
