@@ -3,11 +3,12 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 import json
+from pathlib import Path
+import sqlite3
 import sys
 import time
 
 from .mcp_bootstrap import McpBootstrapError, load_bootstrap_manifest
-from pathlib import Path
 
 from .mcp_cache import OfflineDocumentCache
 from .mcp_local_inventory import PinnedLocalPlugin, inspect_pinned_plugins
@@ -115,7 +116,7 @@ def main(argv=None, *, stdin=None, stdout=None, stderr=None) -> int:
     stdout = sys.stdout.buffer if stdout is None else stdout
     stderr = sys.stderr if stderr is None else stderr
     if argv and (len(argv) != 2 or argv[0] != "--bootstrap-manifest"):
-        stderr.write("Invalid MCP startup options\\n")
+        stderr.write("Invalid MCP startup options\n")
         return 2
     try:
         with ExitStack() as stack:
@@ -132,9 +133,9 @@ def main(argv=None, *, stdin=None, stdout=None, stderr=None) -> int:
             else:
                 handler = router()
             return serve_stdio(handler, stdin, stdout)
-    except (McpBootstrapError, ValueError, OSError) as exc:
+    except (McpBootstrapError, ValueError, OSError, sqlite3.Error):
         # Never echo manifest contents, secret URLs, paths or driver exceptions.
-        stderr.write("MCP bootstrap rejected untrusted configuration\\n")
+        stderr.write("MCP bootstrap rejected untrusted configuration\n")
         return 2
 
 
