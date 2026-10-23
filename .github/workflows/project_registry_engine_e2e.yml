@@ -83,6 +83,7 @@ jobs:
                       "expected_profile_digest": selected.digest,
                       "expected_snapshot_sha": sha,
                       "expected_source_digest": digest,
+                      "runtime_repository": "r9327/Dof-Atlas",
                       "source": "trusted:e2e",
                       "trusted_importer": control.import_roadmap,
                   }
@@ -103,6 +104,18 @@ jobs:
                       pass
                   else:
                       raise AssertionError("foreign repo imported")
+                  assert len(control.store.missions()) == 2
+                  # The UI-selected profile must not silently redirect the
+                  # installed engine into another project's Git root.
+                  try:
+                      import_verified_project_missions(
+                          registry, json.dumps(planner).encode(),
+                          json.dumps(operational),
+                          **dict(kwargs, runtime_repository="r9327/Atlas-Holding"))
+                  except ProjectMissionGateError:
+                      pass
+                  else:
+                      raise AssertionError("engine target substitution allowed")
                   assert len(control.store.missions()) == 2
                   assert not (root / ".git").exists()
                   print("Selected project -> actual Holding ControlPlane.import_roadmap PASS")
