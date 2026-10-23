@@ -49,6 +49,17 @@ class McpPackagePinTests(unittest.TestCase):
         with self.assertRaises(McpPackagePinError):
             pin.verify(self.root)
 
+    def test_unpinned_native_extension_or_bytecode_cannot_shadow_source(self):
+        pin = build_installation_module_pins(self.root)
+        for suffix in (".pyd", ".so", ".dll", ".pyc"):
+            shadow = self.package / ("mcp_entry" + suffix)
+            with self.subTest(suffix=suffix):
+                shadow.write_bytes(b"hostile module bytes")
+                with self.assertRaises(McpPackagePinError):
+                    pin.verify(self.root)
+                shadow.unlink()
+                self.assertTrue(pin.verify(self.root))
+
     def test_symlink_and_large_source_are_refused(self):
         link = self.package / "newimport.py"
         try:
