@@ -40,11 +40,11 @@ def validate_schema(schema: object, depth: int = 0) -> None:
         required = schema.get("required", [])
         if (type(properties) is not dict or len(properties) > 64
                 or type(required) is not list or len(required) > 64
+                or any(type(name) is not str for name in required)
                 or len(set(required)) != len(required)
                 or any(type(name) is not str or not _NAME.fullmatch(name)
                        for name in properties)
-                or any(type(name) is not str or name not in properties
-                       for name in required)
+                or any(name not in properties for name in required)
                 or type(schema.get("additionalProperties", True)) is not bool):
             raise ValueError("Invalid MCP object schema")
         for sub in properties.values():
