@@ -230,6 +230,48 @@ def _model_history(control: ControlPlane, mission_ids: set[str],
     return entries
 
 
+def _local_hub_observation(control: ControlPlane,
+                           now_epoch: int) -> dict | None:
+    """Read an existing local supervisor row; no live inference or plugin claim.
+
+    This table is written by the separate trusted MCP supervisor only when
+    explicitly configured to use the same engine database. Its contents gain
+    transport authenticity only in the enclosing engine-signed IPC snapshot.
+    """
+    if not _table_exists(control, "mcp_hub_observations"):
+        return None
+    row = control.store.db.execute(
+        "SELECT seq,state,recorded_epoch,pid,source_sha256,protocol_version "
+        "FROM mcp_hub_observations ORDER BY seq DESC LIMIT 1"
+    ).fetchone()
+    if row is None:
+        return None
+    state, timestamp, pid = (
+        row["state"], row["recorded_epoch"], row["pid"])
+    digest, protocol = row["source_sha256"], row["protocol_version"]
+    states = {
+        "NOT_STARTED", "UNVERIFIED", "RESPONSIVE", "STALE",
+        "EXITED", "TIMEOUT", "OUTPUT_LIMIT", "BAD_PROTOCOL",
+        "BINARY_CHANGED", "IO_ERROR", "CLOSED",
+    }
+    if (type(row["seq"]) is not int or row["seq"] < 1
+            or type(state) is not str or state not in states
+            or type(timestamp) is not int or not 0 <= timestamp <= now_epoch
+            or type(digest) is not str or not _DIGEST.fullmatch(digest)
+            or (pid is not None and (type(pid) is not int or not 1 <= pid <= 2**32 - 1))
+            or (state == "RESPONSIVE") != (protocol == "2026-07-28")
+            or (state == "RESPONSIVE" and pid is None)):
+        raise DashboardProjectionError("Unverified local MCP hub evidence")
+    age = min(now_epoch - timestamp, 31_536_000)
+    if age > 30 and state == "RESPONSIVE":
+        state, protocol = "STALE", None
+    return {
+        "state": state, "pid": pid, "observed_epoch": timestamp,
+        "age_seconds": age, "source_sha256": digest,
+        "protocol_version": protocol,
+    }
+
+
 def _category(event: str, mission_id: str | None) -> str:
     if mission_id is None:
         return "SYSTEM"
@@ -271,6 +313,7 @@ def project_dashboard_snapshot(
             "SELECT COUNT(*) FROM missions WHERE external_required=1 "
             "AND state!='DONE'").fetchone()[0]
         services = _service_health(control, now_epoch)
+        hub = _local_hub_observation(control, now_epoch)
         network = _network(services)
         paused = control._setting("paused")
         stop_requested = control._setting("stop_requested")
@@ -280,7 +323,7 @@ def project_dashboard_snapshot(
     else:
         database.execute("COMMIT")
     payload = {
-        "schema_version": 4,
+        "schema_version": 5,
         "engine_id": engine_id,
         "paused": paused,
         "stop_requested": stop_requested,
@@ -293,6 +336,7 @@ def project_dashboard_snapshot(
         "plugins": [],
         "services": services,
         "model_history": model_history,
+        "hub": hub,
         "log_page": {
             "items": [{
                 "sequence": row["seq"],
