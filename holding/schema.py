@@ -224,6 +224,31 @@ GITHUB_GRANT_SCHEMA = (
 RUNTIME_SCHEMA_V5 = GITHUB_GRANT_SCHEMA
 
 
+
+MCP_CACHE_SCHEMA = (
+    """CREATE TABLE IF NOT EXISTS mcp_cached_docs (
+        source_uri TEXT NOT NULL,
+        source_version TEXT NOT NULL,
+        captured_epoch INTEGER NOT NULL,
+        expires_epoch INTEGER NOT NULL,
+        content_sha256 TEXT NOT NULL,
+        content BLOB NOT NULL,
+        PRIMARY KEY (source_uri, source_version)
+    )""",
+)
+
+MCP_HUB_JOURNAL_SCHEMA = (
+    """CREATE TABLE IF NOT EXISTS mcp_hub_observations (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        state TEXT NOT NULL,
+        recorded_epoch INTEGER NOT NULL,
+        pid INTEGER,
+        source_sha256 TEXT NOT NULL,
+        protocol_version TEXT
+    )""",
+)
+
+
 def apply_schema(db: sqlite3.Connection, statements: Iterable[str]) -> None:
     """Apply canonical statements without the implicit commits of executescript."""
     for statement in statements:
