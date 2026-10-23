@@ -181,6 +181,52 @@ def _service_health(control: ControlPlane, now_epoch: int) -> list[dict]:
     return result
 
 
+def _model_history(control: ControlPlane, mission_ids: set[str],
+                   now_epoch: int) -> list[dict]:
+    """Recorded model assignments, never live agent/session activity.
+
+    Read only model usage that references a displayed mission and an enrolled
+    measured model; model names are display strings, not commands or trust.
+    """
+    if (not mission_ids or not _table_exists(control, "mission_model_usage")
+            or not _table_exists(control, "model_profiles")):
+        return []
+    rows = control.store.db.execute(
+        "SELECT u.mission_id,u.role,u.model_digest_sha256,u.observed_at,"
+        "p.model_name,p.benchmark_digest "
+        "FROM mission_model_usage u JOIN model_profiles p "
+        "ON p.digest_sha256=u.model_digest_sha256 "
+        "ORDER BY u.seq DESC LIMIT 1000"
+    )
+    entries = []
+    for row in rows:
+        mission_id = row["mission_id"]
+        if mission_id not in mission_ids:
+            continue
+        role = row["role"]
+        if type(role) is not str or role.lower() not in {
+                "ceo", "architect", "coder", "auditor", "doctor"}:
+            continue  # Not a certified agent role.
+        used_at = row["observed_at"]
+        if type(used_at) is not int or not 0 <= used_at <= now_epoch + 5:
+            raise DashboardProjectionError("Invalid persisted model use timestamp")
+        digest, benchmark = row["model_digest_sha256"], row["benchmark_digest"]
+        if (type(digest) is not str or not _DIGEST.fullmatch(digest)
+                or type(benchmark) is not str or not _DIGEST.fullmatch(benchmark)):
+            raise DashboardProjectionError("Unverified model identity in usage")
+        name = row["model_name"]
+        if type(name) is not str or not 1 <= len(name) <= 120:
+            raise DashboardProjectionError("Invalid registered model name")
+        entries.append({
+            "role": role.upper(), "task_id": mission_id,
+            "model_name": name, "model_digest": digest,
+            "benchmark_digest": benchmark, "observed_at": used_at,
+        })
+        if len(entries) >= 20:
+            break
+    return entries
+
+
 def _category(event: str, mission_id: str | None) -> str:
     if mission_id is None:
         return "SYSTEM"
@@ -211,6 +257,8 @@ def project_dashboard_snapshot(
         if len(mission_rows) > 1000:
             raise DashboardProjectionError("Dashboard mission bound exceeded")
         tasks = [_task(control, row, now_epoch) for row in mission_rows]
+        model_history = _model_history(
+            control, {item["id"] for item in tasks}, now_epoch)
         events = list(control.store.db.execute(
             "SELECT seq,mission_id,event FROM events ORDER BY seq DESC LIMIT ?",
             (MAX_LOG_PAGE,)))
@@ -229,7 +277,7 @@ def project_dashboard_snapshot(
     else:
         database.execute("COMMIT")
     payload = {
-        "schema_version": 3,
+        "schema_version": 4,
         "engine_id": engine_id,
         "paused": paused,
         "stop_requested": stop_requested,
@@ -241,6 +289,7 @@ def project_dashboard_snapshot(
         "agents": [],
         "plugins": [],
         "services": services,
+        "model_history": model_history,
         "log_page": {
             "items": [{
                 "sequence": row["seq"],
