@@ -191,3 +191,27 @@ argument ne rend donc pas l'agent prêt. Il faut réunir PR #2 et #11 sur
 le même SHA intégré, inscrire un modèle local présent par son digest,
 sécuriser/épingler `model.json`, puis certifier la chaîne Windows complète
 avant toute release.
+
+
+## Control Center unifié — intégration UI #8 dans #11 (23 octobre 2026)
+
+Les modifications sont maintenant présentes sur la branche de la PR #11.
+La PR #8 reste Draft et ne doit pas être fusionnée en parallèle sans
+réconciliation pour éviter de réintroduire un ancien affichage.
+
+- holding/control_center_ui.py reprend le rendu incrémental, les filtres
+  du journal, le statut Git du projet et la vue des preuves par tâche.
+  Une preuve SYNC SCOPED constate une mutation Git, jamais une CI FULL.
+- holding/control_center_live.py conserve le seul IPC existant et les
+  commandes authentifiées. Les instantanés authentifiés à séquence égale
+  maintiennent la fraîcheur sans inventer d'activité SQLite. Un simple
+  render_state rejoué ne renouvelle pas la connexion.
+- holding/control_center_project.py vérifie l'identité du dépôt et
+  l'ascendance Git sans capacité d'écriture.
+- Les tests ciblent le filtrage, le rendu incrémental, les statuts exact-SHA,
+  les preuves CI/SYNC séparées, la perte de connexion, la reconnexion
+  authentifiée et le refus d'un statut Git appartenant à un autre dépôt.
+
+**État de validation** : code et tests poussés, mais pas de certification
+Windows/Qt, de benchmark RAM ou de CI exact-SHA déclarée PASS. La PR reste
+Draft jusqu'à l'intégration et à l'exécution de la certification finale.
