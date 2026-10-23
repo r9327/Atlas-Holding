@@ -141,6 +141,26 @@ class EmbeddedPythonStageTests(unittest.TestCase):
                 self.assertEqual(list(self.dest.iterdir()), [])
                 self.assertFalse((self.root / "escape.exe").exists())
 
+    def test_unpinned_native_python_import_cannot_stage(self):
+        shadow = self.package / "mcp_entry.pyd"
+        shadow.write_bytes(b"untrusted native module")
+        with self.assertRaisesRegex(EmbeddedRuntimeError, "Unpinned executable"):
+            self.stage()
+        shadow.unlink()
+        self.assertEqual(list(self.dest.iterdir()), [])
+
+    def test_symlinked_module_directory_cannot_be_approved(self):
+        linked = self.package_root / "holding"
+        alternate = self.root / "real-holding"
+        try:
+            linked.rename(alternate)
+            linked.symlink_to(alternate, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("Symlink unavailable on this machine")
+        with self.assertRaisesRegex(EmbeddedRuntimeError, "module directory"):
+            self.stage()
+        self.assertEqual(list(self.dest.iterdir()), [])
+
     def test_missing_embeddable_runtime_files_cannot_stage(self):
         members = dict(self.members)
         del members["python3.dll"]
