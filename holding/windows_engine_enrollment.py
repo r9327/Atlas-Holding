@@ -16,6 +16,8 @@ import tempfile
 from typing import Mapping
 
 from .windows_runtime_payload import verify_runtime_payload, RuntimePayloadError
+from .embedded_python_stage import (EmbeddedPythonRelease, EmbeddedRuntimeStage,
+                                    verify_staged_embedded_python)
 
 _HEX = re.compile(r"^[0-9a-f]{64}$")
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -40,6 +42,8 @@ class EngineEnrollmentRequest:
     agent_arguments: tuple[Path, ...] = ()
     agent_argument_pins: Mapping[str, str] | None = None
     agent_timeout_seconds: int = 600
+    mcp_runtime: EmbeddedRuntimeStage | None = None
+    mcp_release: EmbeddedPythonRelease | None = None
 
 
 @dataclass(frozen=True)
@@ -128,6 +132,24 @@ def _validate(request: EngineEnrollmentRequest) -> None:
         })
     except RuntimePayloadError as exc:
         raise EngineEnrollmentError("Installed runtime pair does not match pins") from exc
+    if (request.mcp_runtime is None) != (request.mcp_release is None):
+        raise EngineEnrollmentError("Complete pinned installed MCP companion required")
+    if request.mcp_runtime is not None:
+        runtime, release = request.mcp_runtime, request.mcp_release
+        if (type(runtime) is not EmbeddedRuntimeStage
+                or type(release) is not EmbeddedPythonRelease
+                or runtime.directory.parent != request.install_root / "mcp-python"
+                or runtime.directory.name != "python-embedded-" + release.zip_sha256[:16]
+                or runtime.python_exe != runtime.directory / "python.exe"
+                or runtime.source_sha256 != tuple(sorted(release.module_sha256.items()))):
+            raise EngineEnrollmentError("Installed MCP companion differs from release inputs")
+        try:
+            verified = verify_staged_embedded_python(
+                directory=runtime.directory, pin=release)
+            if verified.interpreter_sha256 != runtime.interpreter_sha256:
+                raise EngineEnrollmentError("Installed MCP Python binary changed")
+        except (ValueError, OSError) as exc:
+            raise EngineEnrollmentError("Pinned MCP companion integrity invalid") from exc
 
 
 def _require_native_windows() -> None:
@@ -218,7 +240,7 @@ def prepare_protected_engine_roots(
 def _document(request: EngineEnrollmentRequest) -> bytes:
     # Exact key set matches Installation.load(schema=3) in PR #11.
     config = {
-        "schema": 3,
+        "schema": 6 if request.mcp_runtime is not None else 3,
         "database": str(request.install_root / "data" / "engine.sqlite"),
         "repository": request.repository,
         "canonical_root": str(request.canonical_root),
@@ -238,6 +260,17 @@ def _document(request: EngineEnrollmentRequest) -> bytes:
             "readonly": False,
         },
     }
+    if request.mcp_runtime is not None:
+        runtime, release = request.mcp_runtime, request.mcp_release
+        config["mcp"] = {
+            "interpreter": str(runtime.python_exe),
+            "interpreter_sha256": runtime.interpreter_sha256,
+            "package_root": str(runtime.directory),
+            "module_sha256": dict(release.module_sha256),
+            "source_release_zip_sha256": release.zip_sha256,
+            "python_minor": release.python_minor,
+            "response_timeout": 3.0,
+        }
     return (json.dumps(config, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
             + "\n").encode("utf-8")
 
