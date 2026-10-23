@@ -197,6 +197,10 @@ superviseur Windows lors de l'intégration des PR.
   simulent des réponses falsifiées, des sorties trop grandes, de fausses
   empreintes et un environnement contenant des secrets.
 
+Le répertoire d'exécution est désormais contraint au paquet réellement installé :
+une copie hostile de `holding/mcp_entry.py` dans un autre dossier est refusée
+avant création du moindre sous-processus. Test de régression associé.
+
 **Limite de sécurité importante :** cette sonde n'est pas un bac à sable
 d'exécutables tiers ; la protection ACL de l'installation Windows et la
 supervision de processus par Job Objects restent obligatoires avant tout
