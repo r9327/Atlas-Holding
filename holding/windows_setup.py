@@ -11,6 +11,7 @@ import hashlib
 from dataclasses import asdict, dataclass
 import json
 import os
+import re
 import shutil
 from pathlib import Path
 from queue import Empty, Queue
@@ -45,6 +46,8 @@ from .windows_engine_enrollment import (
 )
 from .windows_runtime_acl import validate_runtime_acl, secure_runtime_acl
 from .embedded_python_stage import EmbeddedPythonRelease, EmbeddedRuntimeStage, stage_pinned_embedded_python, verify_staged_embedded_python
+_HEX64 = re.compile(r"^[0-9a-f]{64}$")
+
 from .windows_model_enrollment import (
     discover_local_models, enroll_local_model, LocalModelEnrollmentError,
 )
