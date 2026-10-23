@@ -200,6 +200,13 @@ class ControlCenterWindow(QMainWindow):
         self._status_timer.stop()
         super().closeEvent(event)
 
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        # Reopening the same window cannot resurrect an expired engine snapshot.
+        self._refresh_connection_status()
+        if self._last_received_at is not None:
+            self._status_timer.start()
+
     @property
     def displayed_sequence(self) -> int | None:
         return self._sequence
