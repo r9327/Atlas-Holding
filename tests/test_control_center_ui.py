@@ -168,6 +168,21 @@ class ControlCenterUiTests(unittest.TestCase):
         self.assertIn("En attente QA : 1", window.protection_status.text())
         window.close()
 
+    def test_reopening_viewer_rechecks_expired_state(self):
+        window = ControlCenterWindow(trusted_engine_id="engine-1")
+        with patch("holding.control_center_ui.monotonic", return_value=100):
+            window.render_state(self.state())
+            window.show()
+            self.assertIn("CI_PENDING", window.status.text())
+        window.close()
+        self.assertFalse(window._status_timer.isActive())
+
+        with patch("holding.control_center_ui.monotonic", return_value=150):
+            window.show()
+        self.assertIn("ÉTAT PÉRIMÉ", window.status.text())
+        self.assertTrue(window._status_timer.isActive())
+        window.close()
+
     def test_silent_connection_expires_and_recovers_only_on_new_snapshot(self):
         window = ControlCenterWindow(trusted_engine_id="engine-1")
         with patch("holding.control_center_ui.monotonic", return_value=100):
