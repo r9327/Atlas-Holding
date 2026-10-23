@@ -541,3 +541,28 @@ du vrai hub MCP ni des agents tiers. Le garde de release doit ensuite
 tester `holding.mcp_entry` complet avec les modules signés réellement
 installés, les ACL NTFS, l'interface graphique et la reprise après
 coupure réseau.
+
+
+### Intégration dans le flux autorisé de Setup Windows
+
+`windows_setup.stage_embedded_mcp_companion` installe désormais les
+octets de l'interpréteur vérifié sous
+`<disque choisi>/mcp-python/python-embedded-<sha>`, uniquement après
+autorisation initiale, validation du dossier d'installation et de ses
+ACL, puis contrôle des ACL du binaire, du dossier de modules et de
+chaque source `.py`. Un échec de droit effectue un rollback des seuls
+fichiers fraîchement créés, sans modifier une installation précédente.
+
+`execute_setup` peut recevoir optionnellement l'archive CPython et
+les empreintes de sources authentifiées avec le bundle moteur. Une
+activation partielle est refusée ; l'étape n'est lancée qu'après le
+staging de la paire Engine/Control Center déjà vérifiée et produit un
+état explicite `STAGED_NOT_EXECUTED` ou un blocage. Aucun état
+`READY` n'est déduit d'une archive extraite.
+
+**À ne pas confondre avec un Setup final :** le constructeur PyInstaller
+ne livre pas encore ce ZIP et le wizard ne transmet pas encore ces pins
+dans son formulaire. L'installation autonome n'est complète qu'après
+liaison du ZIP à un manifeste release audité, intégration de l'API v5
+de la PR #11, vraie découverte du hub sous Job Object sur une machine
+Windows propre, et tests de mise à jour/réparation.
