@@ -282,10 +282,17 @@ def execute_setup(
     runtime_pins: dict[str, str] | None = None,
     adapter_source: Path | None = None,
     adapter_sha256: str | None = None,
+    embedded_python_archive: Path | None = None,
+    embedded_source_root: Path | None = None,
+    embedded_python_pin: EmbeddedPythonRelease | None = None,
 ) -> tuple[SetupSummary, ProvisionExecution | None]:
     """Recheck every premise before any authorized staging operation."""
     if (runtime_root is None) != (runtime_pins is None):
         raise ValueError("Complete pinned runtime pair required")
+    companion = (embedded_python_archive, embedded_source_root, embedded_python_pin)
+    if any(item is not None for item in companion) and (
+            any(item is None for item in companion) or runtime_root is None):
+        raise ValueError("Complete embedded MCP Python and Holding release pins required")
     if (adapter_source is None) != (adapter_sha256 is None):
         raise ValueError("Complete bundled agent source and hash required")
     if adapter_source is not None and runtime_root is None:
@@ -408,6 +415,27 @@ def execute_setup(
                     ),
                 ),
                 result.blockers + ("Pinned runtime staging failed",),
+            )
+    if (embedded_python_pin is not None and result is not None
+            and result.state == "RUNTIME_STAGED_ENGINE_CONFIG_PENDING"):
+        try:
+            staged = stage_embedded_mcp_companion(
+                install_root=install_root, archive=embedded_python_archive,
+                trusted_source_root=embedded_source_root,
+                pin=embedded_python_pin, approved=True)
+            result = ProvisionExecution(
+                result.state,
+                result.steps + (ProvisionStep(
+                    "mcp-python", "STAGE_VERIFIED_EMBEDDED",
+                    staged.status),), result.blockers,
+            )
+        except (OSError, ValueError, RuntimePayloadError):
+            result = ProvisionExecution(
+                "PARTIAL_OR_BLOCKED",
+                result.steps + (ProvisionStep(
+                    "mcp-python", "STAGE_VERIFIED_EMBEDDED",
+                    "MCP_COMPANION_STAGE_FAILED"),),
+                result.blockers + ("MCP companion staging failed",),
             )
     return report, result
 
