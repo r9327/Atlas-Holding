@@ -42,7 +42,8 @@ def _cells(line: str) -> list[str] | None:
     result.append("".join(buf).strip())
     if line.startswith("|"):
         result.pop(0)
-    if line.endswith("|"):
+    # A trailing escaped pipe belongs to the last cell, not the table border.
+    if line.endswith("|") and result[-1] == "":
         result.pop()
     return result
 

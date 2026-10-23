@@ -26,6 +26,12 @@ class MarkdownTests(unittest.TestCase):
         self.assertEqual(json.loads(batch.records[1].canonical_json)["title"], "La | fuite")
         self.assertEqual(json.loads(batch.records[0].canonical_json)["title"], "**Début**")
 
+    def test_escaped_last_pipe_is_not_mistaken_for_border(self):
+        batch = parse(r"| id | label |\n| --- | --- |\n| 7 | Escape\|")
+        self.assertEqual(
+            json.loads(batch.records[0].canonical_json)["label"], "Escape|",
+        )
+
     def test_code_fences_are_ignored(self):
         fence = chr(96) * 3
         batch = parse(
