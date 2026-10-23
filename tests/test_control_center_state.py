@@ -167,6 +167,59 @@ class ControlCenterStateTests(unittest.TestCase):
                 dict(expected, observed_at=NOW - 9),
             ]))
 
+    def test_v5_local_hub_is_explicit_authenticated_evidence(self):
+        payload = snapshot()
+        payload.update(
+            schema_version=5, paused=False, stop_requested=False,
+            services=[], model_history=[], hub={
+                "state": "RESPONSIVE", "pid": 4242,
+                "observed_epoch": payload["generated_at"] - 12,
+                "age_seconds": 12, "source_sha256": "c" * 64,
+                "protocol_version": "2026-07-28",
+            },
+        )
+        state = consume(payload)
+        self.assertEqual(state.hub.state, "RESPONSIVE")
+        self.assertEqual(state.hub.age_seconds, 12)
+        self.assertEqual(state.hub.pid, 4242)
+        self.assertEqual(len(state.plugins), 1)  # No extra active plugins
+        payload["hub"] = None
+        self.assertIsNone(consume(payload).hub)
+        payload["hub"] = {
+            "state": "STALE", "pid": 4242,
+            "observed_epoch": payload["generated_at"] - 31,
+            "age_seconds": 31, "source_sha256": "c" * 64,
+            "protocol_version": None,
+        }
+        self.assertEqual(consume(payload).hub.state, "STALE")
+
+    def test_v5_rejects_forged_hub_provenance_and_future_age(self):
+        payload = snapshot()
+        payload.update(
+            schema_version=5, paused=False, stop_requested=False,
+            services=[], model_history=[], hub={
+                "state": "RESPONSIVE", "pid": 4242,
+                "observed_epoch": payload["generated_at"] - 12,
+                "age_seconds": 12, "source_sha256": "c" * 64,
+                "protocol_version": "2026-07-28",
+            },
+        )
+        good = payload["hub"]
+        for bad in (
+            {"state": "ACTIVE"}, {"state": []}, {"pid": True},
+            {"pid": None}, {"observed_epoch": payload["generated_at"] + 1},
+            {"age_seconds": 14}, {"age_seconds": 31},
+            {"source_sha256": "c" * 40},
+            {"protocol_version": "2099-01-01"},
+            {"installed": True},
+        ):
+            with self.subTest(bad=bad), self.assertRaises(ControlCenterStateError):
+                consume(dict(payload, hub=dict(good, **bad)))
+        without_hub = dict(payload)
+        del without_hub["hub"]
+        with self.assertRaises(ControlCenterStateError):
+            consume(without_hub)
+
     def test_done_without_evidence_is_impossible(self):
         payload = snapshot()
         payload["tasks"][0]["completion_evidence"] = None
