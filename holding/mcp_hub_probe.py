@@ -90,7 +90,7 @@ def _spawn_hub(*, interpreter_pin: PinnedLocalPlugin,
             job_memory_mb=256, active_limit=4)
         return managed.process, managed
     process = subprocess.Popen(
-        [str(interpreter_pin.executable), "-B", "-m", "holding.mcp_entry"],
+        [str(interpreter_pin.executable), "-E", "-S", "-B", "-m", "holding.mcp_entry"],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL, cwd=str(repository_root),
         env=env, shell=False, creationflags=creationflags,
