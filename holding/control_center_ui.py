@@ -101,6 +101,16 @@ class ControlCenterWindow(QMainWindow):
             ("Plugin", "Version", "État", "Mode", "Permission", "Quota"),
             "pluginsTable",
         )
+        self.services = _table(
+            ("Service", "Dernière observation", "Ancienneté"),
+            "servicesTable",
+        )
+        self.services_note = QLabel(
+            "Santé des services externes : observations persistées, "
+            "pas une preuve d'installation ou d'activation d'un plugin."
+        )
+        self.services_note.setObjectName("servicesObservationNote")
+        self.services_note.setWordWrap(True)
         self.logs = _table(
             ("Séquence", "Catégorie", "Message", "Tâche", "Plugin", "Preuve"),
             "logsTable",
@@ -133,6 +143,11 @@ class ControlCenterWindow(QMainWindow):
             column.addWidget(label)
             column.addWidget(table)
             tabs.addTab(page, heading)
+        services_page = QWidget()
+        services_layout = QVBoxLayout(services_page)
+        services_layout.addWidget(self.services_note)
+        services_layout.addWidget(self.services)
+        tabs.addTab(services_page, "Services externes")
         proof_page = QWidget()
         proof_layout = QVBoxLayout(proof_page)
         proof_layout.addWidget(self.protection_status)
@@ -313,6 +328,13 @@ class ControlCenterWindow(QMainWindow):
         _replace_rows(self.tasks, task_rows)
         _replace_rows(self.agents, agent_rows)
         _replace_rows(self.plugins, plugin_rows)
+        service_rows = tuple((
+            service.name,
+            service.status,
+            "Aucune observation" if service.age_seconds is None
+            else f"{service.age_seconds} s",
+        ) for service in state.services)
+        _replace_rows(self.services, service_rows)
         self.agent_telemetry.setText(
             f"Agents : {len(agent_rows)} état(s) fournis par le moteur"
             if agent_rows else
