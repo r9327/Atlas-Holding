@@ -70,6 +70,28 @@ class LiveDashboardTests(unittest.TestCase):
         finally:
             window.close()
 
+    def test_unchanged_authenticated_snapshots_keep_live_view_fresh(self):
+        # SQLite may remain idle for minutes; fresh HMAC-verified polls are
+        # healthy even when the durable event sequence does not increment.
+        window = LiveControlCenterWindow(self.client, refresh_ms=250)
+        try:
+            self.until(lambda: window.tasks.rowCount() == 1)
+            initial_sequence = window.displayed_sequence
+            self.assertIsNotNone(initial_sequence)
+            window._last_received_at = (
+                time.monotonic() - 31
+            )
+            window._refresh_connection_status()
+            self.assertIn("ÉTAT PÉRIMÉ", window.status.text())
+            self.until(
+                lambda: "ÉTAT PÉRIMÉ" not in window.status.text()
+                and window._last_received_at > time.monotonic() - 2
+            )
+            self.assertEqual(window.displayed_sequence, initial_sequence)
+            self.assertIn("séquence", window.status.text())
+        finally:
+            window.close()
+
     def test_lost_connection_is_not_presented_as_live(self):
         window = LiveControlCenterWindow(self.client, refresh_ms=250)
         try:
