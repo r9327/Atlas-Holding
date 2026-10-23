@@ -215,3 +215,22 @@ réconciliation pour éviter de réintroduire un ancien affichage.
 **État de validation** : code et tests poussés, mais pas de certification
 Windows/Qt, de benchmark RAM ou de CI exact-SHA déclarée PASS. La PR reste
 Draft jusqu'à l'intégration et à l'exécution de la certification finale.
+
+
+## Durcissement Control Center — commandes fraîches et honnêteté UI (23 octobre 2026)
+
+- Les slots Pause/Reprendre/Stop refusent maintenant tout état authentifié
+  âgé de 30 s ou plus, même en cas d'appel direct à la méthode Qt.
+  Le timer périodique désactive les boutons alors qu'une lecture IPC reste
+  en cours ; aucun read-back ancien ne vaut autorisation de nouvelle commande.
+- Le rapport Agents/Plugins affiche explicitement « disponibilité non
+  déterminable » si la projection ne fournit aucun état. Actuellement
+  la projection de SQLite retourne des listes vides pour ces catégories :
+  ceci ne signifie pas que les composants sont absents ou arrêtés.
+- Tests ajoutés : fraîcheur des commandes, interdiction Pause/Stop sur
+  snapshot ancien, restauration seulement après nouveau snapshot signé,
+  rendu incrémental de 350 missions + page bornée de 200 événements,
+  affichage des listes Agents/Plugins inconnues.
+- Les améliorations sont sur cette branche intégrée. Les tests doivent
+  encore être exécutés sur les runners Ubuntu et Windows et suivis d'une
+  certification exact-SHA ; aucun PASS n'est déclaré sans ces résultats.
