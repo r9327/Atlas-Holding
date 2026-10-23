@@ -223,6 +223,39 @@ class LiveDashboardTests(unittest.TestCase):
             finally:
                 window.close()
 
+    def test_stale_authenticated_view_disables_all_engine_commands(self):
+        write_key = b"f" * 32
+        with DashboardIpcServer.for_database(
+                self.db, engine_id=ENGINE, secret=KEY,
+                control_secret=write_key) as host:
+            reader = DashboardIpcClient(
+                port=host.port, secret=KEY, engine_id=ENGINE)
+            writer = DashboardControlClient(port=host.port, secret=write_key)
+            window = LiveControlCenterWindow(
+                reader, control=writer, refresh_ms=250)
+            try:
+                self.until(lambda: window.pause_button.isEnabled())
+                # A pending read does not grant unlimited write authority.
+                window._last_received_at = time.monotonic() - 31
+                window._update_control_buttons()
+                self.assertFalse(window.pause_button.isEnabled())
+                self.assertFalse(window.resume_button.isEnabled())
+                self.assertFalse(window.stop_button.isEnabled())
+                with patch.object(writer, "send", wraps=writer.send) as send:
+                    window.request_pause()  # Even direct slot invocation fails.
+                    with patch.object(QMessageBox, "question") as question:
+                        window.request_stop()
+                        question.assert_not_called()
+                    send.assert_not_called()
+                    self.until(lambda: window.pause_button.isEnabled())
+                    window.pause_button.click()
+                    self.until(lambda: window.resume_button.isEnabled())
+                    self.assertEqual(send.call_count, 1)
+                with ControlPlane(self.db) as control:
+                    self.assertTrue(control.snapshot().paused)
+            finally:
+                window.close()
+
     def test_readonly_view_disables_mutating_buttons(self):
         window = LiveControlCenterWindow(self.client, refresh_ms=250)
         try:
