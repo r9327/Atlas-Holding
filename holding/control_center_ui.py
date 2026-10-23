@@ -117,6 +117,11 @@ class ControlCenterWindow(QMainWindow):
         )
         self.model_history_note.setObjectName("modelHistoryNote")
         self.model_history_note.setWordWrap(True)
+        self.hub_status = QLabel(
+            "Hub MCP interne : aucune observation authentifiée reçue"
+        )
+        self.hub_status.setObjectName("localMcpHubStatus")
+        self.hub_status.setWordWrap(True)
         self.services_note = QLabel(
             "Santé des services externes : observations persistées, "
             "pas une preuve d'installation ou d'activation d'un plugin."
@@ -157,6 +162,7 @@ class ControlCenterWindow(QMainWindow):
             tabs.addTab(page, heading)
         services_page = QWidget()
         services_layout = QVBoxLayout(services_page)
+        services_layout.addWidget(self.hub_status)
         services_layout.addWidget(self.services_note)
         services_layout.addWidget(self.services)
         tabs.addTab(services_page, "Services externes")
@@ -384,6 +390,21 @@ class ControlCenterWindow(QMainWindow):
             else f"{service.age_seconds} s",
         ) for service in state.services)
         _replace_rows(self.services, service_rows)
+        hub = state.hub
+        if hub is None:
+            self.hub_status.setText(
+                "Hub MCP interne : aucune observation authentifiée reçue"
+            )
+        else:
+            detail = (
+                f"Hub MCP interne : {hub.state} · "
+                f"observation {hub.age_seconds} s · "
+                f"PID {hub.pid if hub.pid is not None else '—'} · "
+                f"SHA256 {hub.source_sha256[:12]}…"
+            )
+            if hub.state == "RESPONSIVE":
+                detail += f" · protocole {hub.protocol_version}"
+            self.hub_status.setText(detail)
         history_rows = tuple((
             usage.role, usage.task_id, usage.model_name,
             datetime.fromtimestamp(usage.observed_at).astimezone().strftime(
