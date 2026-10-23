@@ -173,3 +173,33 @@ binaires, les bases absentes et les manifestes hostiles.
 pas encore le câblage d'un installeur AtlasHoldingSetup.exe ;
 la configuration et les ACL doivent être fournies par le
 superviseur Windows lors de l'intégration des PR.
+
+
+## Sonde processus réelle du hub interne (23 octobre 2026)
+
+- `holding/mcp_hub_probe.py` permet au **superviseur de confiance** de
+  vérifier la réponse protocolaire réelle du **seul hub interne Atlas Holding**.
+  L'interpréteur Python doit correspondre à une empreinte locale SHA-256 et
+  être exactement l'interpréteur courant. Le programme lancé est fixé dans
+  le code : `python -B -m holding.mcp_entry`. Aucun argument d'outil, chemin
+  d'exécutable arbitraire ou décision émise par le modèle ne peut remplacer
+  cette commande.
+- Une requête `server/discover` unique attend le protocole
+  `2026-07-28`, l'identité `atlas-holding-local`, les capabilities bornées
+  et un seul message JSON valide, sans doublon de clés. Le contrôle impose
+  une sortie maximum de 64 Kio, un timeout de 0,25 à 10 s, `shell=False`,
+  une fermeture du processus et un environnement minimal **sans clés API**.
+- Les résultats `PROTOCOL_RESPONSIVE`, `TIMEOUT`, `BAD_PROTOCOL`,
+  `OUTPUT_LIMIT`, `BINARY_UNVERIFIED`, `BINARY_CHANGED` ou
+  `LAUNCH_FAILED` sont des constats limités. La sonde ne demande
+  `tools/call` à aucun plugin externe.
+- Des tests exécutent le processus interne réellement sur les runners et
+  simulent des réponses falsifiées, des sorties trop grandes, de fausses
+  empreintes et un environnement contenant des secrets.
+
+**Limite de sécurité importante :** cette sonde n'est pas un bac à sable
+d'exécutables tiers ; la protection ACL de l'installation Windows et la
+supervision de processus par Job Objects restent obligatoires avant tout
+lancement arbitraire de plugin externe. `PROTOCOL_RESPONSIVE` atteste
+uniquement la découverte du hub, **pas** la disponibilité de Firecrawl,
+Context7, Doctor ou des autres services.
