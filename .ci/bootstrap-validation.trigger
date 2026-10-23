@@ -6,3 +6,5 @@ Batch: enforce Win32 visible user window station (not just Session 0), pin GUI-c
 Full exact-SHA validation required; no release qualification.
 
 Batch: verified offline CPython embeddable ZIP staging, SHA-256 Holding sources, malicious ZIP rejection, no overwrite and explicit nonrelease evidence.
+
+Batch: repair pathlib Path subclass checks after actual Ubuntu+Windows bootstrap CI failure; rerun exact-head tests.
