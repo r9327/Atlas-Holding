@@ -76,6 +76,31 @@ class LocalMcpHubSessionTests(unittest.TestCase):
                 interpreter_pin=pinned(), package_root=ROOT,
                 response_timeout=True)
 
+    def test_authenticated_discovery_expires_without_new_messages(self):
+        with LocalMcpHubSession(
+                interpreter_pin=pinned(), package_root=ROOT,
+                response_timeout=8) as session:
+            self.assertEqual(session.discover().state, "RESPONSIVE")
+            self.assertEqual(session.observe().state, "RESPONSIVE")
+            session._last_verified -= 31.0
+            old = session.observe()
+            self.assertEqual(old.state, "STALE")
+            self.assertGreater(old.last_verified_age_seconds, 30)
+            self.assertIsNone(old.protocol_version)
+            self.assertEqual(session.discover().state, "RESPONSIVE")
+
+    def test_terminated_hub_is_not_reported_as_responsive(self):
+        session = LocalMcpHubSession(
+            interpreter_pin=pinned(), package_root=ROOT,
+            response_timeout=8)
+        with session:
+            self.assertEqual(session.discover().state, "RESPONSIVE")
+            session._process.kill()
+            session._process.wait(timeout=5)
+            self.assertEqual(session.observe().state, "EXITED")
+            self.assertEqual(session.discover().state, "EXITED")
+            self.assertNotEqual(session.observe().state, "RESPONSIVE")
+
     def test_closed_session_cannot_be_restarted(self):
         session = LocalMcpHubSession(interpreter_pin=pinned(), package_root=ROOT)
         session.close()
