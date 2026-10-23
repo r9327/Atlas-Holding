@@ -47,7 +47,7 @@ class ControlCenterProjectionTests(unittest.TestCase):
 
     def test_durable_pause_stop_are_projected_atomically(self):
         payload, state = self.project()
-        self.assertEqual(payload["schema_version"], 4)
+        self.assertEqual(payload["schema_version"], 5)
         self.assertEqual(payload["services"], [])
         self.assertIs(state.paused, False)
         self.assertIs(state.stop_requested, False)
@@ -151,7 +151,7 @@ class ControlCenterProjectionTests(unittest.TestCase):
                  "Authorization header leak", NOW - 901),
             )
         payload, state = self.project()
-        self.assertEqual(payload["schema_version"], 4)
+        self.assertEqual(payload["schema_version"], 5)
         by_name = {service.name: service for service in state.services}
         self.assertEqual(by_name["github"].status, "ONLINE")
         self.assertEqual(by_name["github"].age_seconds, 12)
@@ -193,7 +193,7 @@ class ControlCenterProjectionTests(unittest.TestCase):
                 ("first", "coder", "c" * 64, "", NOW - 18),
             )
         payload, state = self.project()
-        self.assertEqual(payload["schema_version"], 4)
+        self.assertEqual(payload["schema_version"], 5)
         self.assertEqual(len(state.model_history), 1)
         usage = state.model_history[0]
         self.assertEqual(usage.role, "CODER")
@@ -232,6 +232,53 @@ class ControlCenterProjectionTests(unittest.TestCase):
         )
         self.assertTrue(all(row.model_digest == "f" * 64
                             for row in state.model_history))
+
+    def test_real_internal_hub_journal_is_projected_with_exact_provenance(self):
+        with StateStore(self.path) as store:
+            store.db.execute(
+                "CREATE TABLE mcp_hub_observations ("
+                "seq INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "state TEXT,recorded_epoch INTEGER,pid INTEGER,"
+                "source_sha256 TEXT,protocol_version TEXT)"
+            )
+            store.db.execute(
+                "INSERT INTO mcp_hub_observations "
+                "(state,recorded_epoch,pid,source_sha256,protocol_version)"
+                " VALUES(?,?,?,?,?)",
+                ("RESPONSIVE", NOW - 12, 4242, "c" * 64, "2026-07-28"),
+            )
+        payload, state = self.project()
+        self.assertEqual(payload["schema_version"], 5)
+        self.assertEqual(state.hub.state, "RESPONSIVE")
+        self.assertEqual(state.hub.protocol_version, "2026-07-28")
+        self.assertEqual(state.hub.age_seconds, 12)
+        self.assertEqual(state.hub.source_sha256, "c" * 64)
+        self.assertEqual(state.plugins, ())
+        self.assertNotIn("ACTIVE", json.dumps(payload))
+
+    def test_old_or_invalid_hub_observation_cannot_claim_live_protocol(self):
+        from holding.control_center_projection import DashboardProjectionError
+        with StateStore(self.path) as store:
+            store.db.execute(
+                "CREATE TABLE mcp_hub_observations ("
+                "seq INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "state TEXT,recorded_epoch INTEGER,pid INTEGER,"
+                "source_sha256 TEXT,protocol_version TEXT)"
+            )
+            store.db.execute(
+                "INSERT INTO mcp_hub_observations "
+                "(state,recorded_epoch,pid,source_sha256,protocol_version)"
+                " VALUES(?,?,?,?,?)",
+                ("RESPONSIVE", NOW - 31, 4242, "d" * 64, "2026-07-28"),
+            )
+        _, stale = self.project()
+        self.assertEqual(stale.hub.state, "STALE")
+        self.assertIsNone(stale.hub.protocol_version)
+        with StateStore(self.path) as store:
+            store.db.execute(
+                "UPDATE mcp_hub_observations SET source_sha256='forged'")
+        with self.assertRaises(DashboardProjectionError):
+            self.project()
 
     def test_event_details_are_not_exposed_to_ui(self):
         with StateStore(self.path) as store:
