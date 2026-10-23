@@ -6,11 +6,14 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import Mock
 import zipfile
 
 from holding.dashboard_ipc import DashboardIpcClient, DashboardIpcServer
 from holding.state_store import StateStore
-from holding.update_health import activate_staged_release_after_authenticated_ipc
+from holding.update_health import (
+    UpdateEngineSession, activate_staged_release_after_authenticated_ipc,
+)
 from holding.update_lock import UpdateLockError, exclusive_update_lock
 from holding.update_stage import stage_release_archive
 from holding.update_switch import (
@@ -99,19 +102,26 @@ class ReleaseSwitchTests(unittest.TestCase):
         key = b"r" * 32
         engine_id = "updater-health-v1"
         observed = []
+        close = Mock()
         with DashboardIpcServer.for_database(
                 database, engine_id=engine_id, secret=key) as server:
-            result = activate_staged_release_after_authenticated_ipc(
+            activation = activate_staged_release_after_authenticated_ipc(
                 self.root,
                 release="v1",
                 approved_archive_sha256=digest,
-                client_factory=lambda slot: (
-                    observed.append(slot) or DashboardIpcClient(
-                        port=server.port, secret=key, engine_id=engine_id,
+                session_factory=lambda slot: (
+                    observed.append(slot) or UpdateEngineSession(
+                        DashboardIpcClient(
+                            port=server.port, secret=key,
+                            engine_id=engine_id,
+                        ),
+                        close,
                     )
                 ),
             )
-        self.assertEqual(result.status, "ACTIVATED")
+        self.assertEqual(activation.switch.status, "ACTIVATED")
+        self.assertIs(activation.session.close, close)
+        close.assert_not_called()
         self.assertEqual(observed, [self.root / "versions" / "v1"])
         self.assertEqual(read_active_release(self.root).release, "v1")
         self.assertFalse((self.root / ".atlas-switch.pending.json").exists())
@@ -124,6 +134,7 @@ class ReleaseSwitchTests(unittest.TestCase):
         with StateStore(database):
             pass
         engine_id = "updater-health-v2"
+        close = Mock()
         with DashboardIpcServer.for_database(
                 database, engine_id=engine_id, secret=b"r" * 32) as server:
             with self.assertRaisesRegex(ReleaseSwitchError, "restored"):
@@ -131,11 +142,15 @@ class ReleaseSwitchTests(unittest.TestCase):
                     self.root,
                     release="v2",
                     approved_archive_sha256=digest,
-                    client_factory=lambda _slot: DashboardIpcClient(
-                        port=server.port, secret=b"w" * 32,
-                        engine_id=engine_id,
+                    session_factory=lambda _slot: UpdateEngineSession(
+                        DashboardIpcClient(
+                            port=server.port, secret=b"w" * 32,
+                            engine_id=engine_id,
+                        ),
+                        close,
                     ),
                 )
+        close.assert_called_once_with()
         self.assertEqual(read_active_release(self.root).release, "v1")
         self.assertFalse((self.root / ".atlas-switch.pending.json").exists())
 
@@ -147,6 +162,7 @@ class ReleaseSwitchTests(unittest.TestCase):
         with StateStore(database):
             pass
         key = b"r" * 32
+        close = Mock()
         with DashboardIpcServer.for_database(
                 database, engine_id="actual-engine", secret=key) as server:
             with self.assertRaisesRegex(ReleaseSwitchError, "restored"):
@@ -154,11 +170,15 @@ class ReleaseSwitchTests(unittest.TestCase):
                     self.root,
                     release="v2",
                     approved_archive_sha256=digest,
-                    client_factory=lambda _slot: DashboardIpcClient(
-                        port=server.port, secret=key,
-                        engine_id="different-engine",
+                    session_factory=lambda _slot: UpdateEngineSession(
+                        DashboardIpcClient(
+                            port=server.port, secret=key,
+                            engine_id="different-engine",
+                        ),
+                        close,
                     ),
                 )
+        close.assert_called_once_with()
         self.assertEqual(read_active_release(self.root).release, "v1")
         self.assertFalse((self.root / ".atlas-switch.pending.json").exists())
 
@@ -169,10 +189,36 @@ class ReleaseSwitchTests(unittest.TestCase):
                 self.root,
                 release="v1",
                 approved_archive_sha256=digest,
-                client_factory=lambda _slot: True,
+                session_factory=lambda _slot: True,
             )
         self.assertIsNone(read_active_release(self.root))
         self.assertFalse((self.root / ".atlas-switch.pending.json").exists())
+
+    def test_failed_candidate_cleanup_is_never_hidden(self):
+        digest = self.stage("v1")
+        database = Path(self.tmp.name) / "engine.sqlite"
+        with StateStore(database):
+            pass
+        key = b"r" * 32
+        close = Mock(side_effect=OSError("denied"))
+        with DashboardIpcServer.for_database(
+                database, engine_id="actual-engine", secret=key) as server:
+            with self.assertRaisesRegex(
+                    ReleaseSwitchError, "cleanup failed"):
+                activate_staged_release_after_authenticated_ipc(
+                    self.root,
+                    release="v1",
+                    approved_archive_sha256=digest,
+                    session_factory=lambda _slot: UpdateEngineSession(
+                        DashboardIpcClient(
+                            port=server.port, secret=key,
+                            engine_id="different-engine",
+                        ),
+                        close,
+                    ),
+                )
+        close.assert_called_once_with()
+        self.assertIsNone(read_active_release(self.root))
 
     def test_exception_in_probe_rolls_back_and_never_deletes_slot(self):
         self.stage("v1")

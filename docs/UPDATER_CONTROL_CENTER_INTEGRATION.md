@@ -63,6 +63,12 @@ launcher callback receives the selected slot and must return a freshly enrolled
 bounded snapshot request. A process spawn, open TCP port, arbitrary callback
 boolean, wrong capability or wrong engine identity cannot accept the release.
 
+The factory must also return a trusted cleanup callback. Authentication failure
+closes the candidate before the transactional pointer rollback; cleanup failure
+is surfaced explicitly instead of being hidden behind a generic health error.
+On success, the live session is returned to the launcher so lifecycle ownership
+cannot be lost.
+
 Any factory or IPC failure follows the existing rollback transaction and
 restores the previous pointer. This is an acceptance primitive only: it does
 not yet pin the launched EXE to the selected slot, validate Windows ACLs,
