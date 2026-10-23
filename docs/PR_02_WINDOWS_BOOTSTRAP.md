@@ -572,3 +572,33 @@ dans son formulaire. L'installation autonome n'est complète qu'après
 liaison du ZIP à un manifeste release audité, intégration de l'API v5
 de la PR #11, vraie découverte du hub sous Job Object sur une machine
 Windows propre, et tests de mise à jour/réparation.
+
+
+### Inclusion du compagnon dans AtlasHoldingSetup.exe
+
+Le constructeur `windows_build.build_windows_installer` peut maintenant
+intégrer dans **le même EXE** le ZIP CPython embeddable épinglé, un arbre
+de sources `holding/*.py` recopié exclusivement si chaque digest correspond
+aux empreintes externes attendues, et un manifeste de SHA-256 du code. Le
+launcher PyInstaller vérifie le ZIP et le manifeste avant `--self-test`
+ou l'ouverture du wizard, puis transmet le dossier de sources, l'archive
+et les empreintes validées au formulaire. L'installation autorisée
+se poursuit par `execute_setup` et la validation d'ACL NTFS avant
+publication du runtime sur le disque choisi.
+
+Ce bundle est **strictement optionnel** pour conserver la compatibilité
+des anciens installateurs sans MCP. Le programme de build exige
+`--mcp-archive`, `--mcp-archive-sha256`, `--mcp-module-pins`,
+`--mcp-module-pins-sha256` et `--mcp-python-minor` en bloc complet,
+avec les chemins du moteur/Control Center. Les fichiers ne peuvent
+être auto-certifiés à partir de leur installation locale : le build
+d'une release doit fournir les empreintes du pipeline de distribution
+approuvé.
+
+L'installateur doit encore appeler l'API d'enrollment v5 du moteur
+(PR #11) après la publication du runtime et vérifier le véritable hub
+sur une machine Windows propre ; ce lot de construction ne garantit
+pas encore la release finale ni une distribution utilisable sans autre
+configuration. Les tests du builder examinent les fichiers et hashes
+effectivement fournis au processus PyInstaller et rejettent toute
+entrée incomplète ou ZIP falsifié.
