@@ -213,6 +213,26 @@ json.dump({'schema_version':1,'request_id':r['request_id'],'status':'OK',
                 create_new_v5_config(plan=plan, destination=output)
             self.assertEqual(output.read_bytes(), plan.payload)
 
+    def test_installer_never_writes_outside_trusted_config_directory(self):
+        from contextlib import nullcontext
+        from unittest.mock import patch
+        from holding.mcp_enrollment import (
+            prepare_v5_mcp_enrollment, create_new_v5_config, McpEnrollmentError)
+        context = (patch("holding.mcp_enrollment.require_private_windows_path")
+                   if sys.platform == "win32" else nullcontext())
+        with context:
+            params = self._trusted_mcp_enrollment()
+            plan = prepare_v5_mcp_enrollment(**params)
+            outside = Path(self.tmp.name).parent / "outside-holding.json"
+            with self.assertRaises(McpEnrollmentError):
+                create_new_v5_config(plan=plan, destination=outside)
+            self.assertFalse(outside.exists())
+            with self.assertRaises(McpEnrollmentError):
+                create_new_v5_config(plan=plan, destination=self.config)
+            with self.assertRaises(McpEnrollmentError):
+                create_new_v5_config(
+                    plan=plan, destination=self.root / "install-v5.txt")
+
     def test_installer_refuses_release_manifest_mismatch_or_config_rollback(self):
         from contextlib import nullcontext
         from unittest.mock import patch
