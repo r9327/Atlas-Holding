@@ -26,14 +26,14 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: r9327/Atlas-Holding
-          ref: 24090fd1ccef2113d5493c76016547ea898c5110
+          ref: f9b731eb7a58e4415af46827d75a58581a85c56a
           path: upstream/bootstrap
           persist-credentials: false
       - name: Checkout exact certified main engine and GUI source
         uses: actions/checkout@v7
         with:
           repository: r9327/Atlas-Holding
-          ref: 24090fd1ccef2113d5493c76016547ea898c5110
+          ref: f9b731eb7a58e4415af46827d75a58581a85c56a
           path: upstream/integration
           persist-credentials: false
       - name: Python 3.13
@@ -53,7 +53,7 @@ jobs:
           $setup = Join-Path $PWD "upstream/bootstrap"
           $runtime = Join-Path $PWD "upstream/integration"
           $dest = Join-Path $env:RUNNER_TEMP "atlas-nonrelease-cross-pr-${{ github.run_id }}"
-          python -B -X utf8 tests/native_windows_three_binary_assembly.py --setup-root "$setup" --runtime-root "$runtime" --setup-sha 24090fd1ccef2113d5493c76016547ea898c5110 --runtime-sha 24090fd1ccef2113d5493c76016547ea898c5110 --output-dir "$dest"
+          python -B -X utf8 tests/native_windows_three_binary_assembly.py --setup-root "$setup" --runtime-root "$runtime" --setup-sha f9b731eb7a58e4415af46827d75a58581a85c56a --runtime-sha f9b731eb7a58e4415af46827d75a58581a85c56a --output-dir "$dest"
           if ($LASTEXITCODE -ne 0) { throw "Native cross-PR frozen assembly failed" }
           $evidence = Join-Path $dest "cross-pr-nonrelease-evidence.json"
           if (!(Test-Path $evidence)) { throw "Native build evidence is missing" }
