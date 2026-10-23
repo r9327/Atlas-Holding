@@ -239,6 +239,38 @@ class ControlCenterUiTests(unittest.TestCase):
         finally:
             window.close()
 
+    def test_model_history_tab_does_not_fabricate_active_agents(self):
+        payload = snapshot()
+        payload.update(
+            schema_version=4, paused=False, stop_requested=False,
+            services=[], model_history=[{
+                "role": "CODER", "task_id": "task-1",
+                "model_name": "qwen2.5-coder:7b",
+                "model_digest": "c" * 64,
+                "benchmark_digest": "d" * 64,
+                "observed_at": NOW - 2,
+            }],
+        )
+        state = consume_dashboard_snapshot(
+            json.dumps(payload).encode("utf-8"),
+            trusted_engine_id="engine-1", expected_sequence=42, now_epoch=NOW,
+        )
+        window = ControlCenterWindow(trusted_engine_id="engine-1")
+        try:
+            self.assertTrue(window.render_state(state))
+            self.assertEqual(window.model_history.rowCount(), 1)
+            self.assertEqual(window.model_history.item(0, 0).text(), "CODER")
+            self.assertEqual(window.model_history.item(0, 1).text(), "task-1")
+            self.assertEqual(
+                window.model_history.item(0, 2).text(), "qwen2.5-coder:7b",
+            )
+            self.assertEqual(window.model_history.item(0, 4).text(), "c" * 64)
+            self.assertIn("ne signifie ni", window.model_history_note.text())
+            self.assertEqual(window.agents.rowCount(), 1)
+            self.assertEqual(window.agents.item(0, 2).text(), "IDLE")
+        finally:
+            window.close()
+
     def test_service_health_tab_does_not_claim_plugin_installation(self):
         payload = snapshot()
         payload.update(
