@@ -18,6 +18,7 @@ from threading import Thread
 
 from .mcp_local_inventory import PinnedLocalPlugin, inspect_pinned_plugin
 from .mcp_stdio import PROTOCOL_VERSION
+from .mcp_windows_job import WindowsJobError, launch_verified_local_hub
 
 
 MAX_PROBE_BYTES = 64 * 1024
@@ -81,6 +82,23 @@ def _valid_response(raw: bytes, expected_server: str) -> bool:
         return False
 
 
+def _spawn_hub(*, interpreter_pin: PinnedLocalPlugin,
+               repository_root: Path, env: dict, creationflags: int):
+    if os.name == "nt":
+        managed = launch_verified_local_hub(
+            interpreter_pin=interpreter_pin, package_root=repository_root,
+            job_memory_mb=256, active_limit=4)
+        return managed.process, managed
+    process = subprocess.Popen(
+        [str(interpreter_pin.executable), "-B", "-m", "holding.mcp_entry"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL, cwd=str(repository_root),
+        env=env, shell=False, creationflags=creationflags,
+        start_new_session=True,
+    )
+    return process, None
+
+
 def probe_local_hub(*, interpreter_pin: PinnedLocalPlugin,
                     repository_root: Path, timeout_seconds: float = 3.0,
                     expected_server: str = "atlas-holding-local") -> HubProbeResult:
@@ -120,14 +138,10 @@ def probe_local_hub(*, interpreter_pin: PinnedLocalPlugin,
     creationflags = (getattr(subprocess, "CREATE_NO_WINDOW", 0)
                      if os.name == "nt" else 0)
     try:
-        process = subprocess.Popen(
-            [str(interpreter_pin.executable), "-B", "-m", "holding.mcp_entry"],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, cwd=str(repository_root),
-            env=env, shell=False, creationflags=creationflags,
-            start_new_session=(os.name == "posix"),
-        )
-    except OSError:
+        process, managed = _spawn_hub(
+            interpreter_pin=interpreter_pin, repository_root=repository_root,
+            env=env, creationflags=creationflags)
+    except (OSError, WindowsJobError):
         return HubProbeResult("LAUNCH_FAILED")
     responses: Queue[bytes | None] = Queue(maxsize=1)
     def read_bounded():
@@ -156,9 +170,12 @@ def probe_local_hub(*, interpreter_pin: PinnedLocalPlugin,
         except subprocess.TimeoutExpired:
             return HubProbeResult("TIMEOUT")
     finally:
-        if process.poll() is None:
-            process.kill()
-        process.wait()
+        if managed is not None:
+            managed.close()  # Includes descendants on Windows timeout.
+        else:
+            if process.poll() is None:
+                process.kill()
+            process.wait()
         reader.join(timeout=1)
     # Re-hash after response; this cannot replace the supervisor's private
     # installation/ACL guarantee against hash-to-exec races.
