@@ -119,7 +119,9 @@ def current_windows_user_sid() -> str:
         kernel.CloseHandle(handle)
 
 
-def _enforce_one(path: Path, adv, kernel, allowed: list[ctypes.c_void_p]) -> None:
+def _enforce_one(path: Path, adv, kernel,
+                 trusted_owners: list[ctypes.c_void_p],
+                 allowed_writers: list[ctypes.c_void_p]) -> None:
     prior = path.lstat()
     if (not (stat.S_ISREG(prior.st_mode) or stat.S_ISDIR(prior.st_mode))
             or getattr(prior, "st_file_attributes", 0)
@@ -138,7 +140,7 @@ def _enforce_one(path: Path, adv, kernel, allowed: list[ctypes.c_void_p]) -> Non
     try:
         if not owner.value or not dacl.value:
             raise WindowsAclError("Windows input lacks a private DACL")
-        if not any(adv.EqualSid(owner, sid) for sid in allowed):
+        if not any(adv.EqualSid(owner, sid) for sid in trusted_owners):
             raise WindowsAclError("Windows input owner is untrusted")
         acl = ctypes.cast(dacl, ctypes.POINTER(_AclHeader)).contents
         if acl.size < 8 or acl.ace_count > 128:
@@ -156,7 +158,7 @@ def _enforce_one(path: Path, adv, kernel, allowed: list[ctypes.c_void_p]) -> Non
                 sid = ctypes.c_void_p(ace.value + 8)
                 if (mask & _UNSAFE_WRITE_MASK
                         and not any(adv.EqualSid(sid, principal)
-                                    for principal in allowed)):
+                                    for principal in allowed_writers)):
                     raise WindowsAclError("Windows ACL grants untrusted write access")
     finally:
         kernel.LocalFree(descriptor)
@@ -169,7 +171,8 @@ def require_private_windows_path(path: Path, *, check_parent: bool = True) -> No
     if not isinstance(path, Path) or not path.is_absolute():
         raise WindowsAclError("Trusted absolute Windows path required")
     adv, kernel = _api()
-    sid_strings = [current_windows_user_sid(), "S-1-5-18", "S-1-5-32-544"]
+    sid_strings = [current_windows_user_sid(), "S-1-5-18",
+                   "S-1-5-32-544", "S-1-3-4"]
     allowed = []
     try:
         for name in sid_strings:
@@ -177,9 +180,11 @@ def require_private_windows_path(path: Path, *, check_parent: bool = True) -> No
             if not adv.ConvertStringSidToSidW(name, ctypes.byref(sid)):
                 raise WindowsAclError("Trusted Windows SID cannot be resolved")
             allowed.append(sid)
-        _enforce_one(path, adv, kernel, allowed)
+        # OWNER RIGHTS (S-1-3-4) grants only the already-validated
+        # resource owner rights; it is not itself a valid owner identity.
+        _enforce_one(path, adv, kernel, allowed[:3], allowed)
         if check_parent:
-            _enforce_one(path.parent, adv, kernel, allowed)
+            _enforce_one(path.parent, adv, kernel, allowed[:3], allowed)
     except OSError as exc:
         raise WindowsAclError("Windows private input unavailable") from exc
     finally:
