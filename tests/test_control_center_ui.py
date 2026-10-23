@@ -239,6 +239,44 @@ class ControlCenterUiTests(unittest.TestCase):
         finally:
             window.close()
 
+    def test_authenticated_hub_heartbeat_updates_without_new_mission_sequence(self):
+        payload = snapshot()
+        payload.update(
+            schema_version=5, paused=False, stop_requested=False,
+            services=[], model_history=[], hub={
+                "state": "RESPONSIVE", "pid": 4242,
+                "observed_epoch": payload["generated_at"] - 10,
+                "age_seconds": 10, "source_sha256": "c" * 64,
+                "protocol_version": "2026-07-28",
+            },
+        )
+        def parse():
+            return consume_dashboard_snapshot(
+                json.dumps(payload).encode("utf-8"),
+                trusted_engine_id="engine-1",
+                expected_sequence=payload["sequence"], now_epoch=NOW,
+            )
+        window = ControlCenterWindow(trusted_engine_id="engine-1")
+        try:
+            self.assertTrue(window.render_state(parse()))
+            self.assertIn("RESPONSIVE", window.hub_status.text())
+            self.assertIn("2026-07-28", window.hub_status.text())
+            self.assertEqual(window.plugins.rowCount(), 1)
+            payload["hub"] = {
+                "state": "STALE", "pid": 4242,
+                "observed_epoch": payload["generated_at"] - 31,
+                "age_seconds": 31, "source_sha256": "c" * 64,
+                "protocol_version": None,
+            }
+            changed = parse()
+            self.assertFalse(window.render_state(changed))  # Mission seq replay
+            self.assertTrue(window.acknowledge_authenticated_state(changed))
+            self.assertIn("STALE", window.hub_status.text())
+            self.assertNotIn("2026-07-28", window.hub_status.text())
+            self.assertEqual(window.plugins.rowCount(), 1)
+        finally:
+            window.close()
+
     def test_model_history_tab_does_not_fabricate_active_agents(self):
         payload = snapshot()
         payload.update(
