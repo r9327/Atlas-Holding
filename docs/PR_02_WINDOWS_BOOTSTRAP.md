@@ -484,3 +484,37 @@ ni modèle chargé en VRAM, ni preuve d'agent sain. Le couple de vrais
 binaires GUI/moteur/agent doit encore provenir du même SHA intégré
 (PR #2 + PR #11), puis passer les tests Windows et une mission réelle
 avant toute publication.
+
+
+## Runtime MCP CPython embeddable vérifié — 23 octobre 2026
+
+`holding/embedded_python_stage.py` prépare désormais **hors ligne** un
+interpréteur CPython embeddable x64 pour le futur hub MCP interne, distinct
+des trois exécutables PyInstaller de Holding. L'installateur doit fournir
+un ZIP d'un éditeur authentifié, le SHA-256 **attendu depuis la release
+vérifiée** (jamais auto-approuvé à partir des octets téléchargés) et le
+manifeste attendu des modules du paquet `holding` provenant de la build.
+
+L'étape prépare un répertoire versionné `python-embedded-<SHA16>` dans
+le dossier d'installation approuvé. Le code impose un ZIP plat (pas de
+chemin absolu, traversal, ADS Windows, doublons sensibles à la casse,
+symlinks, ZIP chiffré, dépassement des limites), extrait les fichiers
+au sein d'un répertoire temporaire sur le même disque, puis publie par
+renommage uniquement après validation. Le fichier `python3XX._pth` est
+recréé avec uniquement le ZIP standard et le répertoire courant ;
+aucun `import site` implicite et pas d'installation dans le PATH. Les
+modules Python du hub sont recopiés seulement s'ils correspondent tous
+aux SHA du manifeste éditeur, sans injection de `.pyd/.so/.dll/.pyc`.
+
+La sortie inclut le chemin de `python.exe`, l'empreinte du binaire,
+les empreintes des modules importables et un reçu explicite
+`native_probe: NOT_EXECUTED`. Cette étape **ne certifie pas à elle
+seule que le runtime s'exécute sur Windows**, ne répare aucune ACL et
+n'affirme ni qu'un modèle est installé ni que les plugins tiers
+fonctionnent. L'intégration au Setup GUI, la préparation des permissions
+NTFS et l'exécution d'un vrai `server/discover` sur Windows restent
+des gates avant release. L'installateur ne doit pas activer MCP sans eux.
+
+Tests Linux/Windows : staging réel de fichiers factices, rejet SHA
+archive/source, modules injectés/retirés, `.pyd` non épinglé, chemin
+symbolique, archives hostiles et refus d'écrasement.
