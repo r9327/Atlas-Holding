@@ -24,16 +24,16 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
-      - name: Checkout pinned Windows bootstrap PR #2 source
+      - name: Checkout exact certified main setup source
         uses: actions/checkout@v7
         with:
-          ref: 939aa2c57441be834d03970fcaa7c18c99870543
+          ref: 24090fd1ccef2113d5493c76016547ea898c5110
           path: _native/bootstrap
           persist-credentials: false
-      - name: Checkout pinned integration PR #11 source
+      - name: Checkout exact certified main integration source
         uses: actions/checkout@v7
         with:
-          ref: 36a3ac0e329b7116fffa50978acc5a733ebcf95a
+          ref: 24090fd1ccef2113d5493c76016547ea898c5110
           path: _native/integration
           persist-credentials: false
       - name: Python 3.13
@@ -52,7 +52,7 @@ jobs:
         run: |
           $bootstrap = (Resolve-Path '_native/bootstrap').Path
           $integration = (Resolve-Path '_native/integration').Path
-          python -B -X utf8 -m holding.native_rehearsal --bootstrap "$bootstrap" --bootstrap-sha "939aa2c57441be834d03970fcaa7c18c99870543" --integration "$integration" --integration-sha "36a3ac0e329b7116fffa50978acc5a733ebcf95a"
+          python -B -X utf8 -m holding.native_rehearsal --bootstrap "$bootstrap" --bootstrap-sha "24090fd1ccef2113d5493c76016547ea898c5110" --integration "$integration" --integration-sha "24090fd1ccef2113d5493c76016547ea898c5110"
           if ($LASTEXITCODE -ne 0) { throw "Real cross-PR native packaging proof failed" }
       - name: Confirm pinned candidate source was not changed
         shell: pwsh

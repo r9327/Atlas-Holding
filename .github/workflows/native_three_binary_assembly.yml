@@ -22,18 +22,18 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
-      - name: Checkout exact green Windows bootstrap PR 2
+      - name: Checkout exact certified main setup source
         uses: actions/checkout@v7
         with:
           repository: r9327/Atlas-Holding
-          ref: b8243645f2b257ca306eed04711ce9448b1f23e8
+          ref: 24090fd1ccef2113d5493c76016547ea898c5110
           path: upstream/bootstrap
           persist-credentials: false
-      - name: Checkout exact candidate frozen engine and GUI PR 11
+      - name: Checkout exact certified main engine and GUI source
         uses: actions/checkout@v7
         with:
           repository: r9327/Atlas-Holding
-          ref: ed31b3d36d1cd7e37dd4a1fd502c309de227d1cc
+          ref: 24090fd1ccef2113d5493c76016547ea898c5110
           path: upstream/integration
           persist-credentials: false
       - name: Python 3.13
@@ -53,7 +53,7 @@ jobs:
           $setup = Join-Path $PWD "upstream/bootstrap"
           $runtime = Join-Path $PWD "upstream/integration"
           $dest = Join-Path $env:RUNNER_TEMP "atlas-nonrelease-cross-pr-${{ github.run_id }}"
-          python -B -X utf8 tests/native_windows_three_binary_assembly.py --setup-root "$setup" --runtime-root "$runtime" --setup-sha b8243645f2b257ca306eed04711ce9448b1f23e8 --runtime-sha ed31b3d36d1cd7e37dd4a1fd502c309de227d1cc --output-dir "$dest"
+          python -B -X utf8 tests/native_windows_three_binary_assembly.py --setup-root "$setup" --runtime-root "$runtime" --setup-sha 24090fd1ccef2113d5493c76016547ea898c5110 --runtime-sha 24090fd1ccef2113d5493c76016547ea898c5110 --output-dir "$dest"
           if ($LASTEXITCODE -ne 0) { throw "Native cross-PR frozen assembly failed" }
           $evidence = Join-Path $dest "cross-pr-nonrelease-evidence.json"
           if (!(Test-Path $evidence)) { throw "Native build evidence is missing" }
