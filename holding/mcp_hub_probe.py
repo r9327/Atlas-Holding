@@ -19,6 +19,7 @@ from threading import Thread
 from .mcp_local_inventory import PinnedLocalPlugin, inspect_pinned_plugin
 from .mcp_stdio import PROTOCOL_VERSION
 from .mcp_windows_job import WindowsJobError, launch_verified_local_hub
+from .mcp_package_pin import McpPackagePin
 
 
 MAX_PROBE_BYTES = 64 * 1024
@@ -83,11 +84,12 @@ def _valid_response(raw: bytes, expected_server: str) -> bool:
 
 
 def _spawn_hub(*, interpreter_pin: PinnedLocalPlugin,
-               repository_root: Path, env: dict, creationflags: int):
+               repository_root: Path, env: dict, creationflags: int,
+               package_pin: McpPackagePin | None = None):
     if os.name == "nt":
         managed = launch_verified_local_hub(
             interpreter_pin=interpreter_pin, package_root=repository_root,
-            job_memory_mb=256, active_limit=4)
+            job_memory_mb=256, active_limit=4, package_pin=package_pin)
         return managed.process, managed
     process = subprocess.Popen(
         [str(interpreter_pin.executable), "-E", "-S", "-B", "-m", "holding.mcp_entry"],
