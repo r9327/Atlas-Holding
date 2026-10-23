@@ -314,3 +314,15 @@ n'atteste **pas** la nouvelle télémétrie v4 ajoutée après ce SHA.
 Référence PR #5 : `9252098ac8878046090eace4ba13a327574913c0`,
 [GitHub Actions Ubuntu/Windows PASS](https://github.com/r9327/Atlas-Holding/actions/runs/39943399313).
 La certification v5 de la PR #11 est distincte et reste requise.
+
+
+### Perte de connexion moteur : révocation immédiate de la télémétrie
+
+La fenêtre invalide maintenant explicitement le libellé `RESPONSIVE`
+du hub MCP quand les échanges IPC échouent ou que 30 secondes passent
+sans heartbeat. Un précédent résultat demeure consultable dans SQLite,
+mais n'est plus présenté comme une preuve de service **actuellement**
+disponible. Seule une nouvelle réponse du moteur authentifiée peut
+restaurer le libellé de protocole. Les verrous des commandes opérateur
+restent indépendants et inchangés. Un test Qt simule expiration et retour
+d'un heartbeat signé à séquence identique.
