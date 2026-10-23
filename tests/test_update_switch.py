@@ -292,6 +292,43 @@ class ReleaseSwitchTests(unittest.TestCase):
             self.activate("v1")
         self.assertIsNone(read_active_release(self.root))
 
+    def test_same_size_content_corruption_rejected_before_transaction(self):
+        self.stage("v1")
+        executable = self.root / "versions" / "v1" / "bin" / "AtlasHolding.exe"
+        executable.write_bytes(b"corrupt!!")
+        with self.assertRaisesRegex(ReleaseSwitchError, "content"):
+            self.activate("v1")
+        self.assertIsNone(read_active_release(self.root))
+        self.assertFalse((self.root / ".atlas-switch.pending.json").exists())
+
+    def test_extra_or_missing_slot_file_rejected_before_transaction(self):
+        for mutation in ("extra", "missing"):
+            with self.subTest(mutation=mutation):
+                release = "v-" + mutation
+                self.stage(release)
+                folder = self.root / "versions" / release
+                if mutation == "extra":
+                    (folder / "injected.dll").write_bytes(b"payload")
+                else:
+                    (folder / "bin" / "AtlasHolding.exe").unlink()
+                with self.assertRaisesRegex(ReleaseSwitchError, "content|integrity"):
+                    self.activate(release)
+                self.assertIsNone(read_active_release(self.root))
+                self.assertFalse((self.root / ".atlas-switch.pending.json").exists())
+
+    def test_external_hard_link_rejected_before_transaction(self):
+        self.stage("v1")
+        executable = self.root / "versions" / "v1" / "bin" / "AtlasHolding.exe"
+        outside = Path(self.tmp.name) / "outside-hardlink.exe"
+        try:
+            outside.hardlink_to(executable)
+        except OSError:
+            self.skipTest("filesystem hard links unavailable")
+        with self.assertRaisesRegex(ReleaseSwitchError, "integrity"):
+            self.activate("v1")
+        self.assertIsNone(read_active_release(self.root))
+        self.assertFalse((self.root / ".atlas-switch.pending.json").exists())
+
     def test_bad_active_pointer_fails_closed(self):
         self.stage("v1")
         (self.root / "active-release.json").write_text(

@@ -100,3 +100,12 @@ later rollback terminates the candidate with a bounded terminate/kill path.
 The remaining integration gap is deliberately narrower: bind the signed update
 slot layout to `InstalledEngineSpec`, coordinate shutdown of the old daemon,
 and restart the previous pinned runtime if the new candidate cannot be accepted.
+
+## Staged-slot content binding
+
+Staging receipts now use `atlas-staged-release/v2` and bind the published slot
+to a canonical SHA-256 tree digest covering every directory, file path, file
+size and file-content hash. Activation recomputes the bounded tree before it
+writes switch metadata, rejecting modified, missing, added, linked or special
+files. This detects post-extraction corruption; it is not a signature and does
+not replace authenticated release metadata or the native Windows ACL gate.

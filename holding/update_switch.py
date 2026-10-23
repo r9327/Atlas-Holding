@@ -15,7 +15,10 @@ import tempfile
 from typing import Callable
 
 from .update_lock import UpdateLockError, exclusive_update_lock
-from .update_stage import _MARKER, _RELEASE, _RESERVED, _SHA
+from .update_stage import (
+    _MARKER, _RELEASE, _RESERVED, _SHA, _STAGE_SCHEMA,
+    ReleaseStagingError, _slot_inventory,
+)
 
 _ACTIVE = "active-release.json"
 _PENDING = ".atlas-switch.pending.json"
@@ -138,14 +141,29 @@ def _verified_slot(root: Path, target: ReleasePointer) -> Path:
     saved = _read_json(folder / _MARKER)
     if (
         not isinstance(saved, dict)
-        or set(saved) != {"schema", "release", "archive_sha256", "files", "unpacked_bytes"}
-        or saved["schema"] != "atlas-staged-release/v1"
+        or set(saved) != {
+            "schema", "release", "archive_sha256", "files",
+            "unpacked_bytes", "tree_sha256",
+        }
+        or saved["schema"] != _STAGE_SCHEMA
         or saved["release"] != target.release
         or saved["archive_sha256"] != target.archive_sha256
         or type(saved["files"]) is not int or saved["files"] < 1
         or type(saved["unpacked_bytes"]) is not int or saved["unpacked_bytes"] < 0
+        or not isinstance(saved["tree_sha256"], str)
+        or _SHA.fullmatch(saved["tree_sha256"]) is None
     ):
         raise ReleaseSwitchError("staged receipt does not match authorized archive")
+    try:
+        inventory = _slot_inventory(folder)
+    except ReleaseStagingError as exc:
+        raise ReleaseSwitchError("staged slot integrity verification failed") from exc
+    if (
+        inventory.files != saved["files"]
+        or inventory.unpacked_bytes != saved["unpacked_bytes"]
+        or inventory.tree_sha256 != saved["tree_sha256"]
+    ):
+        raise ReleaseSwitchError("staged slot content does not match receipt")
     return folder
 
 
