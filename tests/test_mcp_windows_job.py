@@ -124,6 +124,51 @@ class WindowsJobMcpTests(unittest.TestCase):
                         launch_verified_local_hub(**params)
             spawn.assert_not_called()
 
+    def test_failed_assignment_destroys_suspended_child_before_execution(self):
+        import subprocess
+        from holding.mcp_windows_job import WindowsJobError
+        original_spawn = subprocess.Popen
+        started = []
+
+        def observe_spawn(*args, **kwargs):
+            process = original_spawn(*args, **kwargs)
+            started.append(process)
+            return process
+
+        with patch("holding.mcp_windows_job._assign",
+                   side_effect=WindowsJobError("fake assignment rejected")):
+            with patch("holding.mcp_windows_job.subprocess.Popen",
+                       side_effect=observe_spawn):
+                with self.assertRaisesRegex(WindowsJobError, "assignment rejected"):
+                    launch_verified_local_hub(
+                        interpreter_pin=runtime_pin(), package_root=ROOT)
+        self.assertEqual(len(started), 1)
+        self.assertIsNotNone(started[0].poll())
+        self.assertTrue(started[0].stdin.closed)
+        self.assertTrue(started[0].stdout.closed)
+
+    def test_failed_thread_resume_kills_child_and_releases_resources(self):
+        import subprocess
+        original_spawn = subprocess.Popen
+        launched = []
+
+        def observe_spawn(*args, **kwargs):
+            process = original_spawn(*args, **kwargs)
+            launched.append(process)
+            return process
+
+        with patch("holding.mcp_windows_job._resume_suspended_child",
+                   side_effect=WindowsJobError("fake thread resume denied")):
+            with patch("holding.mcp_windows_job.subprocess.Popen",
+                       side_effect=observe_spawn):
+                with self.assertRaisesRegex(WindowsJobError, "resume denied"):
+                    launch_verified_local_hub(
+                        interpreter_pin=runtime_pin(), package_root=ROOT)
+        self.assertEqual(len(launched), 1)
+        self.assertIsNotNone(launched[0].poll())
+        self.assertTrue(launched[0].stdin.closed)
+        self.assertTrue(launched[0].stdout.closed)
+
     def test_job_close_terminates_idle_stdio_child(self):
         managed = launch_verified_local_hub(
             interpreter_pin=runtime_pin(), package_root=ROOT)
