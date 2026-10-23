@@ -284,7 +284,7 @@ def _model_use(value: Any, task_ids: set[str],
         "benchmark_digest", "observed_at",
     })
     role = item["role"]
-    if role not in {"CEO", "ARCHITECT", "CODER", "AUDITOR", "DOCTOR"}:
+    if type(role) is not str or role not in {"CEO", "ARCHITECT", "CODER", "AUDITOR", "DOCTOR"}:
         raise ControlCenterStateError("Invalid historical model role")
     task_id = _identifier(item["task_id"], "model usage task")
     if task_id not in task_ids:
