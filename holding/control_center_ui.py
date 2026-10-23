@@ -216,6 +216,7 @@ class ControlCenterWindow(QMainWindow):
         if self._sequence is None or state.sequence != self._sequence:
             return False
         self._last_received_at = monotonic()
+        self.status.setText(self._last_status_text)
         self._status_timer.start()
         return True
 
