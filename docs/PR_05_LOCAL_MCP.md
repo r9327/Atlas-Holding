@@ -128,3 +128,48 @@ Une vérification SHA seule ne constitue pas un healthcheck complet :
 un lancement isolé avec timeout, les versions de serveur attestées,
 les permissions par capability et le branchement du véritable
 exécuteur réseau restent les étapes suivantes.
+
+
+## Démarrage réel du hub MCP par le superviseur (23 octobre 2026)
+
+Le processus `python -m holding.mcp_entry` fonctionne par défaut en mode
+**santé locale seulement**, sans création de base de données, inventaire
+du PC, plugin distant, secret ni commande d'exécution.
+
+Un superviseur de confiance peut désormais lancer :
+
+```text
+python -m holding.mcp_entry --bootstrap-manifest <absolute-private-file.json>
+```
+
+Le manifeste JSON est strictement validé : `schema_version: 1`,
+`cache_database` (chemin absolu ou null) et `pins` (liste au plus
+32 entrées `name`, `declared_version`, `executable` absolu,
+`expected_sha256`). Les champs inconnus, JSON à clés dupliquées,
+liens symboliques, chemins relatifs et configurations de taille excessive
+sont refusés avant l'ouverture du hub.
+
+Sous POSIX, le fichier et son répertoire parent doivent appartenir
+à l'utilisateur courant et ne pas être modifiables par les groupes ou
+autres utilisateurs. **Sous Windows, le superviseur doit garantir
+explicitement les ACL NTFS privées avant de lancer le processus** :
+les attributs fournis par `stat` en Python ne remplacent pas une
+vérification des ACL Windows.
+
+Le cache déjà provisionné est ouvert en **SQLite mode=ro avec
+PRAGMA query_only**. Il n'est ni créé ni mis à jour par le reader ;
+une erreur de manifeste, une base manquante ou une incohérence
+d'installation interrompt le démarrage (code 2), sans fuite de
+chemins locaux, arguments sensibles ou stack traces sur stdout.
+`tools/call` ne peut pas changer le manifeste, écrire dans
+la base, changer un digest épinglé ni lancer un exécutable.
+
+Les tests de bout en bout lancent le véritable module comme sous-processus
+Python en stdin/stdout sur les runners Linux et Windows. Ils vérifient
+les tools réellement annoncés et appelables, la non-exécution des
+binaires, les bases absentes et les manifestes hostiles.
+
+**Limite:** ce support est un contrat de lancement autonome du hub,
+pas encore le câblage d'un installeur AtlasHoldingSetup.exe ;
+la configuration et les ACL doivent être fournies par le
+superviseur Windows lors de l'intégration des PR.
