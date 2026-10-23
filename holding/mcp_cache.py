@@ -14,7 +14,7 @@ import sqlite3
 from urllib.parse import urlsplit
 
 
-MAX_CONTENT_BYTES = 128 * 1024
+MAX_CONTENT_BYTES = 32 * 1024
 MAX_RECORDS = 64
 MAX_AGE_SECONDS = 30 * 86400
 _MAX_EPOCH = 4_102_444_800
@@ -114,6 +114,9 @@ class OfflineDocumentCache:
         except UnicodeDecodeError as exc:
             raise McpCacheError("Cache only accepts bounded UTF-8 text") from exc
         with self.db:
+            # sqlite isolation_level=None otherwise autocommits each write.
+            # BEGIN makes insertion and bounded eviction one atomic operation.
+            self.db.execute("BEGIN IMMEDIATE")
             old = self.db.execute(
                 "SELECT captured_epoch FROM mcp_cached_docs "
                 "WHERE source_uri=? AND source_version=?",
