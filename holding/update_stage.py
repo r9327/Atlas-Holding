@@ -78,6 +78,11 @@ def _index_entries(archive: zipfile.ZipFile, *, max_files: int,
     for entry in archive.infolist():
         if len(entries) >= max_files + 4096:
             raise ReleaseStagingError("too many archive entries")
+        # On Windows, ZipInfo normalizes backslashes to '/' while reading.
+        # Check the original central-directory name or malicious separators
+        # would be accepted without ever reaching our path validation.
+        if entry.orig_filename != entry.filename:
+            raise ReleaseStagingError("normalized ZIP entry path is forbidden")
         is_dir = entry.is_dir()
         parts = _parts(entry.filename, directory=is_dir)
         mode = stat.S_IFMT(entry.external_attr >> 16)
