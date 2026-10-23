@@ -88,6 +88,41 @@ class ControlCenterStateTests(unittest.TestCase):
         with self.assertRaises(ControlCenterStateError):
             consume(missing)
 
+    def test_v3_services_are_strict_and_v2_stays_compatible(self):
+        legacy = snapshot()
+        legacy.update(schema_version=2, paused=False, stop_requested=False)
+        self.assertEqual(consume(legacy).services, ())
+        updated = dict(legacy, schema_version=3, services=[
+            {"name": "github", "status": "ONLINE", "age_seconds": 18},
+            {"name": "firecrawl", "status": "STALE", "age_seconds": 399},
+        ])
+        state = consume(updated)
+        self.assertEqual(len(state.services), 2)
+        self.assertEqual(state.services[1].status, "STALE")
+        cases = [
+            [updated["services"][0]] * 2,
+            [{"name": "github", "status": "ACTIVE", "age_seconds": 1}],
+            [{"name": "github", "status": "ONLINE", "age_seconds": 301}],
+            [{"name": "github", "status": "STALE", "age_seconds": 299}],
+            [{"name": "github", "status": "UNKNOWN", "age_seconds": 0}],
+            [{"name": "github", "status": "ONLINE", "age_seconds": True}],
+            [{"name": "rogue", "status": "ONLINE", "age_seconds": 1}],
+            [{"name": "github", "status": "ONLINE", "age_seconds": 1,
+              "installed": True}],
+        ]
+        for invalid in cases:
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ControlCenterStateError):
+                    consume(dict(updated, services=invalid))
+        without_services = dict(updated)
+        del without_services["services"]
+        with self.assertRaises(ControlCenterStateError):
+            consume(without_services)
+        with self.assertRaises(ControlCenterStateError):
+            consume(dict(updated, services=[{"name": "github",
+                                              "status": "ONLINE",
+                                              "age_seconds": 1}] * 4))
+
     def test_done_without_evidence_is_impossible(self):
         payload = snapshot()
         payload["tasks"][0]["completion_evidence"] = None
