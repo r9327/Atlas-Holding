@@ -276,3 +276,38 @@ attribuent volontairement un droit d'écriture à Everyone sur le manifeste,
 son dossier ou le cache : **aucun outil MCP ne doit être exposé dans ces cas**.
 Cela ne remplace pas la politique d'installation Windows, la protection
 des binaires au moment de leur exécution et le confinement des vrais plugins.
+
+
+## Session MCP persistante et journal d'observations (23 octobre 2026)
+
+Le superviseur dispose désormais de deux composants **locaux**, non exposés
+aux prompts d'agents :
+
+- `holding/mcp_hub_session.py` conserve un processus MCP interne unique
+  dans une session réutilisable, lancée depuis l'interpréteur SHA-256 épinglé
+  et le véritable répertoire du package. Sous Windows, ce processus reste
+  sous Job Object (256 Mio/4 processus par défaut) ; sous POSIX, le
+  superviseur peut tuer son groupe de processus. Chaque vérification
+  `server/discover` a un délai et une lecture bornée à 64 Kio. Une réponse
+  invalide, trop volumineuse ou silencieuse **ferme** la session et interdit
+  de la présenter comme `RESPONSIVE`.
+- `holding/mcp_hub_journal.py` conserve les dernières **128 observations**
+  dans SQLite sans chemins locaux ni secrets. Une validation réussie
+  `RESPONSIVE` n'est valable que pendant 30 secondes. Après cette limite
+  l'API de lecture renvoie `STALE` sans conserver le protocole prétendument
+  opérationnel. Les nouveaux événements sont transactionnels, chronologiques,
+  contrôlés et accessibles en ouverture SQLite strictement read-only.
+
+Les tests incluent : deux échanges de découverte dans le **même vrai
+processus**, disparition du processus entre deux lectures, expiration,
+réponse non conforme, dépassement de sortie, timeout et arrêt de groupe,
+puis le journal relu dans un second lecteur, l'éviction, les horodatages
+incorrects, le refus des preuves altérées et les interdictions d'écriture.
+
+**Frontière de confiance explicite :** ce journal appartient au
+superviseur local et n'est pas un certificat cryptographique transmis à
+l'interface. Avant d'en afficher des états dans le Control Center, le
+moteur doit vérifier son installation/ACL, puis projeter les observations
+à travers l'IPC HMAC existant de la PR #11. Même `RESPONSIVE` prouve
+seulement le hub interne, jamais que Doctor, Graphify, Firecrawl,
+Context7 ou un autre plugin tiers est actif.
