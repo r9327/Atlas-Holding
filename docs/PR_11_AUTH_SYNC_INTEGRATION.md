@@ -384,7 +384,9 @@ capacité donnée au modèle.
 Le contrat impose :
 - Une liste strictement identique aux fichiers `.py` installés, sans
   modules ajoutés, manquants ni alias symboliques ; limite de 192 fichiers,
-  de 2 Mio par fichier et 32 Mio au total.
+  de 2 Mio par fichier et 32 Mio au total. Les extensions racine non épinglées
+  `.pyd`, `.so`, `.dll` et les bytecodes `.pyc` hors `__pycache__`
+  sont également refusés pour empêcher l'import d'un module natif concurrent.
 - Vérification de l'empreinte des sources à la lecture lors du
   provisionnement, **avant le lancement du hub**, puis **après** chaque
   découverte du protocole. Si un fichier a changé, la session est refusée
@@ -402,3 +404,10 @@ après corruption et les permissions de fichier Windows non sûres.
 Les ACL et empreintes **ne remplacent pas** une image Windows immuable,
 une signature du distributeur ou la gestion des mises à jour atomiques.
 Les vrais plugins tiers et leur approbation n'en sont pas déduits.
+
+Le bootstrap de ce schéma vérifie explicitement qu'il ne tourne pas dans
+un exécutable PyInstaller « frozen » : un EXE assemblé n'est pas un interpréteur
+CPython acceptant `-m`. La future distribution autonome doit livrer un
+interpréteur embeddable fiable, verrouiller les droits de ses modules et
+satisfaire ces mêmes preuves avant d'activer MCP. Le v5 ne prétend donc pas
+que l'installateur EXE complet est déjà certifié.
