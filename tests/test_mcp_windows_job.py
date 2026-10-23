@@ -62,6 +62,12 @@ class WindowsJobMcpTests(unittest.TestCase):
         with launch_verified_local_hub(
                 interpreter_pin=runtime_pin(), package_root=ROOT,
                 job_memory_mb=128, active_limit=2) as managed:
+            observed = managed.observe()
+            self.assertEqual(observed.process_state, "RUNNING")
+            self.assertEqual(observed.pid, managed.process.pid)
+            self.assertEqual(observed.job_memory_limit_bytes, 128 * 1024 * 1024)
+            self.assertEqual(observed.active_process_limit, 2)
+            self.assertEqual(observed.security_scope, "RESOURCE_LIMITS_NOT_SANDBOX")
             process = kernel.OpenProcess(0x1000, False, managed.process.pid)
             self.assertTrue(process)
             try:
@@ -95,6 +101,10 @@ class WindowsJobMcpTests(unittest.TestCase):
                 "atlas-holding-local",
             )
         self.assertTrue(managed._closed)
+        closed = managed.observe()
+        self.assertEqual(closed.process_state, "CLOSED")
+        self.assertIsNone(closed.job_memory_limit_bytes)
+        self.assertIsNone(closed.active_process_limit)
 
     def test_invalid_digests_fail_without_spawning_any_process(self):
         with patch("holding.mcp_windows_job.subprocess.Popen") as spawn:
