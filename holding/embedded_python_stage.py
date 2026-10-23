@@ -98,7 +98,7 @@ def _approved_entries(archive: zipfile.ZipFile, minor: int) -> list[zipfile.ZipI
                 or "\\" in name or ":" in name or name.startswith(".")
                 or not name.isascii() or len(name) > 127
                 or (info.flag_bits & 0x01)
-                or (info.external_attr >> 16) & stat.S_IFMT == stat.S_IFLNK):
+                or stat.S_IFMT(info.external_attr >> 16) == stat.S_IFLNK):
             raise EmbeddedRuntimeError("Unsafe embeddable Python archive entry")
         folded = name.casefold()
         if folded in seen:
