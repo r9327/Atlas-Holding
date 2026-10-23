@@ -38,6 +38,10 @@ def _discover(package_root: Path) -> dict[str, Path]:
     files = {}
     total = 0
     for candidate in folder.iterdir():
+        # Native extensions are importable *before* .py on Python import.
+        # Never allow an unpinned .pyd/.so to shadow a signed .py module.
+        if candidate.suffix.lower() in {".pyd", ".so", ".dll", ".pyc"}:
+            raise McpPackagePinError("Unpinned executable package artifact")
         if candidate.suffix != ".py":
             continue
         if (not _SAFE.fullmatch(candidate.name)
