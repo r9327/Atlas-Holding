@@ -11,6 +11,8 @@ from .control_center_state import MAX_LOG_PAGE, MAX_SNAPSHOT_BYTES
 
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
+_SERVICE_NAMES = frozenset({"github", "context7", "firecrawl"})
+SERVICE_MAX_AGE_SECONDS = 300
 
 
 class DashboardProjectionError(ValueError):
@@ -147,6 +149,40 @@ def _network(control: ControlPlane) -> str:
     return "OFFLINE"
 
 
+def _service_health(control: ControlPlane, now_epoch: int) -> list[dict]:
+    """Read only durable service observations, never infer plugin installation.
+
+    The status is historical evidence, not a live network probe. Expired or
+    future timestamps cannot be displayed as a healthy ONLINE observation.
+    No reason/details, account identifiers or credentials cross the UI.
+    """
+    if not _table_exists(control, "external_service_health"):
+        return []
+    result = []
+    for row in control.store.db.execute(
+            "SELECT service,status,observed_at FROM external_service_health "
+            "ORDER BY service LIMIT 4"):
+        name, status, observed = row["service"], row["status"], row["observed_at"]
+        if name not in _SERVICE_NAMES or status not in {
+                "UNKNOWN", "PROBING", "ONLINE", "DEGRADED", "OFFLINE", "BLOCKED"}:
+            raise DashboardProjectionError("Invalid durable service health")
+        age = None
+        if observed is not None:
+            if type(observed) is not int or not 0 <= observed <= 4_102_444_800:
+                raise DashboardProjectionError("Invalid service observation timestamp")
+            if observed <= now_epoch:
+                age = min(now_epoch - observed, 31_536_000)
+        # UNKNOWN is not a claim that a service is installed or operational.
+        if status == "UNKNOWN":
+            age = None
+        elif age is None or age > SERVICE_MAX_AGE_SECONDS:
+            status = "STALE"
+        result.append({"name": name, "status": status, "age_seconds": age})
+    if len(result) > len(_SERVICE_NAMES):
+        raise DashboardProjectionError("Unexpected service health cardinality")
+    return result
+
+
 def _category(event: str, mission_id: str | None) -> str:
     if mission_id is None:
         return "SYSTEM"
@@ -186,6 +222,7 @@ def project_dashboard_snapshot(
             "SELECT COUNT(*) FROM missions WHERE external_required=1 "
             "AND state!='DONE'").fetchone()[0]
         network = _network(control)
+        services = _service_health(control, now_epoch)
         paused = control._setting("paused")
         stop_requested = control._setting("stop_requested")
     except BaseException:
@@ -194,7 +231,7 @@ def project_dashboard_snapshot(
     else:
         database.execute("COMMIT")
     payload = {
-        "schema_version": 2,
+        "schema_version": 3,
         "engine_id": engine_id,
         "paused": paused,
         "stop_requested": stop_requested,
@@ -205,6 +242,7 @@ def project_dashboard_snapshot(
         "tasks": tasks,
         "agents": [],
         "plugins": [],
+        "services": services,
         "log_page": {
             "items": [{
                 "sequence": row["seq"],
