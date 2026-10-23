@@ -267,6 +267,13 @@ class ControlCenterWindow(QMainWindow):
         )
         self.project_status.setText(view)
 
+    def mark_local_hub_unverified(self) -> None:
+        """Never leave a historical hub heartbeat labeled as live on disconnect."""
+        self.hub_status.setText(
+            "Hub MCP interne : connexion moteur non vérifiée ; "
+            "dernier statut historique seulement"
+        )
+
     @Slot()
     def _refresh_connection_status(self) -> None:
         """Never keep displaying a silent engine as a live connection."""
@@ -277,6 +284,7 @@ class ControlCenterWindow(QMainWindow):
                 f"ÉTAT PÉRIMÉ — aucune nouvelle donnée depuis "
                 f"{MAX_SNAPSHOT_AGE_SECONDS} s ; connexion moteur non confirmée"
             )
+            self.mark_local_hub_unverified()
         # Do not overwrite explicit disconnected, paused or stopped status
         # in the live subclass on ordinary ticks.
 
