@@ -116,8 +116,23 @@ class ControlCenterWindow(QMainWindow):
         tabs = QTabWidget()
         tabs.setObjectName("dashboardTabs")
         tabs.addTab(self.tasks, "Roadmap")
-        tabs.addTab(self.agents, "Agents")
-        tabs.addTab(self.plugins, "Plugins")
+        self.agent_telemetry = QLabel(
+            "Agents : télémétrie non renseignée par le moteur"
+        )
+        self.agent_telemetry.setObjectName("agentTelemetryStatus")
+        self.plugin_telemetry = QLabel(
+            "Plugins : télémétrie non renseignée par le moteur"
+        )
+        self.plugin_telemetry.setObjectName("pluginTelemetryStatus")
+        for table, label, heading in (
+                (self.agents, self.agent_telemetry, "Agents"),
+                (self.plugins, self.plugin_telemetry, "Plugins")):
+            page = QWidget()
+            column = QVBoxLayout(page)
+            label.setWordWrap(True)
+            column.addWidget(label)
+            column.addWidget(table)
+            tabs.addTab(page, heading)
         proof_page = QWidget()
         proof_layout = QVBoxLayout(proof_page)
         proof_layout.addWidget(self.protection_status)
@@ -298,6 +313,16 @@ class ControlCenterWindow(QMainWindow):
         _replace_rows(self.tasks, task_rows)
         _replace_rows(self.agents, agent_rows)
         _replace_rows(self.plugins, plugin_rows)
+        self.agent_telemetry.setText(
+            f"Agents : {len(agent_rows)} état(s) fournis par le moteur"
+            if agent_rows else
+            "Agents : aucun état transmis ; disponibilité non déterminable"
+        )
+        self.plugin_telemetry.setText(
+            f"Plugins : {len(plugin_rows)} état(s) fournis par le moteur"
+            if plugin_rows else
+            "Plugins : aucun état transmis ; disponibilité non déterminable"
+        )
         _replace_rows(self.logs, log_rows)
         self._filter_logs()
         self._last_status_text = (
