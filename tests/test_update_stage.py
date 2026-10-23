@@ -70,7 +70,12 @@ class ReleaseStageTests(unittest.TestCase):
             ".atlas-stage.json",
         ):
             with self.subTest(filename=filename):
-                self.zip([(filename, b"x")])
+                # ZipInfo(str) normalizes backslashes on Windows.
+                # Bypass that conversion so the malformed archive is really
+                # what our extractor receives on both operating systems.
+                name = zipfile.ZipInfo("placeholder")
+                name.filename = filename
+                self.zip([(name, b"x")])
                 with self.assertRaises(ReleaseStagingError):
                     self.stage()
                 self.assertFalse((self.install / "versions" / "v1.2.3").exists())
