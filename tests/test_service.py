@@ -66,6 +66,40 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(service.run(max_ticks=1).action, "QA_PENDING")
             self.assertEqual(worker.calls, ["a"])
 
+    def test_paused_mcp_is_closed_once_not_written_every_50ms(self):
+        class FakeMcpSupervisor:
+            def __init__(self):
+                self.steps = []
+                self.closed = False
+            def step(self, *, background_allowed, resources_safe, now_epoch):
+                self.steps.append((background_allowed, resources_safe))
+            def close(self, *, now_epoch=None):
+                self.closed = True
+
+        with self.make(FakeWorker()) as service:
+            mcp = FakeMcpSupervisor()
+            service._mcp_supervisor = mcp
+            with StateStore(self.db) as state:
+                state.set_paused(True)
+            service.start()
+            self.assertEqual(service.run(max_ticks=3).action, "WAIT")
+            self.assertEqual(mcp.steps, [(False, False)])
+            with StateStore(self.db) as state:
+                state.set_paused(False)
+            # A mocked guard ensures this tests the lifecycle, not free RAM.
+            from types import SimpleNamespace
+            service.resource_guard.check = lambda: SimpleNamespace(
+                safe=True, reason="")
+            self.assertEqual(service.run(max_ticks=1).action, "COMPLETE")
+            self.assertEqual(len(mcp.steps), 2)
+            self.assertEqual(mcp.steps[-1], (True, True))
+            with StateStore(self.db) as state:
+                state.set_paused(True)
+            service.run(max_ticks=2)
+            self.assertEqual(len(mcp.steps), 3)
+            self.assertEqual(mcp.steps[-1], (False, False))
+        self.assertTrue(mcp.closed)
+
     def test_cli_pause_resume_and_stop(self):
         with StateStore(self.db) as state:
             state.add_missions([Mission("a", REPO)])
