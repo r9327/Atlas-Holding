@@ -43,7 +43,7 @@ class LocalHubProbeTests(unittest.TestCase):
 
     def test_failed_binary_hash_is_not_executed(self):
         bogus = pinned("0" * 64)
-        with patch("holding.mcp_hub_probe.subprocess.Popen") as popen:
+        with patch("holding.mcp_hub_probe._spawn_hub") as popen:
             state = probe_local_hub(
                 interpreter_pin=bogus, repository_root=ROOT,
             )
@@ -78,7 +78,7 @@ class LocalHubProbeTests(unittest.TestCase):
                 "raise RuntimeError('this module must never execute')",
                 encoding="utf-8",
             )
-            with patch("holding.mcp_hub_probe.subprocess.Popen") as launch:
+            with patch("holding.mcp_hub_probe._spawn_hub") as launch:
                 with self.assertRaisesRegex(ValueError, "own installed package"):
                     probe_local_hub(
                         interpreter_pin=pinned(), repository_root=fake_root,
@@ -152,20 +152,17 @@ class LocalHubProbeTests(unittest.TestCase):
                 "OPENAI_API_KEY": "DO_NOT_PASS",
                 "PRIVATE_ACCESS_TOKEN": "SECRET_DO_NOT_PASS",
             }):
-            with patch("holding.mcp_hub_probe.subprocess.Popen",
-                       return_value=FakeProcess()) as popen:
+            with patch("holding.mcp_hub_probe._spawn_hub",
+                       return_value=(FakeProcess(), None)) as popen:
                 result = probe_local_hub(
                     interpreter_pin=pinned(), repository_root=ROOT)
                 self.assertEqual(result.status, "PROTOCOL_RESPONSIVE")
                 kwargs = popen.call_args.kwargs
-                self.assertEqual(
-                    popen.call_args.args[0],
-                    [str(PYTHON), "-B", "-m", "holding.mcp_entry"],
-                )
-                self.assertFalse(kwargs["shell"])
+                self.assertIs(kwargs["interpreter_pin"].executable, PYTHON)
+                self.assertEqual(kwargs["repository_root"], ROOT)
                 self.assertNotIn("OPENAI_API_KEY", kwargs["env"])
                 self.assertNotIn("PRIVATE_ACCESS_TOKEN", kwargs["env"])
-                self.assertEqual(kwargs["cwd"], str(ROOT))
+                self.assertEqual(kwargs["repository_root"], ROOT)
 
     def test_oversized_stdout_never_becomes_a_success(self):
         class FakeProcess:
@@ -180,8 +177,8 @@ class LocalHubProbeTests(unittest.TestCase):
             def kill(self):
                 raise AssertionError("Fake process is already completed")
 
-        with patch("holding.mcp_hub_probe.subprocess.Popen",
-                   return_value=FakeProcess()):
+        with patch("holding.mcp_hub_probe._spawn_hub",
+                   return_value=(FakeProcess(), None)):
             report = probe_local_hub(
                 interpreter_pin=pinned(), repository_root=ROOT)
             self.assertEqual(report.status, "OUTPUT_LIMIT")
