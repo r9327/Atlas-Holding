@@ -37,3 +37,29 @@ Contrats officiels suivis :
 - https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio
 - https://modelcontextprotocol.io/specification/2026-07-28/server/discover
 - https://modelcontextprotocol.io/specification/2026-07-28/server/tools
+
+
+## Contrat exécutable des arguments JSON-RPC — 23 octobre 2026
+
+Le serveur MCP stdio refuse désormais toute invocation tools/call dont les
+arguments ne satisfont pas un **sous-ensemble effectivement validé** du JSON
+Schema affiché dans tools/list. Les schémas sont copiés à l'initialisation,
+sans références réseau, expressions régulières embarquées, code exécutable ou
+résolution de références ; une déclaration incompatible empêche le démarrage
+de l'outil concerné.
+
+Mots-clés couverts : type, properties, required, additionalProperties, items,
+minLength/maxLength, minItems/maxItems et enum. Les booléens ne sont pas des
+entiers. Les collections et profondeurs sont bornées. Les handlers ne reçoivent
+jamais un appel refusé par ce contrat. Les exceptions d'un outil ayant reçu
+une entrée valide restent masquées dans un résultat isError, sans fuite de
+secret, sans basculement en « succès ».
+
+Ce lot est **local et sans réseau**. Il ne prouve ni que Firecrawl/Context7
+sont installés ni qu'un outil distant a été exécuté. Le branchement des vrais
+exécuteurs, leur état d'installation et les quotas durables restent des lots
+distincts à certifier après intégration.
+
+Les tests couvrent les champs obligatoires, refus des clés inattendues,
+validation des tableaux, bornes, types et enum, schémas non supportés,
+non-exécution des handlers et masquage des erreurs.
