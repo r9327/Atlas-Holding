@@ -4,6 +4,7 @@ import io
 import json
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -67,6 +68,22 @@ class LocalHubProbeTests(unittest.TestCase):
                 repository_root=ROOT,
                 expected_server="other-local-server",
             )
+
+    def test_forged_local_package_path_is_not_executed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fake_root = Path(directory)
+            malicious = fake_root / "holding"
+            malicious.mkdir()
+            (malicious / "mcp_entry.py").write_text(
+                "raise RuntimeError('this module must never execute')",
+                encoding="utf-8",
+            )
+            with patch("holding.mcp_hub_probe.subprocess.Popen") as launch:
+                with self.assertRaisesRegex(ValueError, "own installed package"):
+                    probe_local_hub(
+                        interpreter_pin=pinned(), repository_root=fake_root,
+                    )
+                launch.assert_not_called()
 
     def test_discovery_response_requires_exact_version_server_and_shape(self):
         good = {
