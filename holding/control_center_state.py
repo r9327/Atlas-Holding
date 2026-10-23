@@ -78,6 +78,16 @@ class PluginView:
 
 
 @dataclass(frozen=True)
+class ModelUsageView:
+    role: str
+    task_id: str
+    model_name: str
+    model_digest: str
+    benchmark_digest: str
+    observed_at: int
+
+
+@dataclass(frozen=True)
 class ServiceView:
     name: str
     status: str
@@ -109,6 +119,7 @@ class DashboardState:
     paused: bool | None = None
     stop_requested: bool | None = None
     services: tuple[ServiceView, ...] = ()
+    model_history: tuple[ModelUsageView, ...] = ()
 
 
 def _object(value: Any, required: set[str]) -> dict[str, Any]:
@@ -266,6 +277,32 @@ def _plugin(value: Any) -> PluginView:
     )
 
 
+def _model_use(value: Any, task_ids: set[str],
+               generated_at: int) -> ModelUsageView:
+    item = _object(value, {
+        "role", "task_id", "model_name", "model_digest",
+        "benchmark_digest", "observed_at",
+    })
+    role = item["role"]
+    if role not in {"CEO", "ARCHITECT", "CODER", "AUDITOR", "DOCTOR"}:
+        raise ControlCenterStateError("Invalid historical model role")
+    task_id = _identifier(item["task_id"], "model usage task")
+    if task_id not in task_ids:
+        raise ControlCenterStateError("Model assignment references unknown task")
+    digest, benchmark = item["model_digest"], item["benchmark_digest"]
+    if (type(digest) is not str or not _DIGEST.fullmatch(digest)
+            or type(benchmark) is not str or not _DIGEST.fullmatch(benchmark)):
+        raise ControlCenterStateError("Model history lacks verified digests")
+    observed = _integer(
+        item["observed_at"], "model usage time", maximum=4_102_444_800)
+    if observed > generated_at + 5:
+        raise ControlCenterStateError("Model usage is from the future")
+    return ModelUsageView(
+        role, task_id, _text(item["model_name"], "registered model name",
+                             maximum=120), digest, benchmark, observed,
+    )
+
+
 def _service(value: Any) -> ServiceView:
     item = _object(value, {"name", "status", "age_seconds"})
     name = item["name"]
@@ -335,15 +372,17 @@ def consume_dashboard_snapshot(
         "schema_version", "engine_id", "sequence", "generated_at", "network",
         "pending_external", "tasks", "agents", "plugins", "log_page",
     }
-    if type(version) is int and version in (2, 3):
+    if type(version) is int and version in (2, 3, 4):
         keys |= {"paused", "stop_requested"}
-    if type(version) is int and version == 3:
+    if type(version) is int and version in (3, 4):
         keys.add("services")
+    if type(version) is int and version == 4:
+        keys.add("model_history")
     data = _object(payload, keys)
-    if (type(version) is not int or version not in (1, 2, 3)
+    if (type(version) is not int or version not in (1, 2, 3, 4)
             or data["engine_id"] != trusted_engine_id):
         raise ControlCenterStateError("Snapshot identity mismatch")
-    if version in (2, 3) and (type(data["paused"]) is not bool
+    if version in (2, 3, 4) and (type(data["paused"]) is not bool
                           or type(data["stop_requested"]) is not bool):
         raise ControlCenterStateError("Invalid durable operator control state")
     sequence = _integer(data["sequence"], "snapshot sequence", maximum=2**63 - 1)
@@ -381,13 +420,25 @@ def consume_dashboard_snapshot(
         raise ControlCenterStateError("Duplicate plugin name")
 
     services: tuple[ServiceView, ...] = ()
-    if version == 3:
+    if version in (3, 4):
         raw_services = data["services"]
         if not isinstance(raw_services, list) or len(raw_services) > 3:
             raise ControlCenterStateError("Invalid bounded service list")
         services = tuple(_service(item) for item in raw_services)
         if len({item.name for item in services}) != len(services):
             raise ControlCenterStateError("Duplicate service identities")
+
+    model_history: tuple[ModelUsageView, ...] = ()
+    if version == 4:
+        raw_history = data["model_history"]
+        if not isinstance(raw_history, list) or len(raw_history) > 20:
+            raise ControlCenterStateError("Invalid bounded model usage history")
+        model_history = tuple(
+            _model_use(item, task_ids, generated_at) for item in raw_history
+        )
+        observed_times = [item.observed_at for item in model_history]
+        if observed_times != sorted(observed_times, reverse=True):
+            raise ControlCenterStateError("Model history order mismatch")
 
     page = _object(data["log_page"], {"items", "next_cursor"})
     if not isinstance(page["items"], list) or len(page["items"]) > MAX_LOG_PAGE:
@@ -407,7 +458,7 @@ def consume_dashboard_snapshot(
         data["network"],
         _integer(data["pending_external"], "pending external count", maximum=100_000),
         tasks, agents, plugins, logs, cursor,
-        data["paused"] if version in (2, 3) else None,
-        data["stop_requested"] if version in (2, 3) else None,
-        services,
+        data["paused"] if version in (2, 3, 4) else None,
+        data["stop_requested"] if version in (2, 3, 4) else None,
+        services, model_history,
     )
