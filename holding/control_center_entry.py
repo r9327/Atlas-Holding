@@ -9,6 +9,7 @@ This entrypoint does NOT provision Windows ACLs and is not a release installer.
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 import sys
 from typing import BinaryIO
 
@@ -101,12 +102,15 @@ def _enrollment_input(*, readonly: bool, injected: BinaryIO | None) -> BinaryIO:
 def _run_gui(
     reader: DashboardIpcClient,
     controller: DashboardControlClient | None,
+    *, update_root: Path | None = None,
 ) -> int:
     from PySide6.QtWidgets import QApplication
     from .control_center_live import LiveControlCenterWindow
 
     app = QApplication.instance() or QApplication([])
-    window = LiveControlCenterWindow(reader, control=controller)
+    window = LiveControlCenterWindow(
+        reader, control=controller, update_root=update_root,
+    )
     window.show()
     return int(app.exec())
 
@@ -131,14 +135,20 @@ def main(argv: list[str] | None = None, *, input_stream: BinaryIO | None = None)
     parser.add_argument("--readonly", action="store_true")
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--probe", action="store_true")
+    parser.add_argument(
+        "--update-root", type=Path,
+        help="Display-only installation root, never authorizes a release",
+    )
     args = parser.parse_args(argv)
     if args.self_test:
         if (args.port is not None or args.engine_id is not None
-                or args.readonly or args.probe):
+                or args.readonly or args.probe or args.update_root is not None):
             return 2
         return _self_test()
     if args.port is None or args.engine_id is None:
         parser.error("--port and --engine-id are required outside self-test")
+    if args.probe and args.update_root is not None:
+        parser.error("--update-root is display-only and invalid with --probe")
     try:
         read_key, write_key = read_capabilities(
             _enrollment_input(readonly=args.readonly, injected=input_stream),
@@ -163,7 +173,7 @@ def main(argv: list[str] | None = None, *, input_stream: BinaryIO | None = None)
         except DashboardIpcError:
             return 2
         return 0
-    return _run_gui(reader, controller)
+    return _run_gui(reader, controller, update_root=args.update_root)
 
 
 if __name__ == "__main__":

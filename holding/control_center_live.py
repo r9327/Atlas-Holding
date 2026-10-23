@@ -7,19 +7,22 @@ future polls without interrupting the engine or waiting on a hung network.
 from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
+from pathlib import Path
 from time import monotonic
 from PySide6.QtCore import QTimer, Slot
 from PySide6.QtWidgets import QHBoxLayout, QMessageBox, QPushButton, QWidget
 
 from .control_center_ui import ControlCenterWindow
 from .control_center_state import MAX_SNAPSHOT_AGE_SECONDS
+from .update_observation import observe_local_update
 from .dashboard_ipc import DashboardControlClient, DashboardIpcClient, DashboardIpcError
 
 
 class LiveControlCenterWindow(ControlCenterWindow):
     def __init__(self, client: DashboardIpcClient, *,
                  control: DashboardControlClient | None = None,
-                 refresh_ms: int = 1500):
+                 refresh_ms: int = 1500,
+                 update_root: Path | None = None):
         if not isinstance(client, DashboardIpcClient):
             raise ValueError("Authenticated dashboard client required")
         if type(refresh_ms) is not int or not 250 <= refresh_ms <= 10_000:
@@ -28,7 +31,12 @@ class LiveControlCenterWindow(ControlCenterWindow):
             raise ValueError("A separately authenticated write capability is required")
         if control is not None and control.port != client.port:
             raise ValueError("Dashboard read/write endpoints must be the same service")
+        if update_root is not None and not isinstance(update_root, Path):
+            raise ValueError("Explicit local update path must be a Path")
         super().__init__(trusted_engine_id=client.engine_id)
+        self._update_root = update_root
+        self._last_update_observation = monotonic()
+        self.render_update_observation(observe_local_update(update_root))
         self._client = client
         self._closing = False
         self._control = control
@@ -133,6 +141,11 @@ class LiveControlCenterWindow(ControlCenterWindow):
         """Runs on the Qt thread, never blocks on sockets or SQLite."""
         if self._closing:
             return
+        if monotonic() - self._last_update_observation >= 30:
+            self.render_update_observation(
+                observe_local_update(self._update_root)
+            )
+            self._last_update_observation = monotonic()
         # Check every timer tick, including while network work is still
         # pending; a stale snapshot must disable all write buttons.
         self._update_control_buttons()

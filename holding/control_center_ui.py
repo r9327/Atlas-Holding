@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from .control_center_state import DashboardState, MAX_SNAPSHOT_AGE_SECONDS
+from .update_observation import LocalUpdateObservation
 
 
 class ControlCenterUiError(ValueError):
@@ -166,6 +167,28 @@ class ControlCenterWindow(QMainWindow):
         services_layout.addWidget(self.services_note)
         services_layout.addWidget(self.services)
         tabs.addTab(services_page, "Services externes")
+        # Observations read-only of the independently supplied installation
+        # root; not an update authority or a signed-release certification.
+        updates_page = QWidget()
+        updates_layout = QVBoxLayout(updates_page)
+        self.update_status = QLabel(
+            "Mises à jour : installation non renseignée"
+        )
+        self.update_status.setObjectName("localUpdateStatus")
+        self.update_status.setWordWrap(True)
+        self.update_status.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        updates_layout.addWidget(self.update_status)
+        self.update_note = QLabel(
+            "Observation locale uniquement : reçu non signé. "
+            "La vérification des binaires, la santé Windows et la "
+            "certification de publication ne sont pas attestées."
+        )
+        self.update_note.setObjectName("localUpdateDisclaimer")
+        self.update_note.setWordWrap(True)
+        updates_layout.addWidget(self.update_note)
+        tabs.addTab(updates_page, "Mises à jour")
         model_history_page = QWidget()
         model_history_layout = QVBoxLayout(model_history_page)
         model_history_layout.addWidget(self.model_history_note)
@@ -256,6 +279,36 @@ class ControlCenterWindow(QMainWindow):
                 and (not query or any(query in cell.casefold() for cell in cells))
             )
             self.model_history.setRowHidden(row, not visible)
+
+    def render_update_observation(
+        self, observation: LocalUpdateObservation,
+    ) -> None:
+        """Display only an explicit local observation; never grant updates."""
+        if not isinstance(observation, LocalUpdateObservation):
+            raise ControlCenterUiError("Trusted update observation type required")
+        states = {
+            "NOT_CONFIGURED": "Installation non renseignée",
+            "UNVERIFIED_LOCAL_STATE": "État local illisible ou non vérifié",
+            "NO_ACTIVE_POINTER": "Aucune version active déclarée",
+            "RECOVERY_REQUIRED": "Bascule interrompue — reprise nécessaire",
+            "LOCAL_RECEIPT_ONLY": "Reçu de version local présent (non certifié)",
+        }
+        if observation.status not in states:
+            raise ControlCenterUiError("Unknown update observation state")
+        if observation.status == "LOCAL_RECEIPT_ONLY":
+            if (not isinstance(observation.release, str)
+                    or not isinstance(observation.archive_sha256, str)
+                    or len(observation.archive_sha256) != 64):
+                raise ControlCenterUiError("Invalid local update receipt")
+            message = (
+                f"{states[observation.status]} : {observation.release} — "
+                f"archive SHA-256 {observation.archive_sha256}"
+            )
+        else:
+            if observation.release is not None or observation.archive_sha256 is not None:
+                raise ControlCenterUiError("Ambiguous unverified release identity")
+            message = states[observation.status]
+        self.update_status.setText(message)
 
     def render_project_status(self, *, project: str, repository: str,
                               git_status: object, eligible_missions: int) -> None:
