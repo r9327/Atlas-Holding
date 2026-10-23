@@ -28,6 +28,11 @@ def apply_private_acl(path: Path, *, directory: bool = False) -> None:
     for args in commands:
         subprocess.run(args, check=True, stdout=subprocess.PIPE,
                        stderr=subprocess.PIPE, timeout=10)
+    subprocess.run(
+        ["icacls", str(path), "/remove:g",
+         "*S-1-1-0", "*S-1-5-11", "*S-1-5-32-545", "*S-1-3-0"],
+        check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        timeout=10)
 
 
 @unittest.skipUnless(os.name == "nt", "Native Windows DACL inspection")
