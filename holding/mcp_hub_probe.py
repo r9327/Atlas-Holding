@@ -102,8 +102,10 @@ def probe_local_hub(*, interpreter_pin: PinnedLocalPlugin,
     try:
         if interpreter_pin.executable.resolve(strict=True) != Path(sys.executable).resolve(strict=True):
             raise ValueError("Hub probe may execute only the current Python runtime")
+        if repository_root.resolve(strict=True) != Path(__file__).resolve().parent.parent:
+            raise ValueError("Hub probe may inspect only its own installed package")
     except OSError as exc:
-        raise ValueError("Current Python runtime unavailable") from exc
+        raise ValueError("Trusted hub installation unavailable") from exc
     current = inspect_pinned_plugin(interpreter_pin)
     if current.binary_state != "BINARY_VERIFIED":
         return HubProbeResult("BINARY_UNVERIFIED")
