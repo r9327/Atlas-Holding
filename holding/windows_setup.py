@@ -10,6 +10,7 @@ import argparse
 from dataclasses import asdict, dataclass
 import json
 import os
+import shutil
 from pathlib import Path
 from queue import Empty, Queue
 import threading
@@ -42,6 +43,7 @@ from .windows_engine_enrollment import (
     enroll_pinned_engine, launch_enrolled_engine,
 )
 from .windows_runtime_acl import validate_runtime_acl, secure_runtime_acl
+from .embedded_python_stage import EmbeddedPythonRelease, EmbeddedRuntimeStage, stage_pinned_embedded_python, verify_staged_embedded_python
 from .windows_model_enrollment import (
     discover_local_models, enroll_local_model, LocalModelEnrollmentError,
 )
@@ -213,6 +215,61 @@ def assess_post_install(
         "TOOLCHAIN_HEALTHY_MODEL_BENCHMARK_PENDING",
         tuple(steps), tuple(blockers),
     )
+
+
+def stage_embedded_mcp_companion(
+    *, install_root: Path, archive: Path, trusted_source_root: Path,
+    pin: EmbeddedPythonRelease, approved: bool,
+) -> EmbeddedRuntimeStage:
+    """Install an opt-in, byte-verified CPython under the approved install root.
+
+    Does not activate MCP or treat a fabricated local receipt as a release
+    signature; upstream archive and source hashes must be independently pinned.
+    """
+    from .windows_engine_enrollment import _require_native_windows
+    if approved is not True or type(pin) is not EmbeddedPythonRelease:
+        raise RuntimePayloadError("Explicit release-pinned MCP approval required")
+    _require_native_windows()
+    if (not isinstance(install_root, Path) or not install_root.is_absolute()
+            or install_root.is_symlink()
+            or install_root.resolve(strict=True) != install_root):
+        raise RuntimePayloadError("Canonical chosen installation root required")
+    _no_linked_ancestors(install_root)
+    validate_runtime_acl(install_root)
+    destination = install_root / "mcp-python"
+    created = False
+    if destination.exists() or destination.is_symlink():
+        if destination.is_symlink() or not destination.is_dir():
+            raise RuntimePayloadError("Unsafe installed CPython companion directory")
+        validate_runtime_acl(destination)
+    else:
+        destination.mkdir()
+        created = True
+    staged = None
+    try:
+        if created:
+            secure_runtime_acl(destination)
+        staged = stage_pinned_embedded_python(
+            archive=archive, approved_package_root=trusted_source_root,
+            target_parent=destination, pin=pin)
+        secure_runtime_acl(staged.directory)
+        validate_runtime_acl(staged.directory)
+        validate_runtime_acl(staged.python_exe)
+        validate_runtime_acl(staged.directory / "holding")
+        for filename, _digest in staged.source_sha256:
+            validate_runtime_acl(staged.directory / "holding" / filename)
+        result = verify_staged_embedded_python(
+            directory=staged.directory, pin=pin)
+        if result.interpreter_sha256 != staged.interpreter_sha256:
+            raise RuntimePayloadError("Embedded Python executable changed")
+        return result
+    except BaseException:
+        # Roll back only directories created by this call.
+        if staged is not None and staged.directory.exists():
+            shutil.rmtree(staged.directory)
+        if created and destination.exists() and not any(destination.iterdir()):
+            destination.rmdir()
+        raise
 
 
 def execute_setup(
