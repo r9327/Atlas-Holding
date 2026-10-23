@@ -6,6 +6,7 @@ The optional control layer lives in control_center_live, not this viewer.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from time import monotonic
 
 from PySide6.QtCore import Qt, Slot, QTimer
@@ -353,7 +354,9 @@ class ControlCenterWindow(QMainWindow):
         _replace_rows(self.services, service_rows)
         history_rows = tuple((
             usage.role, usage.task_id, usage.model_name,
-            str(usage.observed_at), usage.model_digest,
+            datetime.fromtimestamp(usage.observed_at).astimezone().strftime(
+                "%Y-%m-%d %H:%M:%S %Z"
+            ), usage.model_digest,
             usage.benchmark_digest,
         ) for usage in state.model_history)
         _replace_rows(self.model_history, history_rows)
