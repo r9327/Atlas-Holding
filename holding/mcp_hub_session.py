@@ -19,6 +19,7 @@ from time import monotonic
 
 from .mcp_hub_probe import MAX_PROBE_BYTES, _valid_response, _spawn_hub
 from .mcp_local_inventory import PinnedLocalPlugin, inspect_pinned_plugin
+from .mcp_package_pin import McpPackagePin, McpPackagePinError
 from .mcp_stdio import PROTOCOL_VERSION
 
 
@@ -39,18 +40,22 @@ class LocalMcpHubSession:
     """A single bounded internal MCP process owned by the trusted supervisor."""
 
     def __init__(self, *, interpreter_pin: PinnedLocalPlugin,
-                 package_root: Path, response_timeout: float = 3.0) -> None:
+                 package_root: Path, response_timeout: float = 3.0,
+                 package_pin: McpPackagePin | None = None) -> None:
         if (type(interpreter_pin) is not PinnedLocalPlugin
                 or not isinstance(package_root, Path) or not package_root.is_absolute()
                 or package_root.resolve() != Path(__file__).resolve().parent.parent
                 or interpreter_pin.executable.resolve() != Path(sys.executable).resolve()
                 or type(response_timeout) not in (int, float)
                 or isinstance(response_timeout, bool)
-                or not 0.25 <= response_timeout <= 10):
+                or not 0.25 <= response_timeout <= 10
+                or (package_pin is not None and type(package_pin) is not McpPackagePin)):
+
             raise ValueError("Untrusted internal MCP session configuration")
         self._pin = interpreter_pin
         self._root = package_root
         self._timeout = float(response_timeout)
+        self._package_pin = package_pin
         self._lock = Lock()
         self._process: subprocess.Popen | None = None
         self._managed = None
@@ -63,6 +68,12 @@ class LocalMcpHubSession:
                 raise McpSessionError("MCP session cannot be started twice")
             if inspect_pinned_plugin(self._pin).binary_state != "BINARY_VERIFIED":
                 raise McpSessionError("Pinned internal hub interpreter is unverified")
+            if self._package_pin is not None:
+                try:
+                    if not self._package_pin.verify(self._root):
+                        raise McpSessionError("Installed MCP module digest changed")
+                except McpPackagePinError as exc:
+                    raise McpSessionError("Installed MCP module digest unverifiable") from exc
             env = {"PYTHONDONTWRITEBYTECODE": "1", "PYTHONIOENCODING": "utf-8"}
             for key in ("PATH", "SystemRoot", "WINDIR", "TEMP", "TMP"):
                 if key in os.environ:
@@ -119,6 +130,14 @@ class LocalMcpHubSession:
                 if inspect_pinned_plugin(self._pin).binary_state != "BINARY_VERIFIED":
                     self._terminate_unlocked()
                     return McpSessionObservation("BINARY_CHANGED", process.pid, None, None)
+                if self._package_pin is not None:
+                    try:
+                        module_ok = self._package_pin.verify(self._root)
+                    except McpPackagePinError:
+                        module_ok = False
+                    if not module_ok:
+                        self._terminate_unlocked()
+                        return McpSessionObservation("BINARY_CHANGED", process.pid, None, None)
                 self._last_verified = monotonic()
                 return McpSessionObservation(
                     "RESPONSIVE", process.pid, 0.0, PROTOCOL_VERSION)
