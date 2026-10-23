@@ -234,3 +234,22 @@ Draft jusqu'à l'intégration et à l'exécution de la certification finale.
 - Les améliorations sont sur cette branche intégrée. Les tests doivent
   encore être exécutés sur les runners Ubuntu et Windows et suivis d'une
   certification exact-SHA ; aucun PASS n'est déclaré sans ces résultats.
+
+
+## Télémétrie des services externes (23 octobre 2026)
+
+- Le schéma réseau Control Center v3 expose une liste bornée de **services
+  externes observés**, depuis external_service_health dans la même transaction
+  SQLite que les tâches, les preuves et l'état Pause/Stop. Les consommateurs v1/v2
+  restent compatibles ; aucun nouveau droit n'est accordé au viewer.
+- Services reconnus : github, context7, firecrawl. Les valeurs affichées
+  proviennent uniquement de leur statut et de l'âge de l'observation persistée,
+  sans les motifs libres qui peuvent contenir des secrets. Une observation
+  de plus de 300 secondes devient STALE et ne peut produire ONLINE_STABLE.
+- Ce tableau est indépendant des Plugins : une sonde réseau positive
+  **ne prouve ni installation, ni chargement, ni autorisation de l'outil MCP**.
+  Les agents restent non déterminables faute de registre de sessions fiable.
+- Contrats de tests ajoutés : cas ONLINE récent, service périmé, redaction
+  des raisons, compatibilité schéma v2, refus du contenu v3 forgé et affichage Qt.
+- La validation définitive attend une CI exacte SHA sur Ubuntu/Windows et
+  la qualification native ; les tests committés ne sont pas des preuves PASS.
