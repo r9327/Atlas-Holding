@@ -6,7 +6,9 @@ does not expose engine mutation controls until that IPC exists.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Slot
+from time import monotonic
+
+from PySide6.QtCore import Qt, Slot, QTimer
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -22,7 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .control_center_state import DashboardState
+from .control_center_state import DashboardState, MAX_SNAPSHOT_AGE_SECONDS
 
 
 class ControlCenterUiError(ValueError):
@@ -73,6 +75,11 @@ class ControlCenterWindow(QMainWindow):
             raise ControlCenterUiError("A trusted engine identity is required")
         self._trusted_engine_id = trusted_engine_id
         self._sequence: int | None = None
+        self._last_received_at: float | None = None
+        self._last_status_text = ""
+        self._status_timer = QTimer(self)
+        self._status_timer.setInterval(1000)
+        self._status_timer.timeout.connect(self._refresh_connection_status)
 
         self.setObjectName("atlasControlCenter")
         self.setWindowTitle("Atlas Holding — Control Center")
@@ -98,12 +105,24 @@ class ControlCenterWindow(QMainWindow):
             ("Séquence", "Catégorie", "Message", "Tâche", "Plugin", "Preuve"),
             "logsTable",
         )
+        self.proofs = _table(
+            ("Tâche certifiée", "Contrôle", "SHA candidat", "Empreinte", "Source"),
+            "completionProofsTable",
+        )
+        self.protection_status = QLabel("Aucune preuve de certification reçue")
+        self.protection_status.setObjectName("protectionStatus")
+        self.protection_status.setWordWrap(True)
 
         tabs = QTabWidget()
         tabs.setObjectName("dashboardTabs")
         tabs.addTab(self.tasks, "Roadmap")
         tabs.addTab(self.agents, "Agents")
         tabs.addTab(self.plugins, "Plugins")
+        proof_page = QWidget()
+        proof_layout = QVBoxLayout(proof_page)
+        proof_layout.addWidget(self.protection_status)
+        proof_layout.addWidget(self.proofs)
+        tabs.addTab(proof_page, "Protection et preuves")
 
         # The journal is bounded to one page upstream; filter locally without
         # touching the service, changing Qt models or requesting extra logs.
@@ -163,6 +182,24 @@ class ControlCenterWindow(QMainWindow):
         )
         self.project_status.setText(view)
 
+    @Slot()
+    def _refresh_connection_status(self) -> None:
+        """Never keep displaying a silent engine as a live connection."""
+        if self._last_received_at is None:
+            return
+        if monotonic() - self._last_received_at >= MAX_SNAPSHOT_AGE_SECONDS:
+            self.status.setText(
+                f"ÉTAT PÉRIMÉ — aucune nouvelle donnée depuis "
+                f"{MAX_SNAPSHOT_AGE_SECONDS} s ; connexion moteur non confirmée"
+            )
+        else:
+            self.status.setText(self._last_status_text)
+
+    def closeEvent(self, event) -> None:
+        # Closing the viewer must not touch the engine or leave UI timers alive.
+        self._status_timer.stop()
+        super().closeEvent(event)
+
     @property
     def displayed_sequence(self) -> int | None:
         return self._sequence
@@ -210,14 +247,33 @@ class ControlCenterWindow(QMainWindow):
             log.evidence_digest or "—",
         ) for log in state.logs)
 
+        proof_rows = tuple((
+            task.title,
+            "CI FULL",
+            task.candidate_sha,
+            task.completion_evidence.digest,
+            task.completion_evidence.source,
+        ) for task in state.tasks if task.state == "DONE"
+          and task.completion_evidence is not None)
+        blocked = sum(task.state in {"BLOCKED", "RECOVERY_REQUIRED", "DONE_UNVERIFIED"}
+                      for task in state.tasks)
+        pending = sum(task.state == "QA_PENDING" for task in state.tasks)
+        self.protection_status.setText(
+            f"Tâches avec preuve CI FULL : {len(proof_rows)} / {len(state.tasks)}"
+            f" · Bloquées/non vérifiées : {blocked} · En attente QA : {pending}"
+        )
+        _replace_rows(self.proofs, proof_rows)
         _replace_rows(self.tasks, task_rows)
         _replace_rows(self.agents, agent_rows)
         _replace_rows(self.plugins, plugin_rows)
         _replace_rows(self.logs, log_rows)
         self._filter_logs()
-        self.status.setText(
-            f"{state.network} — séquence {state.sequence} — "
+        self._last_status_text = (
+            f"Dernier état reçu : {state.network} — séquence {state.sequence} — "
             f"{state.pending_external} vérification(s) externe(s) en attente"
         )
+        self._last_received_at = monotonic()
+        self._refresh_connection_status()
+        self._status_timer.start()
         self._sequence = state.sequence
         return True
