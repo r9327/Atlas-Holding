@@ -11,7 +11,7 @@ import hashlib
 from pathlib import Path
 import re
 import sqlite3
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
 
 MAX_CONTENT_BYTES = 32 * 1024
@@ -40,6 +40,12 @@ def _validate_identity(source_uri: str, source_version: str) -> None:
             or parts.password is not None or parts.fragment or port == 0
             or any(ord(ch) < 32 or ord(ch) == 127 for ch in source_uri)):
         raise McpCacheError("Cache source must be a public HTTPS URL without credentials")
+    secret_names = {"token", "access_token", "api_key", "apikey",
+                    "password", "secret", "authorization", "auth", "credential",
+                    "client_secret", "session", "sessionid"}
+    if any(name.casefold() in secret_names
+           for name, _value in parse_qsl(parts.query, keep_blank_values=True)):
+        raise McpCacheError("Cache source URL must not contain authentication secrets")
 
 
 def _epoch(value: object) -> bool:
