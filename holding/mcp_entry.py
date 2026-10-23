@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 import json
+import os
 from pathlib import Path
 import sqlite3
 import sys
@@ -12,6 +13,7 @@ from .mcp_bootstrap import McpBootstrapError, load_bootstrap_manifest
 
 from .mcp_cache import OfflineDocumentCache
 from .mcp_local_inventory import PinnedLocalPlugin, inspect_pinned_plugins
+from .mcp_windows_acl import WindowsAclError, require_private_windows_path
 from .mcp_stdio import McpRouter, Tool, serve_stdio
 
 
@@ -124,6 +126,10 @@ def main(argv=None, *, stdin=None, stdout=None, stderr=None) -> int:
                 config = load_bootstrap_manifest(Path(argv[1]))
                 cache = None
                 if config.cache_database is not None:
+                    if os.name == "nt":
+                        # An attacker with write access to the cache could
+                        # replace both source text and its stored digest.
+                        require_private_windows_path(config.cache_database)
                     cache = stack.enter_context(
                         OfflineDocumentCache(config.cache_database, readonly=True)
                     )
@@ -133,7 +139,8 @@ def main(argv=None, *, stdin=None, stdout=None, stderr=None) -> int:
             else:
                 handler = router()
             return serve_stdio(handler, stdin, stdout)
-    except (McpBootstrapError, ValueError, OSError, sqlite3.Error):
+    except (McpBootstrapError, WindowsAclError, ValueError,
+            OSError, sqlite3.Error):
         # Never echo manifest contents, secret URLs, paths or driver exceptions.
         stderr.write("MCP bootstrap rejected untrusted configuration\n")
         return 2
