@@ -304,7 +304,7 @@ class ControlCenterWindow(QMainWindow):
             f"{state.pending_external} vérification(s) externe(s) en attente"
         )
         self._last_received_at = monotonic()
-        self._refresh_connection_status()
+        self.status.setText(self._last_status_text)
         self._status_timer.start()
         self._sequence = state.sequence
         return True
