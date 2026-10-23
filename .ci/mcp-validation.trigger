@@ -1,4 +1,4 @@
 # One-shot exact SHA MCP contract validation
-request: 2026-10-23-mcp-native-private-manifest-cache-acls
+request: 2026-10-23-mcp-private-acl-test-fixtures-v2
 branch: feat/05-mcp-plugin-hub
 scope: ubuntu-windows-python313-unittest
