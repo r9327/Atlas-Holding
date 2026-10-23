@@ -127,17 +127,15 @@ def _task(control: ControlPlane, row: Any, now_epoch: int) -> dict:
     }
 
 
-def _network(control: ControlPlane) -> str:
-    if not _table_exists(control, "external_service_health"):
-        return "UNKNOWN"
-    statuses = {
-        row["status"] for row in control.store.db.execute(
-            "SELECT status FROM external_service_health")
-    }
+def _network(services: list[dict]) -> str:
+    # A stored ONLINE verdict outside its freshness window is not ONLINE now.
+    statuses = {item["status"] for item in services}
     if not statuses or statuses == {"UNKNOWN"}:
         return "UNKNOWN"
     if "BLOCKED" in statuses:
         return "ERROR"
+    if "STALE" in statuses:
+        return "DEGRADED"
     if "PROBING" in statuses:
         return "SYNCING"
     if "DEGRADED" in statuses:
@@ -221,8 +219,8 @@ def project_dashboard_snapshot(
         pending_external = control.store.db.execute(
             "SELECT COUNT(*) FROM missions WHERE external_required=1 "
             "AND state!='DONE'").fetchone()[0]
-        network = _network(control)
         services = _service_health(control, now_epoch)
+        network = _network(services)
         paused = control._setting("paused")
         stop_requested = control._setting("stop_requested")
     except BaseException:
