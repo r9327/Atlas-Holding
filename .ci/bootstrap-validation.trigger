@@ -4,3 +4,5 @@ Validation requires Python 3.13 Linux + Windows and PyInstaller package/self-tes
 
 Batch: enforce Win32 visible user window station (not just Session 0), pin GUI-capable engine launch, and verify native USEROBJECTFLAGS layout in cross-platform tests.
 Full exact-SHA validation required; no release qualification.
+
+Batch: verified offline CPython embeddable ZIP staging, SHA-256 Holding sources, malicious ZIP rejection, no overwrite and explicit nonrelease evidence.
