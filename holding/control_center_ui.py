@@ -106,10 +106,10 @@ class ControlCenterWindow(QMainWindow):
             "logsTable",
         )
         self.proofs = _table(
-            ("Tâche certifiée", "Contrôle", "SHA candidat", "Empreinte", "Source"),
+            ("Tâche avec preuve", "Type de preuve", "SHA candidat", "Empreinte", "Source"),
             "completionProofsTable",
         )
-        self.protection_status = QLabel("Aucune preuve de certification reçue")
+        self.protection_status = QLabel("Aucune preuve de finalisation reçue")
         self.protection_status.setObjectName("protectionStatus")
         self.protection_status.setWordWrap(True)
 
@@ -148,7 +148,7 @@ class ControlCenterWindow(QMainWindow):
 
         root = QWidget()
         layout = QVBoxLayout(root)
-        self.project_status = QLabel("Projet actif : non connecté")
+        self.project_status = QLabel("Projet Git : non vérifié (aucune attestation du dépôt sélectionné)")
         self.project_status.setObjectName("projectGitStatus")
         self.project_status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.project_status)
