@@ -6,6 +6,7 @@ import sys
 import time
 
 from .mcp_cache import OfflineDocumentCache
+from .mcp_local_inventory import PinnedLocalPlugin, inspect_pinned_plugins
 from .mcp_stdio import McpRouter, Tool, serve_stdio
 
 
@@ -20,10 +21,16 @@ def _health(arguments: dict) -> str:
     }, sort_keys=True, separators=(",", ":"))
 
 
-def router(*, offline_cache: OfflineDocumentCache | None = None) -> McpRouter:
+def router(*, offline_cache: OfflineDocumentCache | None = None,
+           installed_plugins: tuple[PinnedLocalPlugin, ...] = ()) -> McpRouter:
     """Only the trusted bootstrap may supply a provisioned local cache."""
     if offline_cache is not None and type(offline_cache) is not OfflineDocumentCache:
         raise ValueError("Trusted offline document cache required")
+    if (type(installed_plugins) is not tuple
+            or any(type(pin) is not PinnedLocalPlugin for pin in installed_plugins)
+            or len(installed_plugins) > 32
+            or len({pin.name for pin in installed_plugins}) != len(installed_plugins)):
+        raise ValueError("Bounded trusted plugin pins required")
     tools = [Tool(
         "holding.health",
         "Report the local read-only MCP policy runtime status.",
@@ -64,6 +71,29 @@ def router(*, offline_cache: OfflineDocumentCache | None = None) -> McpRouter:
                 },
             },
             lookup,
+        ))
+    if installed_plugins:
+        def inspect(_arguments: dict) -> str:
+            report = inspect_pinned_plugins(installed_plugins)
+            return json.dumps({
+                "plugins": [
+                    {
+                        "name": entry.name,
+                        "declared_version": entry.declared_version,
+                        "binary_state": entry.binary_state,
+                        "observed_sha256": entry.observed_sha256,
+                    } for entry in report
+                ],
+                "executes_plugins": False,
+                "proves_runtime_available": False,
+                "source": "TRUSTED_LOCAL_PIN_SHA256",
+            }, sort_keys=True, separators=(",", ":"))
+        tools.append(Tool(
+            "holding.local_plugin_inventory",
+            "Check already-pinned executable bytes, without launching "
+            "plugins or claiming their runtime is online.",
+            {"type": "object", "additionalProperties": False},
+            inspect,
         ))
     return McpRouter(tuple(tools), server_name="atlas-holding-local",
                      server_version="0.1.0")
