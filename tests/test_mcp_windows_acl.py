@@ -49,7 +49,18 @@ class WindowsPrivateAclTests(unittest.TestCase):
         apply_private_acl(self.file)
 
     def test_private_file_and_private_parent_admitted(self):
-        require_private_windows_path(self.file)
+        try:
+            require_private_windows_path(self.file)
+        except WindowsAclError:
+            # CI-only diagnostics: show names and rights from newly generated
+            # disposable test ACLs, never production secrets or manifest bytes.
+            reports = []
+            for target in (self.root, self.file):
+                output = subprocess.run(
+                    ["icacls", str(target)], stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE, text=True, timeout=10)
+                reports.append(output.stdout[:2000])
+            self.fail("Unexpected disposable fixture ACLs: " + repr(reports))
         config = load_bootstrap_manifest(self.file)
         self.assertEqual(config.pins, ())
         self.assertIsNone(config.cache_database)
