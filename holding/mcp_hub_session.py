@@ -20,6 +20,7 @@ from time import monotonic
 from .mcp_hub_probe import MAX_PROBE_BYTES, _valid_response, _spawn_hub
 from .mcp_local_inventory import PinnedLocalPlugin, inspect_pinned_plugin
 from .mcp_package_pin import McpPackagePin, McpPackagePinError
+from .mcp_companion_trust import verify_internal_hub_runtime
 from .mcp_stdio import PROTOCOL_VERSION
 
 
@@ -44,14 +45,15 @@ class LocalMcpHubSession:
                  package_pin: McpPackagePin | None = None) -> None:
         if (type(interpreter_pin) is not PinnedLocalPlugin
                 or not isinstance(package_root, Path) or not package_root.is_absolute()
-                or package_root.resolve() != Path(__file__).resolve().parent.parent
-                or interpreter_pin.executable.resolve() != Path(sys.executable).resolve()
                 or type(response_timeout) not in (int, float)
                 or isinstance(response_timeout, bool)
                 or not 0.25 <= response_timeout <= 10
                 or (package_pin is not None and type(package_pin) is not McpPackagePin)):
 
             raise ValueError("Untrusted internal MCP session configuration")
+        verify_internal_hub_runtime(
+            interpreter_pin=interpreter_pin,
+            package_root=package_root, package_pin=package_pin)
         self._pin = interpreter_pin
         self._root = package_root
         self._timeout = float(response_timeout)
@@ -82,7 +84,8 @@ class LocalMcpHubSession:
             try:
                 process, managed = _spawn_hub(
                     interpreter_pin=self._pin, repository_root=self._root,
-                    env=env, creationflags=flags)
+                    env=env, creationflags=flags,
+                    package_pin=self._package_pin)
             except OSError as exc:
                 raise McpSessionError("Internal MCP hub launch failed") from exc
             self._process, self._managed = process, managed
