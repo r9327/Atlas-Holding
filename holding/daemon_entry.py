@@ -199,6 +199,11 @@ class Installation:
 
     @staticmethod
     def _mcp_config(info: object, *, require_package_pin: bool = False) -> McpInstallation:
+        # A PyInstaller frozen EXE is not the embeddable CPython interpreter
+        # needed by "python -B -m holding.mcp_entry". Fail during setup
+        # rather than silently advertising a usable local MCP runtime.
+        if getattr(sys, "frozen", False):
+            raise BootstrapError("MCP requires an explicitly bundled Python interpreter, not a frozen app EXE")
         required = {"interpreter", "interpreter_sha256", "response_timeout"}
         if require_package_pin:
             required.add("module_sha256")
