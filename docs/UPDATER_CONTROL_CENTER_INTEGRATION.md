@@ -133,3 +133,13 @@ the restored pointer is checked and the previous pinned runtime is restarted and
 authenticated before returning `ROLLED_BACK_RESTARTED`. Ambiguous candidate
 cleanup deliberately prevents a second engine from starting; failure to stop or
 authenticate the previous engine is surfaced as an explicit recovery error.
+
+## Externally pinned release manifest
+
+The updater accepts the release/archive/runtime pins only from a bounded,
+duplicate-key-free `atlas-engine-release/v1` manifest whose complete bytes
+match a SHA-256 supplied independently by the trusted launcher or bundled
+release. Unknown fields, booleans used as byte counts, unsafe release IDs and
+archive size/hash mismatches fail before staging. This matches the existing
+setup trust model; it does not claim a detached signature or Authenticode
+certificate. Those publication proofs remain PR #9 gates.

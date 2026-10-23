@@ -31,12 +31,14 @@ from .windows_runtime_launch import (
 from .windows_runtime_payload import RuntimePayloadError, verify_runtime_payload
 
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
+_MAX_MANIFEST_BYTES = 4096
 
 
 @dataclass(frozen=True, slots=True)
 class EngineReleasePins:
     release: str
     archive_sha256: str
+    archive_bytes: int
     viewer_sha256: str
     engine_sha256: str
 
@@ -57,6 +59,74 @@ class EngineReplacementResult:
 
 class EngineReplacementError(RuntimeError):
     """Process ownership is ambiguous or the previous engine could not restart."""
+
+
+def _unique_manifest(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ReleaseStagingError("duplicate engine release manifest key")
+        result[key] = value
+    return result
+
+
+def read_pinned_engine_release_manifest(
+    manifest: Path, *, expected_sha256: str,
+) -> EngineReleasePins:
+    """Read an exact manifest whose digest came from the trusted launcher."""
+    if (not isinstance(manifest, Path) or not manifest.is_absolute()
+            or manifest.is_symlink() or not manifest.is_file()
+            or not isinstance(expected_sha256, str)
+            or _SHA.fullmatch(expected_sha256) is None):
+        raise ReleaseStagingError("pinned engine release manifest required")
+    try:
+        with manifest.open("rb") as source:
+            raw = source.read(_MAX_MANIFEST_BYTES + 1)
+    except OSError as exc:
+        raise ReleaseStagingError("engine release manifest unreadable") from exc
+    if (not raw or len(raw) > _MAX_MANIFEST_BYTES
+            or hashlib.sha256(raw).hexdigest() != expected_sha256):
+        raise ReleaseStagingError("engine release manifest does not match trusted pin")
+    try:
+        document = json.loads(
+            raw.decode("utf-8"), object_pairs_hook=_unique_manifest,
+        )
+    except (UnicodeError, ValueError, TypeError, RecursionError) as exc:
+        if isinstance(exc, ReleaseStagingError):
+            raise
+        raise ReleaseStagingError("engine release manifest JSON rejected") from exc
+    if (not isinstance(document, dict)
+            or set(document) != {"schema", "release", "archive", "runtime"}
+            or document["schema"] != "atlas-engine-release/v1"
+            or not isinstance(document["archive"], dict)
+            or set(document["archive"]) != {"sha256", "bytes"}
+            or not isinstance(document["runtime"], dict)
+            or set(document["runtime"])
+                != {"viewer_sha256", "engine_sha256"}):
+        raise ReleaseStagingError("invalid engine release manifest schema")
+    archive = document["archive"]
+    runtime = document["runtime"]
+    pins = EngineReleasePins(
+        release=document["release"],
+        archive_sha256=archive["sha256"],
+        archive_bytes=archive["bytes"],
+        viewer_sha256=runtime["viewer_sha256"],
+        engine_sha256=runtime["engine_sha256"],
+    )
+    if (not isinstance(pins.release, str)
+            or _RELEASE.fullmatch(pins.release) is None
+            or pins.release in (".", "..")
+            or pins.release[-1] in " ."
+            or pins.release.split(".", 1)[0].upper() in _RESERVED
+            or type(pins.archive_bytes) is not int
+            or not 1 <= pins.archive_bytes <= 2 * 1024 * 1024 * 1024
+            or any(not isinstance(value, str) or _SHA.fullmatch(value) is None
+                   for value in (
+                       pins.archive_sha256, pins.viewer_sha256,
+                       pins.engine_sha256,
+                   ))):
+        raise ReleaseStagingError("invalid engine release manifest pins")
+    return pins
 
 
 def _config_payload(current: InstalledEngineSpec, viewer: Path,
@@ -91,12 +161,16 @@ def stage_windows_engine_release(
     current: InstalledEngineSpec,
 ) -> StagedEngineRelease:
     """Stage pinned binaries plus a locally derived, slot-bound config."""
-    if (not isinstance(pins, EngineReleasePins)
+    if (not isinstance(archive_file, Path)
+            or not isinstance(install_root, Path)
+            or not isinstance(pins, EngineReleasePins)
             or not isinstance(pins.release, str)
             or _RELEASE.fullmatch(pins.release) is None
             or pins.release in (".", "..")
             or pins.release[-1] in " ."
             or pins.release.split(".", 1)[0].upper() in _RESERVED
+            or type(pins.archive_bytes) is not int
+            or not 1 <= pins.archive_bytes <= 2 * 1024 * 1024 * 1024
             or any(not isinstance(value, str) or _SHA.fullmatch(value) is None
                    for value in (
                        pins.archive_sha256, pins.viewer_sha256,
@@ -105,6 +179,11 @@ def stage_windows_engine_release(
             or not isinstance(current, InstalledEngineSpec)
             or current.install_root != install_root):
         raise ReleaseStagingError("authenticated engine release pins required")
+    try:
+        if archive_file.stat().st_size != pins.archive_bytes:
+            raise ReleaseStagingError("engine release archive size mismatch")
+    except OSError as exc:
+        raise ReleaseStagingError("engine release archive unavailable") from exc
     pair = pins.viewer_sha256[:16] + "-" + pins.engine_sha256[:16]
     final = install_root / "versions" / pins.release
     runtime = final / "runtime" / pair

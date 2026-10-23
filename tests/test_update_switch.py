@@ -20,7 +20,8 @@ from holding.update_stage import (
 )
 from holding.update_runtime import (
     EngineReleasePins, EngineReplacementError, StagedEngineRelease,
-    replace_windows_engine_release, stage_windows_engine_release,
+    read_pinned_engine_release_manifest, replace_windows_engine_release,
+    stage_windows_engine_release,
 )
 from holding.update_switch import (
     ReleaseSwitchError, activate_staged_release,
@@ -379,8 +380,18 @@ class ReleaseSwitchTests(unittest.TestCase):
             )
         archive_hash = sha256(self.zip_path.read_bytes()).hexdigest()
         pins = EngineReleasePins(
-            "v2", archive_hash, viewer_hash, engine_hash,
+            "v2", archive_hash, self.zip_path.stat().st_size,
+            viewer_hash, engine_hash,
         )
+        with self.assertRaisesRegex(ReleaseStagingError, "size mismatch"):
+            stage_windows_engine_release(
+                self.zip_path, self.root,
+                pins=EngineReleasePins(
+                    "v2", archive_hash, self.zip_path.stat().st_size + 1,
+                    viewer_hash, engine_hash,
+                ),
+                current=current,
+            )
         result = stage_windows_engine_release(
             self.zip_path, self.root, pins=pins, current=current,
         )
@@ -400,6 +411,66 @@ class ReleaseSwitchTests(unittest.TestCase):
         self.digests["v2"] = archive_hash
         activated = self.activate("v2")
         self.assertEqual(activated.status, "ACTIVATED")
+
+    def test_exact_pinned_engine_release_manifest_is_required(self):
+        manifest = Path(self.tmp.name).resolve() / "engine-release.json"
+        document = {
+            "schema": "atlas-engine-release/v1",
+            "release": "v2.0.0",
+            "archive": {"sha256": "a" * 64, "bytes": 2_000_123},
+            "runtime": {
+                "viewer_sha256": "b" * 64,
+                "engine_sha256": "c" * 64,
+            },
+        }
+        manifest.write_text(
+            json.dumps(document, sort_keys=True, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        digest = sha256(manifest.read_bytes()).hexdigest()
+        pins = read_pinned_engine_release_manifest(
+            manifest, expected_sha256=digest,
+        )
+        self.assertEqual(pins, EngineReleasePins(
+            "v2.0.0", "a" * 64, 2_000_123, "b" * 64, "c" * 64,
+        ))
+        with self.assertRaisesRegex(ReleaseStagingError, "trusted pin"):
+            read_pinned_engine_release_manifest(
+                manifest, expected_sha256="0" * 64,
+            )
+        duplicate = (
+            b'{"schema":"atlas-engine-release/v1",'
+            b'"schema":"atlas-engine-release/v1"}'
+        )
+        manifest.write_bytes(duplicate)
+        with self.assertRaisesRegex(ReleaseStagingError, "duplicate"):
+            read_pinned_engine_release_manifest(
+                manifest, expected_sha256=sha256(duplicate).hexdigest(),
+            )
+
+    def test_engine_release_manifest_rejects_extra_fields_and_bool_size(self):
+        manifest = Path(self.tmp.name).resolve() / "engine-release.json"
+        base = {
+            "schema": "atlas-engine-release/v1",
+            "release": "v2",
+            "archive": {"sha256": "a" * 64, "bytes": True},
+            "runtime": {
+                "viewer_sha256": "b" * 64,
+                "engine_sha256": "c" * 64,
+            },
+        }
+        for mutation in ("bool-size", "extra-field"):
+            with self.subTest(mutation=mutation):
+                document = json.loads(json.dumps(base))
+                if mutation == "extra-field":
+                    document["archive"]["bytes"] = 100
+                    document["url"] = "https://untrusted.invalid/release.zip"
+                raw = json.dumps(document).encode("utf-8")
+                manifest.write_bytes(raw)
+                with self.assertRaises(ReleaseStagingError):
+                    read_pinned_engine_release_manifest(
+                        manifest, expected_sha256=sha256(raw).hexdigest(),
+                    )
 
     def test_engine_archive_cannot_supply_install_specific_config(self):
         self.root.mkdir()
@@ -434,7 +505,7 @@ class ReleaseSwitchTests(unittest.TestCase):
             bundle.writestr("config/engine.json", b"{}")
         pins = EngineReleasePins(
             "v2", sha256(self.zip_path.read_bytes()).hexdigest(),
-            viewer_hash, engine_hash,
+            self.zip_path.stat().st_size, viewer_hash, engine_hash,
         )
         with self.assertRaisesRegex(ReleaseStagingError, "must not provide"):
             stage_windows_engine_release(
@@ -478,7 +549,8 @@ class ReleaseSwitchTests(unittest.TestCase):
             stage_windows_engine_release(
                 self.zip_path, self.root,
                 pins=EngineReleasePins(
-                    "v2", archive_hash, viewer_hash, engine_hash,
+                    "v2", archive_hash, self.zip_path.stat().st_size,
+                    viewer_hash, engine_hash,
                 ),
                 current=current,
             )
@@ -498,7 +570,8 @@ class ReleaseSwitchTests(unittest.TestCase):
             stage_windows_engine_release(
                 self.zip_path, self.root,
                 pins=EngineReleasePins(
-                    "v2", archive_hash, "0" * 64, engine_hash,
+                    "v2", archive_hash, self.zip_path.stat().st_size,
+                    "0" * 64, engine_hash,
                 ),
                 current=current,
             )
