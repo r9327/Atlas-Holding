@@ -326,3 +326,46 @@ disponible. Seule une nouvelle réponse du moteur authentifiée peut
 restaurer le libellé de protocole. Les verrous des commandes opérateur
 restent indépendants et inchangés. Un test Qt simule expiration et retour
 d'un heartbeat signé à séquence identique.
+
+
+## Intégration physique PR #5 → PR #11 : démarrage MCP réel (23 octobre 2026)
+
+Le commit d'intégration `21101b88616369a4681f91480722e12e0dcae71a`
+comporte deux parents Git (PR #11 et la PR #5 certifiée
+`d77be5c9f05b940fcfaca2f0c180cde15d0dee44`). Il incorpore
+sur la **branche Draft PR #11 seulement** les modules MCP, leur policy,
+les Job Objects, les vérificateurs ACL, la session, le journal et les tests.
+Il ne fusionne **aucune PR dans main**.
+
+`Installation` accepte désormais le schéma d'installation **v4**,
+strictement opt-in, qui exige les clés précédentes et :
+- `mcp: null` : aucun démarrage de hub ; l'ancien comportement est conservé.
+- `mcp: { "interpreter": "CHEMIN_ABSOLU", "interpreter_sha256":
+  "64_HEXA_MINUSCULES", "response_timeout": 3 }` : interpréteur
+  explicitement choisi à l'installation, identique au binaire Python
+  en cours d'exécution et contrôlé SHA-256. Aucun agent ni roadmap ne
+  peut modifier cette sélection. Les schémas v1–v3 restent acceptés.
+- `HoldingService.enable_local_mcp` est réservé à la phase de bootstrap
+  **avant** `start`. La connexion physique utilise la même base SQLite
+  que les tâches et le canal IPC authentifié v5, sans lecture de secrets
+  par les modèles.
+
+Pendant `run`, la session est sondée au plus une fois toutes les
+15 secondes en fonctionnement normal ; un STOP, une Pause ou une
+pression ressources ferme immédiatement le processus MCP et enregistre
+`CLOSED`. Resume autorisé réinitialise la temporisation. À la fermeture,
+les descripteurs et l'arbre de processus sont libérés avant le moteur.
+
+Tests : installation v4 validée, démarrage du vrai hub sous protection
+Windows Job Object, preuve SQLite `RESPONSIVE`, pause et reprise
+(avec nouveau PID), intégrité des missions, tamper SHA et refus de
+chemins/paramètres malformés. Le flux MPC ne lance toujours **aucun plugin
+tiers** et ne remplace pas le futur packaging EXE final.
+
+**Important** : pour une installation Windows finale, le programme
+d'installation doit fournir un interpréteur Python local compatible,
+prévoir les ACL NTFS privées de son exécutable et de la base de données,
+puis épingler sa véritable empreinte ; un EXE PyInstaller non compatible
+avec `python -m` n'est pas automatiquement un interpréteur valide.
+L'état `hub` affiché ne devient donc actuel que si ce processus a
+été réellement provisionné et exécuté.
