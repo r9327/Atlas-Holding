@@ -246,6 +246,29 @@ class WindowsSetupMcpCompanionTests(unittest.TestCase):
         self.assertEqual(enrolled.status, "STAGED_NOT_EXECUTED")
         self.assertEqual(enrolled.interpreter_sha256, sha(self.members["python.exe"]))
 
+    def test_reinstall_reuses_only_unchanged_companion(self):
+        from unittest.mock import patch
+        from holding.windows_setup import stage_embedded_mcp_companion
+        def invoke():
+            return stage_embedded_mcp_companion(
+                install_root=self.dest, archive=self.archive,
+                trusted_source_root=self.package_root, pin=self.pin,
+                approved=True)
+        with (
+            patch("holding.windows_engine_enrollment._require_native_windows"),
+            patch("holding.windows_setup.validate_runtime_acl"),
+            patch("holding.windows_setup.secure_runtime_acl"),
+        ):
+            first = invoke()
+            reused = invoke()
+            self.assertEqual(reused.directory, first.directory)
+            self.assertEqual(reused.status, "REUSED_VERIFIED_NOT_EXECUTED")
+            self.assertEqual(len(list((self.dest / "mcp-python").iterdir())), 1)
+            first.python_exe.write_bytes(b"changed native runtime")
+            with self.assertRaises(EmbeddedRuntimeError):
+                invoke()
+            self.assertTrue(first.directory.exists())  # Do not silently erase prior install.
+
     def test_companion_requires_explicit_setup_approval(self):
         from unittest.mock import patch
         from holding.windows_setup import stage_embedded_mcp_companion
