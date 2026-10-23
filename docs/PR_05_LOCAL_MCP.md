@@ -1,4 +1,4 @@
-# PR 05 — Hub MCP local plugins-first (SPECIFICATION, NON IMPLEMENTEE)
+# PR 05 — Hub MCP local plugins-first (implémentation partielle vérifiable)
 
 **But :** les IA recherchent systématiquement la meilleure *capability* chez un plugin spécialisé et travaillent en mode offline-first. Distinguer serveur installé sur le PC et capacité réellement disponible sans Internet.
 
@@ -63,3 +63,41 @@ distincts à certifier après intégration.
 Les tests couvrent les champs obligatoires, refus des clés inattendues,
 validation des tableaux, bornes, types et enum, schémas non supportés,
 non-exécution des handlers et masquage des erreurs.
+
+
+## Cache documentaire offline-first vérifiable (23 octobre 2026)
+
+- `holding/mcp_cache.py` fournit un cache SQLite borné à **64 documents**
+  et **32 Kio UTF-8 par document**, avec `source_uri` HTTPS, version, date
+  d'observation, date d'expiration et SHA-256 du contenu vérifié à l'écriture
+  puis à chaque lecture. Chaque insertion et éviction est atomique.
+- La lecture distingue `CACHED_ONLY`, `STALE` et `MISSING`. Seul un
+  cache valide et non expiré délivre du texte ; un cache périmé ne fait
+  jamais croire à une réponse réseau récente. Les erreurs de corruption
+  arrêtent la lecture sans exposer la moindre donnée défectueuse.
+- `holding.mcp_entry.router(offline_cache=...)` est un **point d'injection
+  du bootstrap de confiance uniquement**. Le hub stdio par défaut n'annonce
+  que `holding.health` ; il n'invente aucune installation ou configuration.
+  Lorsque le superviseur lui fournit explicitement un cache provisionné,
+  `holding.cache_lookup` devient disponible en **lecture seule**.
+  L'ingestion documentaire reste une API réservée au composant local de
+  confiance et n'est pas exposée par `tools/call`.
+- Réponses annotées `UNTRUSTED_EXTERNAL`, `offline=true`,
+  `has_live_network=false`. Le texte collecté n'est jamais une instruction,
+  et aucune commande, requête Web, SQL ou capacité de modification de
+  dépôt n'est déduite d'un document.
+- Contrôles supplémentaires : refus d'URL HTTP/file, utilisateur ou
+  mot de passe intégrés à l'URL, paramètres d'authentification, fragment,
+  vieux snapshot remplaçant un récent, horodatages futurs et contenu
+  dont l'empreinte ne correspond pas.
+- Tests : relecture après réouverture SQLite, injection hostile inerte,
+  réponses fraîches/périmées/absentes, corruption, rollback, taille maximale,
+  éviction des anciennes versions, absence du tool quand non configuré et
+  aucune écriture via MCP.
+
+**Limites restantes :** le hub n'effectue **aucune nouvelle collecte Web** ;
+un véritable connecteur Firecrawl/Context7, un ingester authentifié,
+des sessions MCP isolées, la vérification du binaire installé, les quotas
+persistés et la validation Windows de ces adaptateurs sont à développer.
+Le cache local ne garantit pas la véracité du contenu distant, seulement
+l'intégrité des octets et leur provenance déclarée.
