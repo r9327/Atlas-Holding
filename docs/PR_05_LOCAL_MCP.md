@@ -233,3 +233,18 @@ Context7, Doctor ou des autres services.
   binaire réellement autorisé, la validation des permissions et la
   supervision du processus parent restent obligatoires. Les plugins tiers
   ne sont pas encore exécutés par cet adaptateur.
+
+
+### Preuve d'état native, sans faux statut de plugin
+
+`ManagedHubProcess.observe()` interroge directement
+`QueryInformationJobObject` et vérifie que les limites Windows restent
+effectivement activées. Elle renvoie l'état du processus (RUNNING/EXITED),
+le PID observé, l'heure de lecture et les plafonds mémoire/processus lus
+dans le noyau. Après fermeture, l'état devient CLOSED et les limites
+ne sont plus présentées comme activement vérifiées.
+
+Cette observation **ne prouve pas la santé du plugin**, l'existence d'une
+session d'agent ou la disponibilité du réseau. Des tests natifs attestent
+également que tout échec de rattachement au Job ou de reprise du thread
+fait disparaître l'enfant suspendu, sans exécution non supervisée.
