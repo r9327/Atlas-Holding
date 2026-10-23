@@ -67,27 +67,50 @@ class CachedDocument:
 class OfflineDocumentCache:
     """Finite SQLite cache; no network, shell, or implicit plugin execution."""
 
-    def __init__(self, database: Path) -> None:
-        if not isinstance(database, Path) or not database.is_absolute():
+    def __init__(self, database: Path, *, readonly: bool = False) -> None:
+        if (not isinstance(database, Path) or not database.is_absolute()
+                or type(readonly) is not bool):
             raise McpCacheError("Trusted absolute cache location required")
         if database.is_symlink():
             raise McpCacheError("Cache path must not be a symlink")
-        database.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(str(database), timeout=5, isolation_level=None)
+        self.readonly = readonly
+        if readonly:
+            # Never auto-create a cache on the MCP reader side. SQLite's own
+            # mode=ro enforces that model-facing tools cannot persist changes.
+            if not database.is_file():
+                raise McpCacheError("Provisioned cache database is unavailable")
+            self.db = sqlite3.connect(
+                database.as_uri() + "?mode=ro", uri=True,
+                timeout=5, isolation_level=None,
+            )
+        else:
+            database.parent.mkdir(parents=True, exist_ok=True)
+            self.db = sqlite3.connect(
+                str(database), timeout=5, isolation_level=None,
+            )
         try:
             self.db.execute("PRAGMA busy_timeout=5000")
-            self.db.execute("PRAGMA journal_mode=WAL")
-            self.db.execute("""
-                CREATE TABLE IF NOT EXISTS mcp_cached_docs (
-                    source_uri TEXT NOT NULL,
-                    source_version TEXT NOT NULL,
-                    captured_epoch INTEGER NOT NULL,
-                    expires_epoch INTEGER NOT NULL,
-                    content_sha256 TEXT NOT NULL,
-                    content BLOB NOT NULL,
-                    PRIMARY KEY (source_uri,source_version)
-                )
-            """)
+            if readonly:
+                self.db.execute("PRAGMA query_only=ON")
+                table = self.db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' "
+                    "AND name='mcp_cached_docs'"
+                ).fetchone()
+                if table is None:
+                    raise McpCacheError("Provisioned cache schema is missing")
+            else:
+                self.db.execute("PRAGMA journal_mode=WAL")
+                self.db.execute("""
+                    CREATE TABLE IF NOT EXISTS mcp_cached_docs (
+                        source_uri TEXT NOT NULL,
+                        source_version TEXT NOT NULL,
+                        captured_epoch INTEGER NOT NULL,
+                        expires_epoch INTEGER NOT NULL,
+                        content_sha256 TEXT NOT NULL,
+                        content BLOB NOT NULL,
+                        PRIMARY KEY (source_uri,source_version)
+                    )
+                """)
         except BaseException:
             self.db.close()
             raise
@@ -105,6 +128,8 @@ class OfflineDocumentCache:
             expires_epoch: int, now_epoch: int, content: bytes,
             content_sha256: str) -> None:
         """Trusted ingestion only. No MCP tool is permitted to call this."""
+        if self.readonly:
+            raise McpCacheError("Read-only cache cannot be modified")
         _validate_identity(source_uri, source_version)
         if (not all(_epoch(x) for x in (captured_epoch, expires_epoch, now_epoch))
                 or captured_epoch > now_epoch + 5
