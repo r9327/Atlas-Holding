@@ -249,6 +249,21 @@ def stage_embedded_mcp_companion(
     try:
         if created:
             secure_runtime_acl(destination)
+        existing = destination / ("python-embedded-" + pin.zip_sha256[:16])
+        if existing.exists() or existing.is_symlink():
+            if existing.is_symlink():
+                raise RuntimePayloadError("Installed CPython runtime is linked")
+            verified = verify_staged_embedded_python(directory=existing, pin=pin)
+            validate_runtime_acl(verified.directory)
+            validate_runtime_acl(verified.python_exe)
+            validate_runtime_acl(verified.directory / "holding")
+            for name, _digest in verified.source_sha256:
+                validate_runtime_acl(verified.directory / "holding" / name)
+            return EmbeddedRuntimeStage(
+                directory=verified.directory, python_exe=verified.python_exe,
+                interpreter_sha256=verified.interpreter_sha256,
+                source_sha256=verified.source_sha256,
+                status="REUSED_VERIFIED_NOT_EXECUTED")
         staged = stage_pinned_embedded_python(
             archive=archive, approved_package_root=trusted_source_root,
             target_parent=destination, pin=pin)
