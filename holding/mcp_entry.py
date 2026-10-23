@@ -1,9 +1,13 @@
 """Runnable, offline-only MCP stdio entrypoint."""
 from __future__ import annotations
 
+from contextlib import ExitStack
 import json
 import sys
 import time
+
+from .mcp_bootstrap import McpBootstrapError, load_bootstrap_manifest
+from pathlib import Path
 
 from .mcp_cache import OfflineDocumentCache
 from .mcp_local_inventory import PinnedLocalPlugin, inspect_pinned_plugins
@@ -99,8 +103,39 @@ def router(*, offline_cache: OfflineDocumentCache | None = None,
                      server_version="0.1.0")
 
 
-def main() -> int:
-    return serve_stdio(router(), sys.stdin.buffer, sys.stdout.buffer)
+def main(argv=None, *, stdin=None, stdout=None, stderr=None) -> int:
+    """Trusted host startup; no explicit manifest means health-only MCP.
+
+    Configuration comes only from an absolute, bounded supervisor-provisioned
+    manifest. Never allow model-supplied tool arguments to change the pins,
+    cache location or permission set.
+    """
+    argv = list(sys.argv[1:] if argv is None else argv)
+    stdin = sys.stdin.buffer if stdin is None else stdin
+    stdout = sys.stdout.buffer if stdout is None else stdout
+    stderr = sys.stderr if stderr is None else stderr
+    if argv and (len(argv) != 2 or argv[0] != "--bootstrap-manifest"):
+        stderr.write("Invalid MCP startup options\\n")
+        return 2
+    try:
+        with ExitStack() as stack:
+            if argv:
+                config = load_bootstrap_manifest(Path(argv[1]))
+                cache = None
+                if config.cache_database is not None:
+                    cache = stack.enter_context(
+                        OfflineDocumentCache(config.cache_database, readonly=True)
+                    )
+                handler = router(
+                    offline_cache=cache, installed_plugins=config.pins,
+                )
+            else:
+                handler = router()
+            return serve_stdio(handler, stdin, stdout)
+    except (McpBootstrapError, ValueError, OSError) as exc:
+        # Never echo manifest contents, secret URLs, paths or driver exceptions.
+        stderr.write("MCP bootstrap rejected untrusted configuration\\n")
+        return 2
 
 
 if __name__ == "__main__":
