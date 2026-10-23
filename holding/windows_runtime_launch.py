@@ -17,6 +17,7 @@ import subprocess
 import sys
 from typing import Mapping
 
+from .embedded_python_stage import EmbeddedPythonRelease, verify_staged_embedded_python
 from .windows_runtime_payload import (
     RuntimePayloadError, verify_runtime_payload,
 )
@@ -96,8 +97,10 @@ def _read_config(spec: InstalledEngineSpec) -> None:
         config = json.loads(raw, object_pairs_hook=_unique_json)
     except (OSError, ValueError, UnicodeError, RecursionError) as exc:
         raise RuntimeLaunchError("Installed engine config unreadable") from exc
-    if not isinstance(config, dict) or type(config.get("schema")) is not int or config["schema"] != 3:
-        raise RuntimeLaunchError("Installed engine requires config schema v3")
+    if (not isinstance(config, dict)
+            or type(config.get("schema")) is not int
+            or config["schema"] not in (3, 6)):
+        raise RuntimeLaunchError("Installed engine requires config schema v3 or v6")
     dashboard = config.get("dashboard")
     if (not isinstance(dashboard, dict)
             or dashboard.get("executable") != str(
@@ -107,6 +110,37 @@ def _read_config(spec: InstalledEngineSpec) -> None:
             or dashboard.get("script_sha256") is not None
             or type(dashboard.get("readonly")) is not bool):
         raise RuntimeLaunchError("Installed viewer is not pinned to engine config")
+    if config["schema"] == 6:
+        mcp = config.get("mcp")
+        if (type(mcp) is not dict or set(mcp) != {
+                "interpreter", "interpreter_sha256", "package_root",
+                "module_sha256", "source_release_zip_sha256",
+                "python_minor", "response_timeout"}):
+            raise RuntimeLaunchError("Invalid installed MCP companion configuration")
+        try:
+            release = EmbeddedPythonRelease(
+                python_minor=mcp["python_minor"],
+                zip_sha256=mcp["source_release_zip_sha256"],
+                module_sha256=mcp["module_sha256"])
+            root = (spec.install_root / "mcp-python" /
+                    ("python-embedded-" + release.zip_sha256[:16]))
+            if (mcp["package_root"] != str(root)
+                    or mcp["interpreter"] != str(root / "python.exe")
+                    or type(mcp["response_timeout"]) not in (int, float)
+                    or not .25 <= mcp["response_timeout"] <= 10):
+                raise RuntimeLaunchError("Installed MCP outside approved root")
+            verified = verify_staged_embedded_python(
+                directory=root, pin=release)
+            if verified.interpreter_sha256 != mcp["interpreter_sha256"]:
+                raise RuntimeLaunchError("Installed CPython binary hash changed")
+            from .windows_runtime_acl import validate_runtime_acl
+            for path in (
+                root.parent, root, root / "python.exe", root / "holding",
+                *(root / "holding" / name for name in release.module_sha256),
+            ):
+                validate_runtime_acl(path)
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            raise RuntimeLaunchError("Pinned MCP companion is not trusted") from exc
     if _sha(spec.config_file) != spec.config_sha256:
         raise RuntimeLaunchError("Installed engine config changed during validation")
 
