@@ -113,9 +113,9 @@ class EngineEnrollmentTests(unittest.TestCase):
         return stage, release
 
     def test_schema_six_pins_real_installed_companion_and_native_handoff(self):
-        from holding.daemon_entry import Installation
+        from holding.daemon_entry import Installation, BootstrapError
         from holding.windows_runtime_launch import (
-            InstalledEngineSpec, verify_installed_engine)
+            InstalledEngineSpec, RuntimeLaunchError, verify_installed_engine)
         self.create_roots()
         stage, release = self._stage_mcp_companion_for_test()
         enrolled = self.enroll(request=replace(
@@ -140,13 +140,13 @@ class EngineEnrollmentTests(unittest.TestCase):
             self.assertEqual(verify_installed_engine(spec),
                              (str(self.engine), str(enrolled.config_path)))
         stage.python_exe.write_bytes(b"malicious replacement")
-        with self.assertRaises(ValueError):
+        with self.assertRaises(BootstrapError):
             Installation.load(enrolled.config_path)
         with (
             patch("holding.windows_runtime_launch.sys.platform", "win32"),
             patch("holding.windows_runtime_acl.validate_runtime_acl"),
         ):
-            with self.assertRaises(ValueError):
+            with self.assertRaises(RuntimeLaunchError):
                 verify_installed_engine(spec)
 
     def test_incomplete_schema_six_mcp_companion_never_enrolls(self):
