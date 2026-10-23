@@ -207,3 +207,29 @@ supervision de processus par Job Objects restent obligatoires avant tout
 lancement arbitraire de plugin externe. `PROTOCOL_RESPONSIVE` atteste
 uniquement la découverte du hub, **pas** la disponibilité de Firecrawl,
 Context7, Doctor ou des autres services.
+
+
+## Isolation native Windows du hub interne (23 octobre 2026)
+
+- `holding/mcp_windows_job.py` : Job Object Windows non nommé, limites
+  `KILL_ON_JOB_CLOSE`, `JOB_MEMORY_LIMIT` et `ACTIVE_PROCESS_LIMIT`.
+  Le processus démarre **suspendu** avant toute exécution : ouverture du job,
+  paramètres de limites, création suspendue, rattachement par
+  `AssignProcessToJobObject`, reprise contrôlée du thread principal. Si
+  une étape échoue, le processus est tué et le lancement est refusé.
+- La sonde `holding/mcp_hub_probe.py` utilise cette voie sous Windows ;
+  elle n'est plus autorisée à lancer le hub hors Job Object. Sous Linux,
+  le lancement habituel reste borné par la requête, le délai et la sortie.
+  La commande est fixée à l'interpréteur Python épinglé par SHA-256, pour
+  le module installé `holding.mcp_entry`, pas à un outil arbitraire.
+- Valeurs par défaut : plafond de **256 Mo pour le job** et **4 processus**
+  au maximum. Les tests Windows vérifient la vraie appartenance au job,
+  les limites Win32, la réponse de découverte, la fermeture et le refus
+  des faux binaires et répertoires. Le test Linux vérifie le refus explicite
+  de tout fallback vers un « Job Object » fictif.
+- **Limites :** Windows Job Objects assurent le confinement de processus et
+  des ressources, **pas une sandbox de sécurité ni une suppression d'accès
+  réseau**. L'installation et les ACL privées, le contrôle d'identité du
+  binaire réellement autorisé, la validation des permissions et la
+  supervision du processus parent restent obligatoires. Les plugins tiers
+  ne sont pas encore exécutés par cet adaptateur.
