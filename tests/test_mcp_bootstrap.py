@@ -77,6 +77,14 @@ class ProvisionedMcpBootstrapTests(unittest.TestCase):
                     subprocess.run(
                         command, check=True, stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE, timeout=10)
+                # /grant:r replaces each named principal but does not remove
+                # old explicit permissions held by unrelated principals.
+                subprocess.run(
+                    ["icacls", str(target), "/remove:g",
+                     "*S-1-1-0", "*S-1-5-11", "*S-1-5-32-545",
+                     "*S-1-3-0"],
+                    check=False, stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE, timeout=10)
 
     def write_manifest(self, value=None):
         self.manifest.write_text(
