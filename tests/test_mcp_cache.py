@@ -47,7 +47,7 @@ class OfflineDocumentCacheTests(unittest.TestCase):
         self.cache = OfflineDocumentCache(self.path)
         self.addCleanup(self.cache.close)
 
-    def put(self, *, content=b"\u00c9tape 1: parler au PNJ", **changes):
+    def put(self, *, content=b"Atlas quest step", **changes):
         # Decoding is intentional: content is untrusted user-visible data,
         # but never executable instructions.
         if isinstance(content, str):
