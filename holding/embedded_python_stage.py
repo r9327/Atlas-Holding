@@ -177,6 +177,10 @@ def stage_pinned_embedded_python(
         # import-site and user site packages even if the source ZIP differs.
         pth = stage / f"python3{pin.python_minor}._pth"
         pth.write_bytes(f"python3{pin.python_minor}.zip\n.\n".encode("ascii"))
+        native_hashes = {
+            file.name: _sha_file(file)
+            for file in stage.iterdir() if file.is_file()
+        }
         code = stage / "holding"
         code.mkdir()
         for name in sorted(files):
@@ -190,6 +194,7 @@ def stage_pinned_embedded_python(
             "schema": 1, "source_release_zip_sha256": pin.zip_sha256,
             "python_minor": pin.python_minor,
             "python_exe_sha256": observed,
+            "native_file_sha256": dict(sorted(native_hashes.items())),
             "module_sha256": dict(sorted(pin.module_sha256.items())),
             "native_probe": "NOT_EXECUTED",
         }
@@ -214,3 +219,80 @@ def stage_pinned_embedded_python(
     finally:
         if stage.exists():
             shutil.rmtree(stage)
+
+
+def _unique_json(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    data = {}
+    for key, value in pairs:
+        if key in data:
+            raise EmbeddedRuntimeError("Duplicate embedded runtime receipt key")
+        data[key] = value
+    return data
+
+
+def verify_staged_embedded_python(
+    *, directory: Path, pin: EmbeddedPythonRelease,
+) -> EmbeddedRuntimeStage:
+    """Check local native + source bytes against the protected staged receipt.
+
+    The receipt is a *local byte-integrity observation*, not a publisher
+    signature. Installation authorization still requires trusted upstream
+    SHA-256 and locked ACLs from the actual Windows setup.
+    """
+    if (not isinstance(directory, Path) or not directory.is_absolute()
+            or directory.is_symlink() or not directory.is_dir()
+            or directory.resolve(strict=True) != directory
+            or type(pin) is not EmbeddedPythonRelease):
+        raise EmbeddedRuntimeError("Trusted installed runtime directory required")
+    try:
+        raw = (directory / _RECEIPT).read_bytes()
+        if not 1 <= len(raw) <= 32 * 1024:
+            raise EmbeddedRuntimeError("Invalid embedded runtime receipt size")
+        receipt = json.loads(raw, object_pairs_hook=_unique_json)
+        if (type(receipt) is not dict
+                or set(receipt) != {
+                    "schema", "source_release_zip_sha256", "python_minor",
+                    "python_exe_sha256", "module_sha256",
+                    "native_file_sha256", "native_probe",
+                } or type(receipt["schema"]) is not int
+                or receipt["schema"] != 1
+                or receipt["source_release_zip_sha256"] != pin.zip_sha256
+                or receipt["python_minor"] != pin.python_minor
+                or receipt["native_probe"] != "NOT_EXECUTED"
+                or receipt["module_sha256"] != pin.module_sha256):
+            raise EmbeddedRuntimeError("Staged runtime receipt does not match release pins")
+        expected = receipt["native_file_sha256"]
+        if (type(expected) is not dict or not 5 <= len(expected) <= _MAX_FILE_COUNT
+                or any(type(name) is not str or name.startswith(".")
+                       or "/" in name or "\\" in name
+                       or type(sha) is not str or not _DIGEST.fullmatch(sha)
+                       for name, sha in expected.items())
+                or receipt["python_exe_sha256"] != expected.get("python.exe")):
+            raise EmbeddedRuntimeError("Invalid staged native file receipt")
+        visible = {p.name for p in directory.iterdir()}
+        if visible != set(expected) | {_RECEIPT, "holding"}:
+            raise EmbeddedRuntimeError("Unexpected runtime file appeared")
+        for name, expected_hash in expected.items():
+            path = directory / name
+            if path.is_symlink() or not path.is_file() or _sha_file(path) != expected_hash:
+                raise EmbeddedRuntimeError("Installed Python native file modified")
+        pth = directory / f"python3{pin.python_minor}._pth"
+        if pth.read_bytes() != f"python3{pin.python_minor}.zip\n.\n".encode("ascii"):
+            raise EmbeddedRuntimeError("Embedded Python import policy changed")
+        code = directory / "holding"
+        if code.is_symlink() or not code.is_dir() or {
+                p.name for p in code.iterdir()} != set(pin.module_sha256):
+            raise EmbeddedRuntimeError("Installed Python source inventory changed")
+        for name, expected_hash in pin.module_sha256.items():
+            path = code / name
+            if path.is_symlink() or not path.is_file() or _sha_file(path) != expected_hash:
+                raise EmbeddedRuntimeError("Installed Python source modified")
+        return EmbeddedRuntimeStage(
+            directory=directory, python_exe=directory / "python.exe",
+            interpreter_sha256=receipt["python_exe_sha256"],
+            source_sha256=tuple(sorted(pin.module_sha256.items())),
+        )
+    except (OSError, UnicodeError, ValueError, TypeError, KeyError) as exc:
+        if isinstance(exc, EmbeddedRuntimeError):
+            raise
+        raise EmbeddedRuntimeError("Installed Python receipt or files unavailable") from exc
