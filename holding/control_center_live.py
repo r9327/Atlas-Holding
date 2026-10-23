@@ -170,7 +170,10 @@ class LiveControlCenterWindow(ControlCenterWindow):
                     self._control_report = None
             if self.displayed_sequence is not None and (
                     state.sequence == self.displayed_sequence):
-                # Same durable state; connection was authenticated again.
+                # A new verified request/response pair is a heartbeat even
+                # without SQLite writes. Do not re-render rows or reset
+                # replay protections; simply renew connection freshness.
+                self.acknowledge_authenticated_state(state)
                 self.status.setText(
                     f"{state.network} — séquence {state.sequence} — "
                     f"{state.pending_external} vérification(s) externe(s) en attente")
