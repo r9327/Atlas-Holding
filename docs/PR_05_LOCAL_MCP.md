@@ -101,3 +101,30 @@ des sessions MCP isolées, la vérification du binaire installé, les quotas
 persistés et la validation Windows de ces adaptateurs sont à développer.
 Le cache local ne garantit pas la véracité du contenu distant, seulement
 l'intégrité des octets et leur provenance déclarée.
+
+
+## Inventaire des binaires MCP épinglés (23 octobre 2026)
+
+- `holding/mcp_local_inventory.py` vérifie **sur demande** le SHA-256
+  des fichiers locaux préalablement épinglés par le bootstrap authentifié.
+  Aucun inventaire du disque entier, lancement de processus ou tentative
+  de connexion à un serveur distant. Maximum 32 entrées explicites,
+  fichiers réguliers et lectures en blocs de 64 Kio, binaires de taille
+  bornée et refus des liens symboliques.
+- Les résultats `BINARY_VERIFIED`, `HASH_MISMATCH`, `MISSING`,
+  `NOT_REGULAR_FILE`, `CHANGED_DURING_READ` et `UNREADABLE`
+  désignent **l'intégrité des octets du binaire**, jamais la disponibilité
+  d'une session, l'autorisation de commandes ni le bon fonctionnement
+  du protocole MCP. Les chemins absolus du PC ne sont pas exposés.
+- Lorsque le superviseur fournit explicitement des
+  `PinnedLocalPlugin`, le routeur rend disponible
+  `holding.local_plugin_inventory` en lecture seule. Sans provisionnement,
+  il ne prétend pas découvrir ou installer de plugins.
+- Tests sur binaire existant, binaire modifié, absent, dossier,
+  lien symbolique (si disponible), doublons, limite d'inventaire et
+  déclaration de binaires non fiables.
+
+Une vérification SHA seule ne constitue pas un healthcheck complet :
+un lancement isolé avec timeout, les versions de serveur attestées,
+les permissions par capability et le branchement du véritable
+exécuteur réseau restent les étapes suivantes.
