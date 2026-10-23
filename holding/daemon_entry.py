@@ -462,13 +462,60 @@ def _native_ipc_smoke(input_stream=None, *, output_stream=None) -> int:
             return 0 if server._server.valid_read_replied.wait(timeout=18) else 2
 
 
+def _enable_update_health_ipc(
+    service, input_stream=None, *, output_stream=None,
+) -> tuple[int, str]:
+    """Enroll one read-only updater health capability from a private pipe.
+
+    Unlike ``_native_ipc_smoke`` this exposes the installed engine's real
+    durable SQLite projection. The parent must close stdin after exactly 32
+    random bytes. No control capability or filesystem authority is returned.
+    """
+    import secrets
+    import sys
+
+    if os.name != "nt":
+        raise BootstrapError("Installed update health requires native Windows")
+    incoming = sys.stdin.buffer if input_stream is None else input_stream
+    outgoing = sys.stdout if output_stream is None else output_stream
+    if incoming is None or outgoing is None:
+        raise BootstrapError("Private update health pipe unavailable")
+    try:
+        if incoming.isatty():
+            raise BootstrapError("Interactive input cannot enroll update health")
+        key = incoming.read(33)
+    except BootstrapError:
+        raise
+    except (OSError, ValueError, TypeError, AttributeError) as exc:
+        raise BootstrapError("Private update health pipe unavailable") from exc
+    if type(key) is not bytes or len(key) != 32:
+        raise BootstrapError("Invalid update health capability frame")
+    engine_id = "update-engine-" + secrets.token_hex(16)
+    try:
+        port = service.enable_dashboard_ipc(
+            secret=key, control_secret=None, engine_id=engine_id,
+        )
+        outgoing.write(json.dumps({
+            "engine_id": engine_id,
+            "port": port,
+            "schema": 1,
+        }, sort_keys=True) + "\n")
+        outgoing.flush()
+    except BaseException:
+        service.disable_dashboard_ipc()
+        raise
+    return port, engine_id
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog='atlas-holding-daemon')
     parser.add_argument('--config',type=Path)
     parser.add_argument('--self-test',action='store_true')
     parser.add_argument('--native-ipc-smoke',action='store_true')
+    parser.add_argument('--update-health-handshake',action='store_true')
     args=parser.parse_args(argv)
-    if args.self_test and args.native_ipc_smoke:
+    if sum((args.self_test, args.native_ipc_smoke,
+            args.update_health_handshake)) > 1:
         return 2
     if args.native_ipc_smoke:
         if args.config is not None:
@@ -478,19 +525,27 @@ def main(argv: list[str] | None = None) -> int:
         if args.config is not None:
             return 2
         return _self_test()
+    if args.update_health_handshake and os.name != "nt":
+        return 2
     if args.config is None:
         parser.error('--config required outside self-test')
     config=Installation.load(args.config)
     with config.build_service() as service:
         with termination_signals(service):
             service.start()
-            if config.dashboard is not None:
+            if args.update_health_handshake:
+                _enable_update_health_ipc(service)
+            elif config.dashboard is not None:
                 # Windows Session 0 cannot host an interactive Qt desktop.
                 # Installer must invoke this under the selected signed-in user.
                 if os.name == 'nt' and not _is_interactive_windows_session():
                     raise BootstrapError('Dashboard needs a trusted interactive Windows session')
                 service.launch_dashboard(
                     config.dashboard.program, readonly=config.dashboard.readonly,
+                    # The installed configuration already pins this root for
+                    # local companion enrollment. Qt receives it for observation
+                    # only, never as permission to update a running EXE.
+                    update_root=config.database.parent.parent,
                 )
             result=service.run()
             return 0 if result.action == 'STOPPED' else 2
