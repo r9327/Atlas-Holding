@@ -32,6 +32,9 @@ class LiveControlCenterWindow(ControlCenterWindow):
         self._control = control
         self._control_pending: Future | None = None
         self._control_name: str | None = None
+        # No second command until a later authenticated SQLite projection
+        # confirms the first. An ambiguous acknowledgement is never retried.
+        self._awaiting_confirmation: tuple[str, int] | None = None
         self._connected = False
         self._paused: bool | None = None
         self._stopped: bool | None = None
@@ -65,7 +68,8 @@ class LiveControlCenterWindow(ControlCenterWindow):
     def _update_control_buttons(self) -> None:
         enabled = (not self._closing and self._connected
                    and self._control is not None
-                   and self._control_pending is None)
+                   and self._control_pending is None
+                   and self._awaiting_confirmation is None)
         self.pause_button.setEnabled(
             enabled and self._paused is False and self._stopped is False)
         self.resume_button.setEnabled(
@@ -74,8 +78,21 @@ class LiveControlCenterWindow(ControlCenterWindow):
 
     def _request_command(self, name: str) -> None:
         if (self._closing or not self._connected or self._control is None
-                or self._control_pending is not None):
+                or self._control_pending is not None
+                or self._awaiting_confirmation is not None):
             return
+        permitted = {
+            "pause": self._paused is False and self._stopped is False,
+            "resume": self._paused is True and self._stopped is False,
+            "stop": self._stopped is False,
+        }
+        if permitted.get(name) is not True:
+            return
+        # Snapshot reads may have started before the mutation. Only a later
+        # durable sequence can confirm the command was actually applied.
+        self._awaiting_confirmation = (
+            name, self.displayed_sequence if self.displayed_sequence is not None else -1
+        )
         self._control_name = name
         self._control_pending = self._executor.submit(self._control.send, name)
         self._update_control_buttons()
@@ -140,6 +157,17 @@ class LiveControlCenterWindow(ControlCenterWindow):
             self._connected = True
             self._paused = state.paused
             self._stopped = state.stop_requested
+            if self._awaiting_confirmation is not None:
+                action, previous_sequence = self._awaiting_confirmation
+                confirmed = (
+                    state.sequence > previous_sequence and
+                    (state.stop_requested is True if action == "stop" else
+                     state.paused is (action == "pause") and
+                     state.stop_requested is False)
+                )
+                if confirmed:
+                    self._awaiting_confirmation = None
+                    self._control_report = None
             if self.displayed_sequence is not None and (
                     state.sequence == self.displayed_sequence):
                 # Same durable state; connection was authenticated again.
@@ -154,7 +182,8 @@ class LiveControlCenterWindow(ControlCenterWindow):
                 self.status.setText("EN PAUSE — " + self.status.text())
             if self._control_report is not None:
                 self.status.setText(self._control_report)
-                self._control_report = None
+                # Keep the warning visible until a real newer state confirms
+                # the command or the operator closes the session.
         self._update_control_buttons()
 
     def closeEvent(self, event) -> None:
