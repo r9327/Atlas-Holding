@@ -271,6 +271,54 @@ class ControlCenterUiTests(unittest.TestCase):
         finally:
             window.close()
 
+    def test_model_history_filters_are_local_and_survive_new_snapshot(self):
+        payload = snapshot()
+        payload.update(
+            schema_version=4, paused=False, stop_requested=False,
+            services=[], model_history=[
+                {
+                    "role": "CODER", "task_id": "task-1",
+                    "model_name": "qwen-coder",
+                    "model_digest": "c" * 64,
+                    "benchmark_digest": "d" * 64,
+                    "observed_at": NOW - 2,
+                },
+                {
+                    "role": "AUDITOR", "task_id": "task-1",
+                    "model_name": "qwen-auditor",
+                    "model_digest": "e" * 64,
+                    "benchmark_digest": "f" * 64,
+                    "observed_at": NOW - 3,
+                },
+            ],
+        )
+        def parse():
+            return consume_dashboard_snapshot(
+                json.dumps(payload).encode("utf-8"),
+                trusted_engine_id="engine-1",
+                expected_sequence=payload["sequence"], now_epoch=NOW,
+            )
+        window = ControlCenterWindow(trusted_engine_id="engine-1")
+        try:
+            window.render_state(parse())
+            self.assertEqual(window.model_history.rowCount(), 2)
+            window.model_role.setCurrentText("CODER")
+            self.assertFalse(window.model_history.isRowHidden(0))
+            self.assertTrue(window.model_history.isRowHidden(1))
+            window.model_search.setText("not-the-model")
+            self.assertTrue(window.model_history.isRowHidden(0))
+            window.model_search.setText("qwen-coder")
+            self.assertFalse(window.model_history.isRowHidden(0))
+            payload["sequence"] = 43
+            payload["log_page"]["items"][0]["sequence"] = 42
+            window.render_state(parse())
+            self.assertEqual(window.model_role.currentText(), "CODER")
+            self.assertEqual(window.model_search.text(), "qwen-coder")
+            self.assertFalse(window.model_history.isRowHidden(0))
+            self.assertTrue(window.model_history.isRowHidden(1))
+        finally:
+            window.close()
+
     def test_service_health_tab_does_not_claim_plugin_installation(self):
         payload = snapshot()
         payload.update(
