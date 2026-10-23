@@ -15,6 +15,7 @@ from pathlib import Path
 import stat
 
 from .mcp_local_inventory import MAX_PLUGINS, PinnedLocalPlugin
+from .mcp_windows_acl import WindowsAclError, require_private_windows_path
 
 MAX_MANIFEST_BYTES = 64 * 1024
 
@@ -50,6 +51,8 @@ def _private_manifest_bytes(path: Path) -> bytes:
         if (not stat.S_ISREG(prior.st_mode)
                 or not 1 <= prior.st_size <= MAX_MANIFEST_BYTES):
             raise McpBootstrapError("Manifest is not a bounded regular file")
+        if os.name == "nt":
+            require_private_windows_path(path)
         if os.name == "posix":
             parent = path.parent.stat()
             if (prior.st_uid != os.getuid() or
@@ -71,6 +74,9 @@ def _private_manifest_bytes(path: Path) -> bytes:
             raw = stream.read(MAX_MANIFEST_BYTES + 1)
             after = os.fstat(stream.fileno())
         latest = path.lstat()
+        if os.name == "nt":
+            # A writable directory could replace an inspected manifest.
+            require_private_windows_path(path)
         if (len(raw) != prior.st_size
                 or (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
                     != (prior.st_dev, prior.st_ino, prior.st_size, prior.st_mtime_ns)
@@ -79,7 +85,7 @@ def _private_manifest_bytes(path: Path) -> bytes:
                 or not stat.S_ISREG(latest.st_mode)):
             raise McpBootstrapError("Manifest changed during read")
         return raw
-    except OSError as exc:
+    except (OSError, WindowsAclError) as exc:
         raise McpBootstrapError("Trusted manifest unavailable") from exc
 
 
