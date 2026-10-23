@@ -41,6 +41,22 @@ class LocalHubProbeTests(unittest.TestCase):
         self.assertEqual(result.server_name, "atlas-holding-local")
         self.assertFalse(result.external_plugins_tested)
 
+    @unittest.skipIf(sys.platform == "win32", "Windows verified through native Job Object test")
+    def test_internal_hub_uses_isolated_python_flags_and_no_shell(self):
+        from holding.mcp_hub_probe import _spawn_hub
+        import subprocess
+        with patch("holding.mcp_hub_probe.subprocess.Popen") as spawn:
+            _spawn_hub(
+                interpreter_pin=pinned(), repository_root=ROOT,
+                env={"PYTHONIOENCODING": "utf-8"}, creationflags=0)
+            args, options = spawn.call_args
+            self.assertEqual(
+                args[0],
+                [str(PYTHON), "-E", "-S", "-B", "-m", "holding.mcp_entry"])
+            self.assertFalse(options["shell"])
+            self.assertEqual(options["env"], {"PYTHONIOENCODING": "utf-8"})
+            self.assertTrue(options["start_new_session"])
+
     def test_failed_binary_hash_is_not_executed(self):
         bogus = pinned("0" * 64)
         with patch("holding.mcp_hub_probe._spawn_hub") as popen:
