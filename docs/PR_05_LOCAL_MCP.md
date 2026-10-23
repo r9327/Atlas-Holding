@@ -258,8 +258,11 @@ la lecture du manifeste, son propre fichier et le dossier susceptible de
 le remplacer doivent appartenir à l'utilisateur courant, SYSTEM ou au
 groupe Administrateurs, sans droit d'écriture accordé à un SID non fiable.
 Les DACL NULL, ACE non pris en charge, ACL énormes et reparse points
-sont rejetés. Sur POSIX, les vérifications UID/mode préexistantes restent
-actives.
+sont rejetés. Windows peut accorder des droits complets à `OWNER RIGHTS`
+(S-1-3-4) : ils sont admis uniquement comme droits du propriétaire **déjà
+vérifié** (utilisateur courant/SYSTEM/Administrateurs), jamais comme preuve
+qu'un propriétaire inconnu est fiable. Sur POSIX, les vérifications UID/mode
+préexistantes restent actives.
 
 Le bootstrap Windows protège également le fichier SQLite du cache et son
 dossier, même si l'accès aux données se fait en mode SQLite read-only. Sans
