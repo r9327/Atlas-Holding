@@ -8,6 +8,9 @@ import tempfile
 import unittest
 import zipfile
 
+from holding.dashboard_ipc import DashboardIpcClient, DashboardIpcServer
+from holding.state_store import StateStore
+from holding.update_health import activate_staged_release_after_authenticated_ipc
 from holding.update_lock import UpdateLockError, exclusive_update_lock
 from holding.update_stage import stage_release_archive
 from holding.update_switch import (
@@ -87,6 +90,89 @@ class ReleaseSwitchTests(unittest.TestCase):
         with self.assertRaisesRegex(ReleaseSwitchError, "restored"):
             self.activate("v1", probe=lambda _: False)
         self.assertIsNone(read_active_release(self.root))
+
+    def test_authenticated_ipc_health_activates_selected_slot(self):
+        digest = self.stage("v1")
+        database = Path(self.tmp.name) / "engine.sqlite"
+        with StateStore(database):
+            pass
+        key = b"r" * 32
+        engine_id = "updater-health-v1"
+        observed = []
+        with DashboardIpcServer.for_database(
+                database, engine_id=engine_id, secret=key) as server:
+            result = activate_staged_release_after_authenticated_ipc(
+                self.root,
+                release="v1",
+                approved_archive_sha256=digest,
+                client_factory=lambda slot: (
+                    observed.append(slot) or DashboardIpcClient(
+                        port=server.port, secret=key, engine_id=engine_id,
+                    )
+                ),
+            )
+        self.assertEqual(result.status, "ACTIVATED")
+        self.assertEqual(observed, [self.root / "versions" / "v1"])
+        self.assertEqual(read_active_release(self.root).release, "v1")
+        self.assertFalse((self.root / ".atlas-switch.pending.json").exists())
+
+    def test_unauthenticated_ipc_health_restores_previous_slot(self):
+        self.stage("v1")
+        self.activate("v1")
+        digest = self.stage("v2")
+        database = Path(self.tmp.name) / "engine.sqlite"
+        with StateStore(database):
+            pass
+        engine_id = "updater-health-v2"
+        with DashboardIpcServer.for_database(
+                database, engine_id=engine_id, secret=b"r" * 32) as server:
+            with self.assertRaisesRegex(ReleaseSwitchError, "restored"):
+                activate_staged_release_after_authenticated_ipc(
+                    self.root,
+                    release="v2",
+                    approved_archive_sha256=digest,
+                    client_factory=lambda _slot: DashboardIpcClient(
+                        port=server.port, secret=b"w" * 32,
+                        engine_id=engine_id,
+                    ),
+                )
+        self.assertEqual(read_active_release(self.root).release, "v1")
+        self.assertFalse((self.root / ".atlas-switch.pending.json").exists())
+
+    def test_wrong_engine_identity_restores_previous_slot(self):
+        self.stage("v1")
+        self.activate("v1")
+        digest = self.stage("v2")
+        database = Path(self.tmp.name) / "engine.sqlite"
+        with StateStore(database):
+            pass
+        key = b"r" * 32
+        with DashboardIpcServer.for_database(
+                database, engine_id="actual-engine", secret=key) as server:
+            with self.assertRaisesRegex(ReleaseSwitchError, "restored"):
+                activate_staged_release_after_authenticated_ipc(
+                    self.root,
+                    release="v2",
+                    approved_archive_sha256=digest,
+                    client_factory=lambda _slot: DashboardIpcClient(
+                        port=server.port, secret=key,
+                        engine_id="different-engine",
+                    ),
+                )
+        self.assertEqual(read_active_release(self.root).release, "v1")
+        self.assertFalse((self.root / ".atlas-switch.pending.json").exists())
+
+    def test_boolean_health_cannot_satisfy_authenticated_ipc_gate(self):
+        digest = self.stage("v1")
+        with self.assertRaisesRegex(ReleaseSwitchError, "restored"):
+            activate_staged_release_after_authenticated_ipc(
+                self.root,
+                release="v1",
+                approved_archive_sha256=digest,
+                client_factory=lambda _slot: True,
+            )
+        self.assertIsNone(read_active_release(self.root))
+        self.assertFalse((self.root / ".atlas-switch.pending.json").exists())
 
     def test_exception_in_probe_rolls_back_and_never_deletes_slot(self):
         self.stage("v1")

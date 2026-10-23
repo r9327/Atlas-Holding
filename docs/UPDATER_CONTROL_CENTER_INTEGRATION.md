@@ -53,3 +53,18 @@ Concurrent processes fail closed before reading or mutating switch metadata.
 This closes only the serialization primitive. Trusted root enrollment, Windows
 ACL verification, coordinated process shutdown and native restart/rollback are
 still separate gates.
+
+## Authenticated engine health acceptance
+
+`activate_staged_release_after_authenticated_ipc` now composes the existing
+crash-recoverable switch with the real dashboard IPC client. The trusted
+launcher callback receives the selected slot and must return a freshly enrolled
+`DashboardIpcClient`; the updater itself performs the HMAC-authenticated,
+bounded snapshot request. A process spawn, open TCP port, arbitrary callback
+boolean, wrong capability or wrong engine identity cannot accept the release.
+
+Any factory or IPC failure follows the existing rollback transaction and
+restores the previous pointer. This is an acceptance primitive only: it does
+not yet pin the launched EXE to the selected slot, validate Windows ACLs,
+coordinate shutdown/restart, or provide a signed release manifest. Those
+installer gates remain required before the new path can be wired to production.
