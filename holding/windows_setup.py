@@ -7,6 +7,7 @@ The trusted packaged host pins the release manifest before launching this UI.
 from __future__ import annotations
 
 import argparse
+import hashlib
 from dataclasses import asdict, dataclass
 import json
 import os
@@ -574,6 +575,12 @@ def main(argv: list[str] | None = None) -> int:
     # AtlasHoldingAgent.exe; OpenCode/Ollama must not be passed as the adapter.
     parser.add_argument("--adapter-sha256")
     parser.add_argument("--adapter-root", type=Path)
+    parser.add_argument("--mcp-archive", type=Path)
+    parser.add_argument("--mcp-archive-sha256")
+    parser.add_argument("--mcp-source-root", type=Path)
+    parser.add_argument("--mcp-source-pins", type=Path)
+    parser.add_argument("--mcp-source-pins-sha256")
+    parser.add_argument("--mcp-python-minor", type=int)
     args = parser.parse_args(argv)
     if (args.adapter_root is None) != (args.adapter_sha256 is None):
         parser.error("Both bundled adapter path and its release pin are required")
@@ -596,6 +603,52 @@ def main(argv: list[str] | None = None) -> int:
             "AtlasHoldingEngine.exe": args.runtime_engine_sha256,
         }
         verify_runtime_payload(args.runtime_root, bundled_runtime_pins)
+
+    mcp_values = (
+        args.mcp_archive, args.mcp_archive_sha256,
+        args.mcp_source_root, args.mcp_source_pins,
+        args.mcp_source_pins_sha256, args.mcp_python_minor,
+    )
+    mcp_pin = None
+    if any(v is not None for v in mcp_values):
+        if (not all(v is not None for v in mcp_values)
+                or args.runtime_root is None):
+            parser.error("MCP companion needs all release pins and bundled runtime")
+        if (not isinstance(args.mcp_archive_sha256, str)
+                or not isinstance(args.mcp_source_pins_sha256, str)
+                or not _HEX64.fullmatch(args.mcp_archive_sha256)
+                or not _HEX64.fullmatch(args.mcp_source_pins_sha256)
+                or not args.mcp_archive.is_absolute()
+                or not args.mcp_source_pins.is_absolute()
+                or not args.mcp_source_root.is_absolute()
+                or args.mcp_archive.is_symlink()
+                or args.mcp_source_pins.is_symlink()
+                or args.mcp_source_root.is_symlink()):
+            parser.error("Invalid pinned MCP companion paths or digests")
+        if (hashlib.sha256(args.mcp_archive.read_bytes()).hexdigest()
+                != args.mcp_archive_sha256):
+            parser.error("Bundled CPython ZIP does not match release")
+        source_bytes = args.mcp_source_pins.read_bytes()
+        if (not 1 <= len(source_bytes) <= 32768
+                or hashlib.sha256(source_bytes).hexdigest()
+                != args.mcp_source_pins_sha256):
+            parser.error("Bundled MCP source pins do not match release")
+        def unique(pairs):
+            record = {}
+            for key, value in pairs:
+                if key in record:
+                    raise ValueError("Duplicate module release pin")
+                record[key] = value
+            return record
+        try:
+            module_hashes = json.loads(source_bytes, object_pairs_hook=unique)
+            mcp_pin = EmbeddedPythonRelease(
+                python_minor=args.mcp_python_minor,
+                zip_sha256=args.mcp_archive_sha256,
+                module_sha256=module_hashes,
+            )
+        except (ValueError, UnicodeError) as exc:
+            parser.error("Invalid verified MCP module manifest")
 
     # Do not import Tk/initialize a display during CLI parsing and unit tests.
     import tkinter as tk
@@ -741,6 +794,9 @@ def main(argv: list[str] | None = None) -> int:
                             if args.adapter_root is not None else None
                         ),
                         adapter_sha256=args.adapter_sha256,
+                        embedded_python_archive=args.mcp_archive,
+                        embedded_source_root=args.mcp_source_root,
+                        embedded_python_pin=mcp_pin,
                     )
                 else:
                     summary, pins = preflight_setup(
