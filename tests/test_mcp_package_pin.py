@@ -68,13 +68,13 @@ class McpPackagePinTests(unittest.TestCase):
         for entries in (
             tuple(reversed(items)),
             tuple(items + items[:1]),
-            tuple(items[:-1]),
+            tuple(items[:-1] + [("zz-extra.py", "a" * 64)]),
             tuple(items[:-1] + [("evil.py", "0" * 40)]),
             tuple(items[:-1] + [("../escape.py", "a" * 64)]),
         ):
             with self.subTest(entries=len(entries)):
-                if entries == tuple(items[:-1]):
-                    # Omitting a file is only caught during full-package verification.
+                if entries[-1][0] == "zz-extra.py":
+                    # Well-formed but not an exact inventory.
                     self.assertFalse(McpPackagePin(entries).verify(self.root))
                 else:
                     with self.assertRaises(McpPackagePinError):
