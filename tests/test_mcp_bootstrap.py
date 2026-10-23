@@ -200,6 +200,67 @@ class ProvisionedMcpBootstrapTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(raw, b"")
 
+    def test_broken_cache_does_not_downgrade_to_health_only_silently(self):
+        missing = dict(self.data, cache_database=str(self.root / "no-cache.sqlite"))
+        self.write_manifest(missing)
+        code, raw, stderr = self.run_stdio(
+            args=["--bootstrap-manifest", str(self.manifest)],
+            request=packet("tools/list"),
+        )
+        self.assertEqual(code, 2)
+        self.assertEqual(raw, b"")
+        self.assertIn("rejected", stderr)
+        self.assertFalse((self.root / "no-cache.sqlite").exists())
+
+    @unittest.skipUnless(os.name == "posix", "POSIX parent directory gate")
+    def test_world_writable_manifest_parent_is_denied(self):
+        self.root.chmod(0o777)
+        try:
+            code, raw, stderr = self.run_stdio(
+                args=["--bootstrap-manifest", str(self.manifest)],
+                request=packet("tools/list"),
+            )
+            self.assertEqual(code, 2)
+            self.assertEqual(raw, b"")
+            self.assertIn("rejected", stderr)
+        finally:
+            self.root.chmod(0o700)
+
+    def test_manifest_symlink_is_rejected_without_running_any_plugin(self):
+        link = self.root / "redirected.json"
+        try:
+            link.symlink_to(self.manifest)
+        except (OSError, NotImplementedError):
+            self.skipTest("Symlink permission not available")
+        code, raw, stderr = self.run_stdio(
+            args=["--bootstrap-manifest", str(link)],
+            request=packet("tools/list"),
+        )
+        self.assertEqual(code, 2)
+        self.assertEqual(raw, b"")
+        self.assertIn("rejected", stderr)
+
+    def test_real_subprocess_cache_tool_returns_stale_not_false_live_data(self):
+        process = subprocess.run(
+            [sys.executable, "-B", "-m", "holding.mcp_entry",
+             "--bootstrap-manifest", str(self.manifest)],
+            input=packet(
+                "tools/call", name="holding.cache_lookup",
+                arguments={"source_uri": URI, "source_version": VER},
+            ),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            cwd=Path(__file__).resolve().parents[1],
+            timeout=15, check=False,
+        )
+        self.assertEqual(process.returncode, 0, process.stderr[:500])
+        entry = json.loads(json.loads(process.stdout)["result"]["content"][0]["text"])
+        self.assertTrue(entry["offline"])
+        self.assertFalse(entry["has_live_network"])
+        self.assertEqual(entry["provenance"], "UNTRUSTED_EXTERNAL")
+        self.assertIn(entry["status"], {"STALE", "CACHED_ONLY"})
+        if entry["status"] == "STALE":
+            self.assertIsNone(entry["text"])
+
     def test_rejects_unknown_startup_args_without_echoing_secrets(self):
         code, stdout, stderr = self.run_stdio(
             args=["--token", "SUPER-SECRET"],
