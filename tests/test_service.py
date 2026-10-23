@@ -88,8 +88,11 @@ class ServiceTests(unittest.TestCase):
                 state.set_paused(False)
             # A mocked guard ensures this tests the lifecycle, not free RAM.
             from types import SimpleNamespace
-            service.resource_guard.check = lambda: SimpleNamespace(
-                safe=True, reason="")
+            guard_patch = patch(
+                "holding.service.ResourceGuard.check",
+                return_value=SimpleNamespace(safe=True, reason=""))
+            guard_patch.start()
+            self.addCleanup(guard_patch.stop)
             self.assertEqual(service.run(max_ticks=1).action, "COMPLETE")
             self.assertEqual(len(mcp.steps), 2)
             self.assertEqual(mcp.steps[-1], (True, True))
