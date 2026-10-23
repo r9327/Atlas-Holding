@@ -224,8 +224,11 @@ class EmbeddedPythonStageTests(unittest.TestCase):
             EmbeddedPythonRelease(13, "a" * 40, self.modules)
 
 
-class WindowsSetupMcpCompanionTests(EmbeddedPythonStageTests):
+class WindowsSetupMcpCompanionTests(unittest.TestCase):
     """Real ZIP/file staging; only the native ACL interface is patched."""
+    setUp = EmbeddedPythonStageTests.setUp
+    make_archive = EmbeddedPythonStageTests.make_archive
+    stage = EmbeddedPythonStageTests.stage
 
     def test_approved_companion_is_staged_under_chosen_install_drive(self):
         from unittest.mock import patch
