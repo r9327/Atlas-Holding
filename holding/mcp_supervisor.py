@@ -35,6 +35,15 @@ class InternalMcpSupervisor:
         if os.name == "nt":
             require_private_windows_path(database)
             require_private_windows_path(interpreter_pin.executable)
+            if package_pin is not None:
+                # A valid hash without private ACLs is vulnerable to a
+                # verify-to-execute file replacement by another local user.
+                # Refuse writable package directory AND every imported .py.
+                module_dir = package_root / "holding"
+                require_private_windows_path(module_dir)
+                for filename, _digest in package_pin.entries:
+                    require_private_windows_path(
+                        module_dir / filename, check_parent=False)
         self._session = LocalMcpHubSession(
             interpreter_pin=interpreter_pin, package_root=package_root,
             response_timeout=response_timeout, package_pin=package_pin)
