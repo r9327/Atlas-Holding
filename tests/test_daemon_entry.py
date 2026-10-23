@@ -185,8 +185,11 @@ json.dump({'schema_version':1,'request_id':r['request_id'],'status':'OK',
                     service._mcp_supervisor._session.observe().state,
                     'NOT_STARTED',
                 )
-                service.resource_guard.check = lambda: SimpleNamespace(
-                    safe=True, reason='')
+                guard_patch = patch(
+                    "holding.service.ResourceGuard.check",
+                    return_value=SimpleNamespace(safe=True, reason=""))
+                guard_patch.start()
+                self.addCleanup(guard_patch.stop)
                 service.start()
                 self.assertEqual(service.run(max_ticks=1).action, 'COMPLETE')
                 with HubObservationJournal(Path(self.data['database']), readonly=True) as journal:
