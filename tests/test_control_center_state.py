@@ -123,6 +123,50 @@ class ControlCenterStateTests(unittest.TestCase):
                                               "status": "ONLINE",
                                               "age_seconds": 1}] * 4))
 
+    def test_v4_model_history_is_exact_digest_bounded_and_scoped(self):
+        payload = snapshot()
+        payload.update(
+            schema_version=4, paused=False, stop_requested=False,
+            services=[], model_history=[{
+                "role": "CODER", "task_id": "task-1",
+                "model_name": "qwen2.5-coder:7b",
+                "model_digest": "c" * 64,
+                "benchmark_digest": "d" * 64,
+                "observed_at": NOW - 10,
+            }],
+        )
+        state = consume(payload)
+        self.assertEqual(len(state.model_history), 1)
+        self.assertEqual(state.model_history[0].model_name, "qwen2.5-coder:7b")
+        self.assertEqual(state.model_history[0].role, "CODER")
+        self.assertEqual(len(state.agents), 1)  # Source fixture only, not inferred
+
+        expected = payload["model_history"][0]
+        for change in (
+            {"role": "LEAD"}, {"role": ["CODER"]},
+            {"task_id": "other-task"}, {"model_digest": "a" * 40},
+            {"benchmark_digest": True}, {"observed_at": NOW + 10},
+            {"model_name": ""}, {"installed": True},
+        ):
+            invalid = dict(payload)
+            invalid["model_history"] = [dict(expected, **change)]
+            with self.subTest(change=change):
+                with self.assertRaises(ControlCenterStateError):
+                    consume(invalid)
+        for broken in (None, [expected] * 21):
+            with self.subTest(broken=broken is None):
+                with self.assertRaises(ControlCenterStateError):
+                    consume(dict(payload, model_history=broken))
+        missing = dict(payload)
+        del missing["model_history"]
+        with self.assertRaises(ControlCenterStateError):
+            consume(missing)
+        with self.assertRaises(ControlCenterStateError):
+            consume(dict(payload, model_history=[
+                dict(expected, observed_at=NOW - 11),
+                dict(expected, observed_at=NOW - 9),
+            ]))
+
     def test_done_without_evidence_is_impossible(self):
         payload = snapshot()
         payload["tasks"][0]["completion_evidence"] = None
