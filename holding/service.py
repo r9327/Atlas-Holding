@@ -160,9 +160,11 @@ class HoldingService:
         if supervisor is None:
             return
         when = time.monotonic()
-        if allowed and resources_safe and when - self._mcp_last_refresh < 15:
-            return  # Low RAM/CPU steady-state; signed hub proof expires at 30 s.
-        self._mcp_last_refresh = when
+        if allowed and resources_safe and 0 < self._mcp_last_refresh and (
+                when - self._mcp_last_refresh < 15):
+            return  # Signed hub proof expires at 30 s; avoid frequent subprocess I/O.
+        # After Pause/STOP/pressure, resume must not wait for the old throttle.
+        self._mcp_last_refresh = when if allowed and resources_safe else 0.0
         try:
             supervisor.step(
                 background_allowed=allowed, resources_safe=resources_safe,
