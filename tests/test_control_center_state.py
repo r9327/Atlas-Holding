@@ -132,7 +132,7 @@ class ControlCenterStateTests(unittest.TestCase):
                 "model_name": "qwen2.5-coder:7b",
                 "model_digest": "c" * 64,
                 "benchmark_digest": "d" * 64,
-                "observed_at": NOW - 10,
+                "observed_at": NOW - 20,
             }],
         )
         state = consume(payload)
