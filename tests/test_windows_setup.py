@@ -43,6 +43,24 @@ class WindowsSetupTests(unittest.TestCase):
                         online=online,
                     )
 
+    def test_setup_cli_refuses_partial_mcp_companion_before_showing_gui(self):
+        from holding.windows_setup import main
+        args = [
+            "--manifest", str(self.manifest),
+            "--manifest-sha256", "a" * 64,
+        ]
+        with patch("tkinter.Tk") as tk:
+            for extra in (
+                ["--mcp-archive", str(self.manifest)],
+                ["--mcp-archive-sha256", "a" * 64],
+                ["--mcp-python-minor", "13"],
+            ):
+                with self.subTest(extra=extra):
+                    with self.assertRaises(SystemExit) as error:
+                        main(args + extra)
+                    self.assertEqual(error.exception.code, 2)
+            tk.assert_not_called()
+
     def test_setup_stages_agent_only_after_healthy_toolchain_and_consent(self):
         import hashlib
         from unittest.mock import Mock
