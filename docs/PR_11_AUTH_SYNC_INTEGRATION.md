@@ -369,3 +369,36 @@ puis épingler sa véritable empreinte ; un EXE PyInstaller non compatible
 avec `python -m` n'est pas automatiquement un interpréteur valide.
 L'état `hub` affiché ne devient donc actuel que si ce processus a
 été réellement provisionné et exécuté.
+
+
+## Installer v5 — empreintes de l'ensemble du code Python MCP (23 octobre 2026)
+
+Le nouveau schéma **v5** conserve strictement toutes les propriétés de
+l'installation v4 et demande, quand `mcp` n'est pas `null`,
+`mcp.module_sha256` : une map des **fichiers Python du package
+`holding/*.py`**, nom simple → SHA-256 hexadécimal minuscule exact.
+Le helper d'installation `build_installation_module_pins(root)` construit
+cette map à partir du répertoire réellement distribué, hors de toute
+capacité donnée au modèle.
+
+Le contrat impose :
+- Une liste strictement identique aux fichiers `.py` installés, sans
+  modules ajoutés, manquants ni alias symboliques ; limite de 192 fichiers,
+  de 2 Mio par fichier et 32 Mio au total.
+- Vérification de l'empreinte des sources à la lecture lors du
+  provisionnement, **avant le lancement du hub**, puis **après** chaque
+  découverte du protocole. Si un fichier a changé, la session est refusée
+  ou détruite et le statut `RESPONSIVE` est révoqué.
+- Sous Windows, vérification des ACL NTFS privées du dossier `holding` et
+  de chaque fichier `.py`, en plus de la base et de l'interpréteur, pour
+  réduire la possibilité de modification concurrente.
+- Compatibilité des schémas v1–v4 existants. Le v4 reste une installation
+  transitoire sans empreinte des modules ; **la protection complète
+  ajoutée ici exige le nouveau v5**, et l'installateur doit la provisionner.
+
+Les tests refusent un fichier source falsifié, un module injecté ou retiré,
+un lien symbolique, un manifeste invalide, un nouveau résultat protocolaire
+après corruption et les permissions de fichier Windows non sûres.
+Les ACL et empreintes **ne remplacent pas** une image Windows immuable,
+une signature du distributeur ou la gestion des mises à jour atomiques.
+Les vrais plugins tiers et leur approbation n'en sont pas déduits.
