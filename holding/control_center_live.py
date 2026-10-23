@@ -7,10 +7,12 @@ future polls without interrupting the engine or waiting on a hung network.
 from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
+from time import monotonic
 from PySide6.QtCore import QTimer, Slot
 from PySide6.QtWidgets import QHBoxLayout, QMessageBox, QPushButton, QWidget
 
 from .control_center_ui import ControlCenterWindow
+from .control_center_state import MAX_SNAPSHOT_AGE_SECONDS
 from .dashboard_ipc import DashboardControlClient, DashboardIpcClient, DashboardIpcError
 
 
@@ -65,8 +67,16 @@ class LiveControlCenterWindow(ControlCenterWindow):
         self._poll_timer.start()
         self.poll_live_state()
 
+    def _has_fresh_state(self) -> bool:
+        """Do not authorize a command using an expired authenticated view."""
+        received = self._last_received_at
+        if received is None or not self._connected:
+            return False
+        age = monotonic() - received
+        return 0 <= age < MAX_SNAPSHOT_AGE_SECONDS
+
     def _update_control_buttons(self) -> None:
-        enabled = (not self._closing and self._connected
+        enabled = (not self._closing and self._has_fresh_state()
                    and self._control is not None
                    and self._control_pending is None
                    and self._awaiting_confirmation is None)
@@ -77,7 +87,7 @@ class LiveControlCenterWindow(ControlCenterWindow):
         self.stop_button.setEnabled(enabled and self._stopped is False)
 
     def _request_command(self, name: str) -> None:
-        if (self._closing or not self._connected or self._control is None
+        if (self._closing or not self._has_fresh_state() or self._control is None
                 or self._control_pending is not None
                 or self._awaiting_confirmation is not None):
             return
@@ -107,8 +117,9 @@ class LiveControlCenterWindow(ControlCenterWindow):
 
     @Slot()
     def request_stop(self) -> None:
-        if (self._control is not None and self._connected
+        if (self._control is not None and self._has_fresh_state()
                 and self._control_pending is None
+                and self._awaiting_confirmation is None
                 and QMessageBox.question(
                     self, "Arrêter la Holding",
                     "Confirmer la demande d’arrêt durable du moteur ?",
@@ -122,6 +133,9 @@ class LiveControlCenterWindow(ControlCenterWindow):
         """Runs on the Qt thread, never blocks on sockets or SQLite."""
         if self._closing:
             return
+        # Check every timer tick, including while network work is still
+        # pending; a stale snapshot must disable all write buttons.
+        self._update_control_buttons()
         if self._control_pending is not None and self._control_pending.done():
             completed = self._control_pending
             name = self._control_name
