@@ -105,6 +105,17 @@ class ControlCenterWindow(QMainWindow):
             ("Service", "Dernière observation", "Ancienneté"),
             "servicesTable",
         )
+        self.model_history = _table(
+            ("Rôle", "Mission", "Modèle déclaré", "Usage enregistré",
+             "Identifiant modèle SHA256", "Preuve benchmark SHA256"),
+            "modelUsageHistoryTable",
+        )
+        self.model_history_note = QLabel(
+            "Historique SQLite des modèles assignés : ne signifie ni "
+            "session active, ni présence actuelle du modèle en mémoire."
+        )
+        self.model_history_note.setObjectName("modelHistoryNote")
+        self.model_history_note.setWordWrap(True)
         self.services_note = QLabel(
             "Santé des services externes : observations persistées, "
             "pas une preuve d'installation ou d'activation d'un plugin."
@@ -148,6 +159,11 @@ class ControlCenterWindow(QMainWindow):
         services_layout.addWidget(self.services_note)
         services_layout.addWidget(self.services)
         tabs.addTab(services_page, "Services externes")
+        model_history_page = QWidget()
+        model_history_layout = QVBoxLayout(model_history_page)
+        model_history_layout.addWidget(self.model_history_note)
+        model_history_layout.addWidget(self.model_history)
+        tabs.addTab(model_history_page, "Historique IA")
         proof_page = QWidget()
         proof_layout = QVBoxLayout(proof_page)
         proof_layout.addWidget(self.protection_status)
@@ -335,6 +351,12 @@ class ControlCenterWindow(QMainWindow):
             else f"{service.age_seconds} s",
         ) for service in state.services)
         _replace_rows(self.services, service_rows)
+        history_rows = tuple((
+            usage.role, usage.task_id, usage.model_name,
+            str(usage.observed_at), usage.model_digest,
+            usage.benchmark_digest,
+        ) for usage in state.model_history)
+        _replace_rows(self.model_history, history_rows)
         self.agent_telemetry.setText(
             f"Agents : {len(agent_rows)} état(s) fournis par le moteur"
             if agent_rows else
