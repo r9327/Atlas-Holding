@@ -257,6 +257,30 @@ class ProvisionedMcpBootstrapTests(unittest.TestCase):
         self.assertEqual(raw, b"")
         self.assertIn("rejected", stderr)
 
+    @unittest.skipUnless(os.name == "nt", "Windows cache ACL gate")
+    def test_world_writable_cache_is_not_mounted_even_as_readonly(self):
+        subprocess.run(
+            ["icacls", str(self.cache_path), "/grant", "*S-1-1-0:W"],
+            check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+        code, stdout, errors = self.run_stdio(
+            args=["--bootstrap-manifest", str(self.manifest)],
+            request=packet("tools/list"))
+        self.assertEqual(code, 2)
+        self.assertEqual(stdout, b"")
+        self.assertIn("rejected", errors)
+
+    @unittest.skipUnless(os.name == "nt", "Windows manifest ACL gate")
+    def test_world_writable_manifest_cannot_create_any_mcp_tools(self):
+        subprocess.run(
+            ["icacls", str(self.manifest), "/grant", "*S-1-1-0:W"],
+            check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+        code, stdout, errors = self.run_stdio(
+            args=["--bootstrap-manifest", str(self.manifest)],
+            request=packet("tools/list"))
+        self.assertEqual(code, 2)
+        self.assertEqual(stdout, b"")
+        self.assertIn("rejected", errors)
+
     def test_real_subprocess_cache_tool_returns_stale_not_false_live_data(self):
         process = subprocess.run(
             [sys.executable, "-B", "-m", "holding.mcp_entry",
