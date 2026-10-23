@@ -359,6 +359,8 @@ class HoldingService:
                         if (isinstance(failure, StoreError)
                                 and str(failure) != 'DAEMON_LEASE_LOST'):
                             raise
+                        self._refresh_local_mcp(
+                            allowed=False, resources_safe=False)
                         return Tick(
                             'LEASE_LOST', None,
                             'Lease lost during GitHub health probe')
@@ -376,6 +378,8 @@ class HoldingService:
                             try:
                                 self._recover_new_interruptions()
                             except LeaseError:
+                                self._refresh_local_mcp(
+                                    allowed=False, resources_safe=False)
                                 return Tick('LEASE_LOST', None, 'Lease lost during recovery')
                         # Signed QA FAIL may safely requeue the SAME mission on
                         # a clean exact-SHA branch. Independent missions continue.
@@ -385,6 +389,8 @@ class HoldingService:
                             except (LeaseError, StoreError) as failure:
                                 if isinstance(failure, StoreError) and str(failure) != 'DAEMON_LEASE_LOST':
                                     raise
+                                self._refresh_local_mcp(
+                                    allowed=False, resources_safe=False)
                                 return Tick('LEASE_LOST', None, 'Lease lost during QA repair')
                         result = self.engine.tick()
                     else:
