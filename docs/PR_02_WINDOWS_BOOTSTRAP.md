@@ -518,3 +518,26 @@ des gates avant release. L'installateur ne doit pas activer MCP sans eux.
 Tests Linux/Windows : staging réel de fichiers factices, rejet SHA
 archive/source, modules injectés/retirés, `.pyd` non épinglé, chemin
 symbolique, archives hostiles et refus d'écrasement.
+
+
+### Réinspection locale et vrai smoke natif du compagnon
+
+`verify_staged_embedded_python` vérifie désormais les octets de
+`python.exe`, des DLL/fichiers natifs présents au stage, du `._pth` isolé,
+de chaque module Holding et de l'inventaire exact du répertoire. Un reçu
+de staging avec valeurs divergentes ou des fichiers ajoutés/modifiés
+interdit la validation ; les hashes du reçu sont une preuve d'intégrité
+**locale**, jamais une signature de l'éditeur.
+
+La CI Windows dispose d'un smoke distinct utilisant réellement le ZIP
+officiel **CPython 3.13.16 Windows embeddable x64**, téléchargé depuis
+`python.org` et vérifié contre le SHA-256 publié sur la page de la
+release : `97dae5274cc54867065e8d5a3226e48c35017ed332a0fdb0e27d5b5821961297`.
+Après staging, ce smoke lance le vrai `python.exe` sans installation
+système, vérifie un import de package synthétique `holding`, les drapeaux
+d'isolation et le fait que PYTHONHOME/PYTHONPATH ne soient pas hérités
+grâce à `-E -S -B`. Le paquet synthétique n'est **pas** une certification
+du vrai hub MCP ni des agents tiers. Le garde de release doit ensuite
+tester `holding.mcp_entry` complet avec les modules signés réellement
+installés, les ACL NTFS, l'interface graphique et la reprise après
+coupure réseau.
