@@ -50,6 +50,7 @@ p=argparse.ArgumentParser()
 p.add_argument('--port',type=int,required=True)
 p.add_argument('--engine-id',required=True)
 p.add_argument('--readonly',action='store_true')
+p.add_argument('--update-root')
 a=p.parse_args()
 keys=sys.stdin.buffer.read(65)
 assert len(keys)==(32 if a.readonly else 64), len(keys)
@@ -82,6 +83,8 @@ if not a.readonly:
         answer=recv(s,37)
         assert answer[:5]==b'AH02A'
 Path(""" + repr(str(self.marker)) + """).write_text('OK')
+if a.update_root:
+    Path(""" + repr(str(self.root / "update-root-proof")) + """).write_text(a.update_root)
 time.sleep(30)
 """, encoding="utf-8",
         )
@@ -117,6 +120,20 @@ time.sleep(30)
             with self.assertRaises(RuntimeError):
                 service.launch_dashboard(self.program)
         self.assertFalse(service._dashboard_session)  # closed with host
+
+    def test_installed_root_reaches_real_viewer_without_granting_write(self):
+        with self.make_service() as service:
+            service.start()
+            install = self.root / "installed"
+            install.mkdir()
+            service.launch_dashboard(
+                self.program, readonly=True, update_root=install,
+            )
+            proof = self.root / "update-root-proof"
+            self.until(lambda: proof.is_file())
+            self.assertEqual(proof.read_text(), str(install))
+            with ControlPlane(self.db) as control:
+                self.assertFalse(control.snapshot().paused)
 
     def test_read_only_child_has_no_write_capability(self):
         with self.make_service() as service:

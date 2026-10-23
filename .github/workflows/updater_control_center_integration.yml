@@ -39,7 +39,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: |
           set -e
-          for module in test_update_stage.py test_update_switch.py test_update_observation.py test_update_control_center_ui.py test_control_center_entry.py test_control_center_live.py; do
+          for module in test_update_stage.py test_update_switch.py test_update_observation.py test_update_control_center_ui.py test_control_center_entry.py test_control_center_live.py test_dashboard_session.py test_daemon_entry.py; do
             python -B -X utf8 -m unittest discover -s tests -p "$module" -v
           done
       - name: Ensure tests did not modify checkout

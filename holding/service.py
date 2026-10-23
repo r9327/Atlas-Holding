@@ -314,7 +314,8 @@ class HoldingService:
             self._dashboard_ipc.close()
             self._dashboard_ipc = None
 
-    def launch_dashboard(self, program, *, readonly: bool = False) -> int:
+    def launch_dashboard(self, program, *, readonly: bool = False,
+                         update_root: Path | None = None) -> int:
         """Trusted UI host startup, independent of daemon work loop."""
         if self._dashboard_session is not None:
             if self._dashboard_session.is_running():
@@ -327,7 +328,9 @@ class HoldingService:
                 self._dashboard_session = None
                 self.disable_dashboard_ipc()
         from .dashboard_session import start_dashboard_session
-        session = start_dashboard_session(self, program, readonly=readonly)
+        session = start_dashboard_session(
+            self, program, readonly=readonly, update_root=update_root,
+        )
         self._dashboard_session = session
         return session.pid
 

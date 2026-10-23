@@ -491,6 +491,10 @@ def main(argv: list[str] | None = None) -> int:
                     raise BootstrapError('Dashboard needs a trusted interactive Windows session')
                 service.launch_dashboard(
                     config.dashboard.program, readonly=config.dashboard.readonly,
+                    # The installed configuration already pins this root for
+                    # local companion enrollment. Qt receives it for observation
+                    # only, never as permission to update a running EXE.
+                    update_root=config.database.parent.parent,
                 )
             result=service.run()
             return 0 if result.action == 'STOPPED' else 2

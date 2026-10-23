@@ -28,3 +28,16 @@ coordinated shutdown/restart, real IPC health acceptance, power-loss rollback,
 and end-to-end signed installer certification in PR #9.
 
 Keep in Draft; do not merge until gates are demonstrated at the exact SHA.
+
+## Real viewer enrollment wiring
+
+The installed daemon now forwards the existing configuration's
+database-parent installation root through
+daemon_entry -> HoldingService.launch_dashboard ->
+dashboard_session.start_dashboard_session -> control_center_entry --update-root.
+The handoff preserves the existing one-shot private IPC credentials. This root
+is only for read-only local observations and does not create an update grant.
+
+A real verified child subprocess test checks that the path arrives without
+making the readonly viewer able to pause the engine. The exact Windows
+installed-root selection and ACL proof remain separate release gates.
