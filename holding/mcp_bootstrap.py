@@ -51,8 +51,12 @@ def _private_manifest_bytes(path: Path) -> bytes:
                 or not 1 <= prior.st_size <= MAX_MANIFEST_BYTES):
             raise McpBootstrapError("Manifest is not a bounded regular file")
         if os.name == "posix":
+            parent = path.parent.stat()
             if (prior.st_uid != os.getuid() or
-                    stat.S_IMODE(prior.st_mode) & 0o022):
+                    stat.S_IMODE(prior.st_mode) & 0o022 or
+                    not stat.S_ISDIR(parent.st_mode) or
+                    parent.st_uid != os.getuid() or
+                    stat.S_IMODE(parent.st_mode) & 0o022):
                 raise McpBootstrapError("Manifest owner or permissions unsafe")
         flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
         fd = os.open(path, flags)
