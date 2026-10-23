@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import re
+import sys
 
 from .dashboard_session import DashboardSessionError, ViewerProgram
 from .git_worktree import GitWorktrees
@@ -24,6 +25,7 @@ from .github_broker_protocol import (
 from .github_full_evidence import GitHubEvidenceError
 from .process_agent import AgentProgram
 from .service import HoldingService, ServiceSettings, termination_signals
+from .mcp_local_inventory import PinnedLocalPlugin
 
 
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -58,6 +60,12 @@ class DashboardInstallation:
 
 
 @dataclass(frozen=True)
+class McpInstallation:
+    interpreter_pin: PinnedLocalPlugin
+    response_timeout: float
+
+
+@dataclass(frozen=True)
 class Installation:
     database: Path
     repository: str
@@ -71,6 +79,7 @@ class Installation:
     timeout_seconds: float
     github: GitHubInstallation | None = None
     dashboard: "DashboardInstallation | None" = None
+    mcp: "McpInstallation | None" = None
 
     @staticmethod
     def _github_config(info: object) -> GitHubInstallation:
@@ -186,6 +195,38 @@ class Installation:
             raise BootstrapError('Installed dashboard binary is not verified') from exc
         return DashboardInstallation(viewer, info['readonly'])
 
+    @staticmethod
+    def _mcp_config(info: object) -> McpInstallation:
+        if type(info) is not dict or set(info) != {
+                "interpreter", "interpreter_sha256", "response_timeout"}:
+            raise BootstrapError("Invalid pinned MCP installation")
+        raw, digest, timeout = (
+            info["interpreter"], info["interpreter_sha256"],
+            info["response_timeout"])
+        if (type(raw) is not str or not 1 <= len(raw) <= 4096
+                or type(digest) is not str or not _DIGEST.fullmatch(digest)
+                or type(timeout) not in (int, float)
+                or not .25 <= timeout <= 10):
+            raise BootstrapError("Invalid pinned MCP interpreter settings")
+        binary = Path(raw)
+        try:
+            canonical = binary.resolve(strict=True)
+            running = Path(sys.executable).resolve(strict=True)
+        except OSError as exc:
+            raise BootstrapError("Installed MCP interpreter unavailable") from exc
+        if (not binary.is_absolute() or '..' in binary.parts or binary.is_symlink()
+                or not canonical.is_file() or canonical != running):
+            raise BootstrapError("MCP interpreter must match installed runtime")
+        try:
+            observed = _hash_file(canonical)
+        except OSError as exc:
+            raise BootstrapError("Installed MCP interpreter unavailable") from exc
+        if not hmac.compare_digest(observed, digest):
+            raise BootstrapError("MCP interpreter changed since onboarding")
+        return McpInstallation(
+            PinnedLocalPlugin("atlas-holding-internal", "1.0", canonical, digest),
+            float(timeout))
+
     @classmethod
     def load(cls, filename: Path) -> 'Installation':
         if not filename.is_absolute() or not filename.is_file() or filename.is_symlink():
@@ -200,10 +241,11 @@ class Installation:
                 'health_directory','executable','executable_sha256','arguments',
                 'argument_sha256','timeout_seconds'}
         if (not isinstance(info, dict) or type(info.get('schema')) is not int
-                or info['schema'] not in {1, 2, 3}
+                or info['schema'] not in {1, 2, 3, 4}
                 or set(info) != (base if info['schema'] == 1 else
                     base | {'github'} if info['schema'] == 2 else
-                    base | {'github', 'dashboard'})):
+                    base | {'github', 'dashboard'} if info['schema'] == 3 else
+                    base | {'github', 'dashboard', 'mcp'})):
             raise BootstrapError('Unknown installer schema or keys')
         locations = {}
         for field in ('database','canonical_root','workspace','health_directory','executable'):
@@ -246,17 +288,19 @@ class Installation:
             raise BootstrapError('Agent executable changed since onboarding')
         github = (
             cls._github_config(info['github'])
-            if info['schema'] in {2, 3} and info['github'] is not None else None
+            if info['schema'] in {2, 3, 4} and info['github'] is not None else None
         )
         # Schema v2 is GitHub-enabled only; schema v3 permits a local-only
         # viewer when no account is configured, without inventing authority.
         if info['schema'] == 2 and github is None:
             raise BootstrapError('GitHub schema requires configured broker')
         dashboard = (cls._dashboard_config(info['dashboard'])
-                     if info['schema'] == 3 else None)
+                     if info['schema'] in {3, 4} else None)
+        mcp = (cls._mcp_config(info["mcp"])
+               if info["schema"] == 4 and info["mcp"] is not None else None)
         return cls(locations['database'],info['repository'],locations['canonical_root'],
                    locations['workspace'],locations['health_directory'],exe,checksum,
-                   tuple(args),pins,float(info['timeout_seconds']),github,dashboard)
+                   tuple(args),pins,float(info['timeout_seconds']),github,dashboard,mcp)
 
     def build_service(self) -> HoldingService:
         git = GitWorktrees(self.canonical_root,self.workspace,self.repository)
@@ -276,6 +320,11 @@ class Installation:
                 control_factory=lambda source_id: BrokerGitPushControl(
                     control, source_id),
                 health_probe=control)
+        if self.mcp is not None:
+            service.enable_local_mcp(
+                interpreter_pin=self.mcp.interpreter_pin,
+                package_root=Path(__file__).resolve().parent.parent,
+                response_timeout=self.mcp.response_timeout)
         return service
 
 
