@@ -72,6 +72,65 @@ class McpStdioTests(unittest.TestCase):
         listed = response(server, request("tools/list"))["result"]["tools"]
         self.assertEqual(listed[0]["inputSchema"]["properties"], {})
 
+    def test_tool_arguments_are_validated_before_any_handler_effect(self):
+        calls = []
+        def handler(args):
+            calls.append(dict(args))
+            return "safe"
+        server = McpRouter((Tool(
+            "read.only", "Safely checks bounded inputs",
+            {
+                "type": "object", "additionalProperties": False,
+                "required": ["query"], "properties": {
+                    "query": {"type": "string", "minLength": 1, "maxLength": 16},
+                    "limit": {"type": "integer", "enum": [1, 2, 3]},
+                    "tags": {"type": "array", "maxItems": 2,
+                             "items": {"type": "string", "maxLength": 8}},
+                },
+            }, handler,
+        ),), server_name="bounded", server_version="1")
+        invalid = [
+            {}, {"query": ""}, {"query": "x" * 17},
+            {"query": 55}, {"query": "ok", "limit": True},
+            {"query": "ok", "limit": 4},
+            {"query": "ok", "tags": ["a", "b", "c"]},
+            {"query": "ok", "unexpected": "dangerous"},
+            {"query": "ok", "tags": ["a", 2]},
+        ]
+        for arguments in invalid:
+            with self.subTest(arguments=arguments):
+                error = response(server, request("tools/call", {
+                    "name": "read.only", "arguments": arguments,
+                }))["error"]
+                self.assertEqual(error["code"], -32602)
+                self.assertEqual(calls, [])
+        valid = response(server, request("tools/call", {
+            "name": "read.only", "arguments": {
+                "query": "dofus", "limit": 2, "tags": ["pvm"],
+            },
+        }))["result"]
+        self.assertFalse(valid["isError"])
+        self.assertEqual(calls, [{"query": "dofus", "limit": 2, "tags": ["pvm"]}])
+
+    def test_tool_schema_rejects_unimplemented_or_unsafe_claims(self):
+        bad = [
+            {"type": "object", "$ref": "https://host/schema"},
+            {"type": "object", "properties": {"x": {"type": "number"}},
+             "required": [["x"]]},
+            {"type": "object", "properties": {"x": {"type": "string"}},
+             "required": ["unknown"]},
+            {"type": "object", "properties": {"x": {"type": "string"}},
+             "required": ["x", "x"]},
+            {"type": "array"},
+            {"type": "array", "items": {"type": "object"}, "maxItems": 5000},
+            {"type": "object", "properties": {
+                "injection": {"type": "string", "pattern": ".*"}
+            }},
+        ]
+        for schema in bad:
+            with self.subTest(schema=schema), self.assertRaises(ValueError):
+                Tool("invalid", "Invalid", schema, lambda _args: "never")
+
     def test_non_finite_or_oversized_schema_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "finite JSON"):
             Tool("bad", "bad schema", {"type": "object", "x": float("nan")}, str)
