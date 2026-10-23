@@ -41,6 +41,17 @@ class CacheTests(unittest.TestCase):
         self.assertIsNone(load_cached_batch(self.root, source=SOURCE, format="json"))
         self.assertIsNone(load_cached_batch(self.root, source="https://example.org/other", format="csv"))
 
+    def test_custom_identifier_is_verified_on_cache_replay(self):
+        original = ingest_json_records(
+            b'[{"quest_id":"q-42","kind":"quest"}]',
+            source=SOURCE, collected_at=STAMP, id_field="quest_id",
+        )
+        store_batch(self.root, original, format="json", id_field="quest_id")
+        replay = load_cached_batch(
+            self.root, source=SOURCE, format="json", id_field="quest_id",
+        )
+        self.assertEqual(replay.batch.records, original.records)
+
     def test_tampered_blob_is_never_reused(self):
         digest = store_batch(self.root, batch(), format="json")
         blob = self.root / "objects" / (digest + ".json")

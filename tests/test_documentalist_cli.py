@@ -76,6 +76,19 @@ class DocumentalistCliTests(unittest.TestCase):
         self.assertEqual(document["records"][0]["id"], "002")
         self.assertEqual(document["records"][0]["payload"]["kind"], "quest")
 
+    def test_local_markdown_table_exports_records(self):
+        self.input.write_text(
+            "| id | kind |\n| --- | --- |\n| 004 | quest |\n",
+            encoding="utf-8",
+        )
+        run = subprocess.run([
+            sys.executable, "-m", "holding.documentalist_cli",
+            "--file", str(self.input), "--format", "markdown",
+            "--out", str(self.out),
+        ], capture_output=True, text=True, check=False)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(json.loads(self.out.read_text())["records"][0]["id"], "004")
+
     def test_reject_host_option_for_local_file(self):
         run = self.run_cli("--allow-host", "example.org")
         self.assertEqual(run.returncode, 2)

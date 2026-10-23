@@ -17,6 +17,7 @@ from urllib.request import (
 
 from .document_csv import ingest_csv_records
 from .document_html import ingest_html_table
+from .document_markdown import ingest_markdown_table
 from .document_intake import (
     DocumentBatch, DocumentIntakeError, MAX_DOCUMENT_BYTES, ingest_json_records,
 )
@@ -95,8 +96,8 @@ def fetch_document(
         raise DocumentSourceError("invalid host allowlist")
     hosts = frozenset(allowed_hosts)
     _check_url(url, hosts, test_loopback=allow_test_loopback)
-    if format not in ("json", "csv", "html"):
-        raise DocumentSourceError("format must be json, csv or html")
+    if format not in ("json", "csv", "html", "markdown"):
+        raise DocumentSourceError("format must be json, csv, html or markdown")
     if (not isinstance(timeout, (int, float)) or not 0 < timeout <= 60
             or type(max_bytes) is not int or not 1 <= max_bytes <= MAX_DOCUMENT_BYTES):
         raise DocumentSourceError("invalid transfer limits")
@@ -105,7 +106,8 @@ def fetch_document(
         headers={
             "Accept-Encoding": "identity",
             "Accept": ("application/json" if format == "json" else
-                       "text/csv" if format == "csv" else "text/html"),
+                       "text/csv" if format == "csv" else
+                       "text/html" if format == "html" else "text/markdown"),
             "User-Agent": "AtlasHolding-Documentalist/1",
         },
     )
@@ -121,7 +123,8 @@ def fetch_document(
             content_type = response.headers.get_content_type().lower()
             expected = (("application/json", "text/json") if format == "json" else
                         ("text/csv", "application/csv") if format == "csv" else
-                        ("text/html", "application/xhtml+xml"))
+                        ("text/html", "application/xhtml+xml") if format == "html" else
+                        ("text/markdown", "text/x-markdown", "text/plain"))
             if content_type not in expected:
                 raise DocumentSourceError("unexpected source content type")
             declared = response.headers.get("Content-Length")
@@ -141,11 +144,12 @@ def fetch_document(
         raise DocumentSourceError("source fetch failed") from exc
     stamp = datetime.now(timezone.utc).isoformat()
     ingest = (ingest_json_records if format == "json" else ingest_csv_records
-              if format == "csv" else ingest_html_table)
+              if format == "csv" else ingest_html_table if format == "html"
+              else ingest_markdown_table)
     # Test HTTP loopback is local evidence, never mislabelled HTTPS.
     provenance = ("local:" + final_url) if final_url.startswith("http://") else final_url
     try:
-        kwargs = {"table_index": table_index} if format == "html" else {}
+        kwargs = {"table_index": table_index} if format in ("html", "markdown") else {}
         batch = ingest(raw, source=provenance, collected_at=stamp,
                        id_field=id_field, **kwargs)
     except DocumentIntakeError as exc:

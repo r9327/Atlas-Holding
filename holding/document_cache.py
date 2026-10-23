@@ -35,7 +35,7 @@ class CachedBatch:
 
 
 def _key(source: str, fmt: str, id_field: str, table_index: int) -> str:
-    if fmt not in {"json", "csv", "html"} or not isinstance(id_field, str):
+    if fmt not in {"json", "csv", "html", "markdown"} or not isinstance(id_field, str):
         raise DocumentCacheError("invalid cache source format")
     if type(table_index) is not int or not 0 <= table_index <= 31:
         raise DocumentCacheError("invalid HTML table selector")
@@ -155,8 +155,8 @@ def load_cached_batch(root: Path, *, source: str, format: str,
                 raise DocumentCacheError("invalid cached record")
             rec_id = _identifier(row["id"])
             payload = row["payload"]
-            if (not isinstance(payload, dict) or "id" not in payload
-                    or _identifier(payload["id"]) != rec_id):
+            if (not isinstance(payload, dict) or id_field not in payload
+                    or _identifier(payload[id_field]) != rec_id):
                 raise DocumentCacheError("cached record identity mismatch")
             if rec_id in seen:
                 raise DocumentCacheError("duplicate cached ID")

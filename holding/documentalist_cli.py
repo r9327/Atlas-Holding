@@ -16,6 +16,7 @@ from .document_cache import DocumentCacheError, load_cached_batch, store_batch
 from .document_csv import ingest_csv_records
 from .document_exchange import export_document_batch
 from .document_html import ingest_html_table
+from .document_markdown import ingest_markdown_table
 from .document_intake import DocumentIntakeError, MAX_DOCUMENT_BYTES, ingest_json_records
 from .document_source import DocumentSourceError, fetch_document, _check_url
 
@@ -25,7 +26,7 @@ def main(argv: list[str] | None = None) -> int:
     selected = parser.add_mutually_exclusive_group(required=True)
     selected.add_argument("--file", type=Path, help="local document (read-only)")
     selected.add_argument("--url", help="HTTPS JSON/CSV URL")
-    parser.add_argument("--format", choices=("json", "csv", "html"), required=True)
+    parser.add_argument("--format", choices=("json", "csv", "html", "markdown"), required=True)
     parser.add_argument("--table-index", type=int, default=0,
                         help="zero-based HTML table index")
     parser.add_argument("--out", type=Path, required=True, help="new batch JSON; will not overwrite")
@@ -37,8 +38,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--offline", action="store_true", help="use verified cached source only; never network")
     args = parser.parse_args(argv)
     try:
-        if args.format != "html" and args.table_index != 0:
-            raise DocumentIntakeError("--table-index applies only to HTML")
+        if args.format not in ("html", "markdown") and args.table_index != 0:
+            raise DocumentIntakeError("--table-index applies only to HTML/Markdown")
         source_mode = "LOCAL_FILE"
         if args.file:
             if args.offline or args.cache_dir is not None:
@@ -52,8 +53,10 @@ def main(argv: list[str] | None = None) -> int:
             raw = args.file.read_bytes()
             stamp = datetime.now(timezone.utc).isoformat()
             ingest = (ingest_json_records if args.format == "json" else
-                      ingest_csv_records if args.format == "csv" else ingest_html_table)
-            kwargs = {"table_index": args.table_index} if args.format == "html" else {}
+                      ingest_csv_records if args.format == "csv" else
+                      ingest_html_table if args.format == "html" else
+                      ingest_markdown_table)
+            kwargs = {"table_index": args.table_index} if args.format in ("html", "markdown") else {}
             batch = ingest(raw, source="local:" + args.file.name,
                            collected_at=stamp, id_field=args.id_field, **kwargs)
             read_bytes = len(raw)
