@@ -27,13 +27,13 @@ jobs:
       - name: Checkout exact certified main setup source
         uses: actions/checkout@v7
         with:
-          ref: f9b731eb7a58e4415af46827d75a58581a85c56a
+          ref: c7aa6dae757392b863f9a32585e9309069162dec
           path: _native/bootstrap
           persist-credentials: false
       - name: Checkout exact certified main integration source
         uses: actions/checkout@v7
         with:
-          ref: f9b731eb7a58e4415af46827d75a58581a85c56a
+          ref: c7aa6dae757392b863f9a32585e9309069162dec
           path: _native/integration
           persist-credentials: false
       - name: Python 3.13
@@ -52,7 +52,7 @@ jobs:
         run: |
           $bootstrap = (Resolve-Path '_native/bootstrap').Path
           $integration = (Resolve-Path '_native/integration').Path
-          python -B -X utf8 -m holding.native_rehearsal --bootstrap "$bootstrap" --bootstrap-sha "f9b731eb7a58e4415af46827d75a58581a85c56a" --integration "$integration" --integration-sha "f9b731eb7a58e4415af46827d75a58581a85c56a"
+          python -B -X utf8 -m holding.native_rehearsal --bootstrap "$bootstrap" --bootstrap-sha "c7aa6dae757392b863f9a32585e9309069162dec" --integration "$integration" --integration-sha "c7aa6dae757392b863f9a32585e9309069162dec"
           if ($LASTEXITCODE -ne 0) { throw "Real cross-PR native packaging proof failed" }
       - name: Confirm pinned candidate source was not changed
         shell: pwsh
