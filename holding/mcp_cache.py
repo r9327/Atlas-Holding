@@ -13,6 +13,8 @@ import re
 import sqlite3
 from urllib.parse import parse_qsl, urlsplit
 
+from .schema import MCP_CACHE_SCHEMA, apply_schema
+
 
 MAX_CONTENT_BYTES = 32 * 1024
 MAX_RECORDS = 64
@@ -100,17 +102,7 @@ class OfflineDocumentCache:
                     raise McpCacheError("Provisioned cache schema is missing")
             else:
                 self.db.execute("PRAGMA journal_mode=WAL")
-                self.db.execute("""
-                    CREATE TABLE IF NOT EXISTS mcp_cached_docs (
-                        source_uri TEXT NOT NULL,
-                        source_version TEXT NOT NULL,
-                        captured_epoch INTEGER NOT NULL,
-                        expires_epoch INTEGER NOT NULL,
-                        content_sha256 TEXT NOT NULL,
-                        content BLOB NOT NULL,
-                        PRIMARY KEY (source_uri,source_version)
-                    )
-                """)
+                apply_schema(self.db, MCP_CACHE_SCHEMA)
         except BaseException:
             self.db.close()
             raise
