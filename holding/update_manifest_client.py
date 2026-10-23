@@ -8,9 +8,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
-from .update_download import _check_url, ArtifactDownloadError
+from .update_download import _check_url, _open_url, ArtifactDownloadError
 from .update_plan import UpdateManifest, InvalidUpdateManifest
 
 _MAX_MANIFEST_BYTES = 256 * 1024
@@ -63,7 +63,7 @@ def check_manifest(url: str, *, previous_etag: str | None = None,
         headers["If-None-Match"] = previous_etag
     req = Request(url, headers=headers)
     try:
-        with urlopen(req, timeout=float(timeout)) as response:
+        with _open_url(req, timeout=float(timeout), allow_test_loopback=allow_test_loopback) as response:
             _check_url(response.geturl(), allow_test_loopback=allow_test_loopback)
             if response.status != 200:
                 raise ManifestFetchError("unexpected manifest response")

@@ -12,7 +12,7 @@ from pathlib import Path
 import re
 from typing import Callable
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
 _RANGE = re.compile(r"bytes (\d+)-(\d+)/(\d+)\Z")
@@ -35,6 +35,25 @@ def _check_url(url: str, *, allow_test_loopback: bool) -> None:
             and parsed.hostname in ("localhost", "127.0.0.1", "::1")):
         return
     raise ArtifactDownloadError("HTTPS is required")
+
+
+class _SafeRedirectHandler(HTTPRedirectHandler):
+    """Reject unsafe redirected URLs before opening the next connection."""
+
+    def __init__(self, *, allow_test_loopback: bool) -> None:
+        super().__init__()
+        self.allow_test_loopback = allow_test_loopback
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _check_url(newurl, allow_test_loopback=self.allow_test_loopback)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _open_url(request: Request, *, timeout: float, allow_test_loopback: bool):
+    # Keep the redirect policy scoped to one request, not process-global.
+    return build_opener(
+        _SafeRedirectHandler(allow_test_loopback=allow_test_loopback)
+    ).open(request, timeout=timeout)
 
 
 def _strong_etag(value: str | None) -> str | None:
@@ -81,6 +100,25 @@ def download_staged_artifact(
     offset = partial.stat().st_size if partial.exists() else 0
     if offset > expected_size:
         raise ArtifactDownloadError("partial file exceeds expected size")
+    if partial.exists() and offset == expected_size:
+        # Power loss can happen after fsync but before the final rename. A
+        # locally complete file can be promoted only after full SHA-256 check.
+        complete_digest = hashlib.sha256()
+        with partial.open("rb") as completed:
+            for block in iter(lambda: completed.read(chunk_bytes), b""):
+                complete_digest.update(block)
+        if complete_digest.hexdigest() == expected_sha256:
+            if destination.exists() or destination.is_symlink():
+                raise ArtifactDownloadError("staged destination appeared during recovery")
+            os.replace(partial, destination)
+            etag_file.unlink(missing_ok=True)
+            if on_progress is not None:
+                on_progress(expected_size, expected_size)
+            return destination
+        # Wrong content of the right size must never be resumed with Range.
+        partial.unlink()
+        etag_file.unlink(missing_ok=True)
+        offset = 0
     saved_etag = None
     if offset and etag_file.exists():
         saved_etag = _strong_etag(etag_file.read_text(encoding="utf-8"))
@@ -92,7 +130,7 @@ def download_staged_artifact(
         headers["If-Range"] = saved_etag
     request = Request(url, headers=headers)
     try:
-        with urlopen(request, timeout=timeout) as response:
+        with _open_url(request, timeout=timeout, allow_test_loopback=allow_test_loopback) as response:
             _check_url(response.geturl(), allow_test_loopback=allow_test_loopback)
             status = response.status
             if status not in (200, 206):

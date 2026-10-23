@@ -15,8 +15,14 @@ class ArtifactHandler(BaseHTTPRequestHandler):
     requests = []
     ignore_range = False
     bad_etag = False
+    redirect_to = None
 
     def do_GET(self):
+        if self.redirect_to is not None:
+            self.send_response(302)
+            self.send_header("Location", self.redirect_to)
+            self.end_headers()
+            return
         rng = self.headers.get("Range")
         type(self).requests.append((rng, self.headers.get("If-Range")))
         start = 0
@@ -59,6 +65,7 @@ class UpdateDownloadTests(unittest.TestCase):
         ArtifactHandler.requests.clear()
         ArtifactHandler.ignore_range = False
         ArtifactHandler.bad_etag = False
+        ArtifactHandler.redirect_to = None
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.path = Path(self.temp.name) / "staging" / "artifact.blob"
@@ -101,6 +108,29 @@ class UpdateDownloadTests(unittest.TestCase):
         self.path.with_name(self.path.name + ".part.etag").write_text('"v1"')
         self.assertEqual(self.download().read_bytes(), PAYLOAD)
         self.assertEqual(ArtifactHandler.requests, [("bytes=4096-", '"v1"')])
+
+    def test_complete_partial_recovers_offline_after_power_loss(self):
+        self.path.parent.mkdir()
+        self.path.with_name(self.path.name + ".part").write_bytes(PAYLOAD)
+        self.path.with_name(self.path.name + ".part.etag").write_text('"v1"')
+        progress = []
+        self.assertEqual(self.download(on_progress=lambda n, total: progress.append((n, total))).read_bytes(), PAYLOAD)
+        self.assertEqual(progress, [(len(PAYLOAD), len(PAYLOAD))])
+        self.assertEqual(ArtifactHandler.requests, [])
+        self.assertFalse(self.path.with_name(self.path.name + ".part.etag").exists())
+
+    def test_corrupt_complete_partial_restarts_without_range(self):
+        self.path.parent.mkdir()
+        self.path.with_name(self.path.name + ".part").write_bytes(b"x" * len(PAYLOAD))
+        self.path.with_name(self.path.name + ".part.etag").write_text('"v1"')
+        self.assertEqual(self.download().read_bytes(), PAYLOAD)
+        self.assertEqual(ArtifactHandler.requests, [(None, None)])
+
+    def test_downgrade_redirect_rejected_before_network_connection(self):
+        ArtifactHandler.redirect_to = "http://example.invalid/unsafe"
+        with self.assertRaisesRegex(ArtifactDownloadError, "HTTPS"):
+            self.download()
+        self.assertFalse(self.path.exists())
 
     def test_partial_without_etag_restarts_safely(self):
         self.path.parent.mkdir()

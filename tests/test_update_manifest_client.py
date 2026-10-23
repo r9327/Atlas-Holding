@@ -14,8 +14,14 @@ MANIFEST = {
 class ManifestHandler(BaseHTTPRequestHandler):
     requests = []
     payload = MANIFEST
+    redirect_to = None
 
     def do_GET(self):
+        if self.redirect_to is not None:
+            self.send_response(302)
+            self.send_header("Location", self.redirect_to)
+            self.end_headers()
+            return
         etag = self.headers.get("If-None-Match")
         type(self).requests.append(etag)
         if etag == '"v1"':
@@ -51,6 +57,7 @@ class ManifestClientTests(unittest.TestCase):
     def setUp(self):
         ManifestHandler.requests.clear()
         ManifestHandler.payload = MANIFEST
+        ManifestHandler.redirect_to = None
 
     def check(self, **overrides):
         return check_manifest(self.url, allow_test_loopback=True, **overrides)
@@ -78,6 +85,12 @@ class ManifestClientTests(unittest.TestCase):
     def test_http_public_url_never_contacted(self):
         with self.assertRaises(ManifestFetchError):
             check_manifest("http://example.com/releases.json")
+        self.assertEqual(ManifestHandler.requests, [])
+
+    def test_redirect_to_insecure_origin_fails_before_following(self):
+        ManifestHandler.redirect_to = "http://example.invalid/unsafe"
+        with self.assertRaisesRegex(ManifestFetchError, "network error"):
+            self.check(previous_etag='"v1"')
         self.assertEqual(ManifestHandler.requests, [])
 
     def test_refuses_untrusted_cache_etag(self):
