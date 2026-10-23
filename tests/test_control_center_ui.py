@@ -248,7 +248,7 @@ class ControlCenterUiTests(unittest.TestCase):
                 "model_name": "qwen2.5-coder:7b",
                 "model_digest": "c" * 64,
                 "benchmark_digest": "d" * 64,
-                "observed_at": NOW - 2,
+                "observed_at": NOW - 25,
             }],
         )
         state = consume_dashboard_snapshot(
@@ -281,14 +281,14 @@ class ControlCenterUiTests(unittest.TestCase):
                     "model_name": "qwen-coder",
                     "model_digest": "c" * 64,
                     "benchmark_digest": "d" * 64,
-                    "observed_at": NOW - 2,
+                    "observed_at": NOW - 25,
                 },
                 {
                     "role": "AUDITOR", "task_id": "task-1",
                     "model_name": "qwen-auditor",
                     "model_digest": "e" * 64,
                     "benchmark_digest": "f" * 64,
-                    "observed_at": NOW - 3,
+                    "observed_at": NOW - 26,
                 },
             ],
         )
