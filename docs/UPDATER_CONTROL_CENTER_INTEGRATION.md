@@ -109,3 +109,16 @@ size and file-content hash. Activation recomputes the bounded tree before it
 writes switch metadata, rejecting modified, missing, added, linked or special
 files. This detects post-extraction corruption; it is not a signature and does
 not replace authenticated release metadata or the native Windows ACL gate.
+
+## Installation-specific engine slot
+
+`stage_windows_engine_release` accepts only independently authenticated archive
+and binary hashes. The archive supplies the pinned runtime pair but is forbidden
+from choosing `engine.json`. Instead, the updater revalidates the currently
+installed config, changes only its dashboard executable binding to the new
+slot, writes that derived config before publication, and covers it with the v2
+tree digest. `InstalledEngineSpec` now recognizes this exact
+`versions/<release>/{runtime,config}` layout while keeping the stable install
+root for durable data and MCP paths. Native launch still repeats binary,
+configuration and ACL verification; this materialization is not release
+signature verification or an automatic process replacement.

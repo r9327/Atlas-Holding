@@ -39,6 +39,7 @@ class InstalledEngineSpec:
     viewer_sha256: str
     engine_sha256: str
     config_sha256: str
+    release_directory: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,8 @@ def _validate_paths(spec: InstalledEngineSpec) -> None:
     if not isinstance(spec, InstalledEngineSpec):
         raise RuntimeLaunchError("Pinned Windows runtime identity required")
     paths = (spec.install_root, spec.runtime_directory, spec.config_file)
+    if spec.release_directory is not None:
+        paths += (spec.release_directory,)
     if (any(not isinstance(path, Path) or not path.is_absolute()
                    or ".." in path.parts or path.is_symlink()
                    for path in paths)
@@ -81,11 +84,28 @@ def _validate_paths(spec: InstalledEngineSpec) -> None:
         config = spec.config_file.resolve(strict=True)
     except OSError as exc:
         raise RuntimeLaunchError("Installed runtime path unavailable") from exc
+    release = None
+    if spec.release_directory is not None:
+        try:
+            release = spec.release_directory.resolve(strict=True)
+        except OSError as exc:
+            raise RuntimeLaunchError("Installed release path unavailable") from exc
+    legacy_layout = (
+        release is None
+        and runtime.parent == root / "runtime"
+        and config.parent == root / "config"
+    )
+    release_layout = (
+        release is not None
+        and release == spec.release_directory
+        and release.parent == root / "versions"
+        and runtime.parent == release / "runtime"
+        and config.parent == release / "config"
+    )
     if (root != spec.install_root or runtime != spec.runtime_directory
             or config != spec.config_file or not root.is_dir()
             or not runtime.is_dir() or not config.is_file()
-            or runtime.parent != root / "runtime"
-            or config.parent != root / "config"):
+            or not (legacy_layout or release_layout)):
         raise RuntimeLaunchError("Installed runtime is outside selected root")
 
 
@@ -159,13 +179,18 @@ def verify_installed_engine(spec: InstalledEngineSpec) -> tuple[str, str]:
     try:
         verify_runtime_payload(spec.runtime_directory, expected)
         from .windows_runtime_acl import validate_runtime_acl
-        for path in (
+        acl_paths = [
             spec.install_root,
             spec.runtime_directory.parent, spec.runtime_directory,
             spec.runtime_directory / "AtlasHoldingControlCenter.exe",
             spec.runtime_directory / "AtlasHoldingEngine.exe",
             spec.config_file.parent, spec.config_file,
-        ):
+        ]
+        if spec.release_directory is not None:
+            acl_paths[1:1] = [
+                spec.release_directory.parent, spec.release_directory,
+            ]
+        for path in acl_paths:
             validate_runtime_acl(path)
         _read_config(spec)
         verify_runtime_payload(spec.runtime_directory, expected)

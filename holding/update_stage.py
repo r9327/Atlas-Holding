@@ -16,6 +16,7 @@ import re
 import shutil
 import stat
 import tempfile
+from typing import Callable
 import zipfile
 
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
@@ -219,6 +220,7 @@ def stage_release_archive(
     expected_sha256: str,
     max_files: int = _MAX_FILES,
     max_unpacked_bytes: int = _MAX_UNPACKED_BYTES,
+    _materialize: Callable[[Path], None] | None = None,
 ) -> StagedRelease:
     """Extract a SHA-pinned ZIP only into a NEW version directory.
 
@@ -237,7 +239,8 @@ def stage_release_archive(
         raise ReleaseStagingError("invalid expected archive hash")
     if (type(max_files) is not int or not 1 <= max_files <= _MAX_FILES
             or type(max_unpacked_bytes) is not int
-            or not 1 <= max_unpacked_bytes <= _MAX_UNPACKED_BYTES):
+            or not 1 <= max_unpacked_bytes <= _MAX_UNPACKED_BYTES
+            or (_materialize is not None and not callable(_materialize))):
         raise ReleaseStagingError("invalid extraction quota")
     if archive_file.is_symlink() or not archive_file.is_file():
         raise ReleaseStagingError("archive must be a regular, non-symlink file")
@@ -289,18 +292,22 @@ def stage_release_archive(
                 count += 1
         if actual_total != declared_total:
             raise ReleaseStagingError("archive totals mismatch")
+        if _materialize is not None:
+            _materialize(temporary)
         inventory = _slot_inventory(
             temporary, max_files=max_files,
             max_unpacked_bytes=max_unpacked_bytes,
         )
-        if inventory.files != count or inventory.unpacked_bytes != actual_total:
+        if (_materialize is None and (
+                inventory.files != count
+                or inventory.unpacked_bytes != actual_total)):
             raise ReleaseStagingError("staged tree differs from extracted archive")
         receipt = {
             "schema": _STAGE_SCHEMA,
             "release": release,
             "archive_sha256": expected_sha256,
-            "files": count,
-            "unpacked_bytes": actual_total,
+            "files": inventory.files,
+            "unpacked_bytes": inventory.unpacked_bytes,
             "tree_sha256": inventory.tree_sha256,
         }
         with (temporary / _MARKER).open("x", encoding="utf-8") as marker:
@@ -311,7 +318,10 @@ def stage_release_archive(
             raise ReleaseStagingError("release appeared while staging")
         os.rename(temporary, target)
         published = True
-        return StagedRelease(release, target, expected_sha256, count, actual_total)
+        return StagedRelease(
+            release, target, expected_sha256,
+            inventory.files, inventory.unpacked_bytes,
+        )
     except (OSError, EOFError, RuntimeError, zipfile.BadZipFile) as exc:
         raise ReleaseStagingError("release archive could not be safely staged") from exc
     finally:

@@ -15,10 +15,14 @@ from holding.update_health import (
     UpdateEngineSession, activate_staged_release_after_authenticated_ipc,
 )
 from holding.update_lock import UpdateLockError, exclusive_update_lock
-from holding.update_stage import stage_release_archive
+from holding.update_stage import ReleaseStagingError, stage_release_archive
+from holding.update_runtime import EngineReleasePins, stage_windows_engine_release
 from holding.update_switch import (
     ReleaseSwitchError, activate_staged_release,
     read_active_release, recover_interrupted_switch,
+)
+from holding.windows_runtime_launch import (
+    InstalledEngineSpec, _read_config, _validate_paths,
 )
 
 
@@ -328,6 +332,171 @@ class ReleaseSwitchTests(unittest.TestCase):
             self.activate("v1")
         self.assertIsNone(read_active_release(self.root))
         self.assertFalse((self.root / ".atlas-switch.pending.json").exists())
+
+    def test_materialized_engine_slot_binds_runtime_and_local_config(self):
+        self.root.mkdir()
+        old_runtime = self.root / "runtime" / "old-pair"
+        old_runtime.mkdir(parents=True)
+        old_viewer = old_runtime / "AtlasHoldingControlCenter.exe"
+        old_engine = old_runtime / "AtlasHoldingEngine.exe"
+        old_viewer.write_bytes(b"v" * 1_000_001)
+        old_engine.write_bytes(b"e" * 1_000_003)
+        old_viewer_hash = sha256(old_viewer.read_bytes()).hexdigest()
+        old_engine_hash = sha256(old_engine.read_bytes()).hexdigest()
+        config = self.root / "config" / "engine.json"
+        config.parent.mkdir()
+        config.write_text(json.dumps({
+            "schema": 3,
+            "dashboard": {
+                "executable": str(old_viewer),
+                "executable_sha256": old_viewer_hash,
+                "script": None, "script_sha256": None, "readonly": False,
+            },
+        }), encoding="utf-8")
+        current = InstalledEngineSpec(
+            self.root, old_runtime, config, old_viewer_hash, old_engine_hash,
+            sha256(config.read_bytes()).hexdigest(),
+        )
+        new_viewer = b"V" * 1_000_011
+        new_engine = b"E" * 1_000_013
+        viewer_hash = sha256(new_viewer).hexdigest()
+        engine_hash = sha256(new_engine).hexdigest()
+        pair = viewer_hash[:16] + "-" + engine_hash[:16]
+        with zipfile.ZipFile(self.zip_path, "w", zipfile.ZIP_STORED) as bundle:
+            bundle.writestr(
+                "runtime/" + pair + "/AtlasHoldingControlCenter.exe",
+                new_viewer,
+            )
+            bundle.writestr(
+                "runtime/" + pair + "/AtlasHoldingEngine.exe",
+                new_engine,
+            )
+        archive_hash = sha256(self.zip_path.read_bytes()).hexdigest()
+        pins = EngineReleasePins(
+            "v2", archive_hash, viewer_hash, engine_hash,
+        )
+        result = stage_windows_engine_release(
+            self.zip_path, self.root, pins=pins, current=current,
+        )
+        _validate_paths(result.launch_spec)
+        _read_config(result.launch_spec)
+        self.assertEqual(result.staged.files, 3)
+        self.assertEqual(result.launch_spec.release_directory,
+                         self.root / "versions" / "v2")
+        generated = json.loads(result.launch_spec.config_file.read_text())
+        self.assertEqual(
+            generated["dashboard"]["executable"],
+            str(result.launch_spec.runtime_directory /
+                "AtlasHoldingControlCenter.exe"),
+        )
+        self.assertEqual(generated["dashboard"]["executable_sha256"],
+                         viewer_hash)
+        self.digests["v2"] = archive_hash
+        activated = self.activate("v2")
+        self.assertEqual(activated.status, "ACTIVATED")
+
+    def test_engine_archive_cannot_supply_install_specific_config(self):
+        self.root.mkdir()
+        runtime = self.root / "runtime" / "old"
+        runtime.mkdir(parents=True)
+        viewer = runtime / "AtlasHoldingControlCenter.exe"
+        engine = runtime / "AtlasHoldingEngine.exe"
+        viewer.write_bytes(b"v" * 1_000_001)
+        engine.write_bytes(b"e" * 1_000_003)
+        viewer_hash = sha256(viewer.read_bytes()).hexdigest()
+        engine_hash = sha256(engine.read_bytes()).hexdigest()
+        config = self.root / "config" / "engine.json"
+        config.parent.mkdir()
+        config.write_text(json.dumps({
+            "schema": 3,
+            "dashboard": {
+                "executable": str(viewer),
+                "executable_sha256": viewer_hash,
+                "script": None, "script_sha256": None, "readonly": False,
+            },
+        }), encoding="utf-8")
+        current = InstalledEngineSpec(
+            self.root, runtime, config, viewer_hash, engine_hash,
+            sha256(config.read_bytes()).hexdigest(),
+        )
+        pair = viewer_hash[:16] + "-" + engine_hash[:16]
+        with zipfile.ZipFile(self.zip_path, "w", zipfile.ZIP_STORED) as bundle:
+            bundle.writestr("runtime/" + pair + "/AtlasHoldingControlCenter.exe",
+                            viewer.read_bytes())
+            bundle.writestr("runtime/" + pair + "/AtlasHoldingEngine.exe",
+                            engine.read_bytes())
+            bundle.writestr("config/engine.json", b"{}")
+        pins = EngineReleasePins(
+            "v2", sha256(self.zip_path.read_bytes()).hexdigest(),
+            viewer_hash, engine_hash,
+        )
+        with self.assertRaisesRegex(ReleaseStagingError, "must not provide"):
+            stage_windows_engine_release(
+                self.zip_path, self.root, pins=pins, current=current,
+            )
+        self.assertFalse((self.root / "versions" / "v2").exists())
+
+    def test_stale_source_config_or_wrong_runtime_pin_publishes_nothing(self):
+        self.root.mkdir()
+        runtime = self.root / "runtime" / "old"
+        runtime.mkdir(parents=True)
+        viewer = runtime / "AtlasHoldingControlCenter.exe"
+        engine = runtime / "AtlasHoldingEngine.exe"
+        viewer.write_bytes(b"v" * 1_000_001)
+        engine.write_bytes(b"e" * 1_000_003)
+        viewer_hash = sha256(viewer.read_bytes()).hexdigest()
+        engine_hash = sha256(engine.read_bytes()).hexdigest()
+        config = self.root / "config" / "engine.json"
+        config.parent.mkdir()
+        config.write_text(json.dumps({
+            "schema": 3,
+            "dashboard": {
+                "executable": str(viewer),
+                "executable_sha256": viewer_hash,
+                "script": None, "script_sha256": None, "readonly": False,
+            },
+        }), encoding="utf-8")
+        current = InstalledEngineSpec(
+            self.root, runtime, config, viewer_hash, engine_hash,
+            sha256(config.read_bytes()).hexdigest(),
+        )
+        pair = viewer_hash[:16] + "-" + engine_hash[:16]
+        with zipfile.ZipFile(self.zip_path, "w", zipfile.ZIP_STORED) as bundle:
+            bundle.writestr("runtime/" + pair + "/AtlasHoldingControlCenter.exe",
+                            viewer.read_bytes())
+            bundle.writestr("runtime/" + pair + "/AtlasHoldingEngine.exe",
+                            engine.read_bytes())
+        archive_hash = sha256(self.zip_path.read_bytes()).hexdigest()
+        config.write_text('{"schema":3}', encoding="utf-8")
+        with self.assertRaisesRegex(ReleaseStagingError, "cannot seed"):
+            stage_windows_engine_release(
+                self.zip_path, self.root,
+                pins=EngineReleasePins(
+                    "v2", archive_hash, viewer_hash, engine_hash,
+                ),
+                current=current,
+            )
+        config.write_text(json.dumps({
+            "schema": 3,
+            "dashboard": {
+                "executable": str(viewer),
+                "executable_sha256": viewer_hash,
+                "script": None, "script_sha256": None, "readonly": False,
+            },
+        }), encoding="utf-8")
+        current = InstalledEngineSpec(
+            self.root, runtime, config, viewer_hash, engine_hash,
+            sha256(config.read_bytes()).hexdigest(),
+        )
+        with self.assertRaisesRegex(ReleaseStagingError, "layout"):
+            stage_windows_engine_release(
+                self.zip_path, self.root,
+                pins=EngineReleasePins(
+                    "v2", archive_hash, "0" * 64, engine_hash,
+                ),
+                current=current,
+            )
+        self.assertFalse((self.root / "versions" / "v2").exists())
 
     def test_bad_active_pointer_fails_closed(self):
         self.stage("v1")
