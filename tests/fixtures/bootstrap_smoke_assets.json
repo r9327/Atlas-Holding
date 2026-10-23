@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "component": "git",
+      "version": "0.0.0-smoke",
+      "url": "https://example.invalid/atlas-holding-smoke-never-download.zip",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "download_bytes": 12345,
+      "unpacked_bytes": 20000
+    }
+  ]
+}

@@ -39,6 +39,31 @@ class ProvisionPlanTests(unittest.TestCase):
         self.assertEqual(actions["git"], "REUSE")
         self.assertEqual(actions["python_runtime"], "REUSE")
 
+    def test_stopped_ollama_api_needs_service_diagnosis_not_second_install(self):
+        snapshot = sample(ollama=Component(
+            "FOUND_BROKEN", path="C:/Program Files/Ollama/ollama.exe",
+            reason="Ollama installed but local API is not healthy",
+        ))
+        plan = make_plan(snapshot, online=True)
+        self.assertEqual(plan.state, "SERVICE_START_REQUIRED")
+        action = next(row for row in plan.actions if row.name == "ollama")
+        self.assertEqual(action.action, "START_SERVICE")
+        self.assertIn("API", action.reason)
+
+    def test_offline_and_stopped_ollama_does_not_erase_unknown_models(self):
+        plan = make_plan(sample(
+            models=(),
+            ollama=Component(
+                "FOUND_BROKEN", path="C:/Ollama/ollama.exe",
+                version="0.12",
+                reason="Ollama installed but local API is not healthy",
+            ),
+        ), online=False)
+        self.assertEqual(plan.state, "SERVICE_START_REQUIRED")
+        self.assertFalse(plan.blockers)
+        self.assertEqual(plan.actions[-1].action, "INVENTORY_PENDING_SERVICE")
+        self.assertTrue(any(x.action == "START_SERVICE" for x in plan.actions))
+
     def test_missing_component_reused_python_remains_untouched(self):
         plan = make_plan(sample(opencode=Component("NOT_FOUND")), online=True)
         self.assertEqual(plan.state, "PROVISIONING_REQUIRED")

@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "purpose": "UAC-free Git candidate; no production release approval",
+  "component": "git",
+  "distribution": "MinGit portable x64 ZIP",
+  "publisher": "git-for-windows/git",
+  "release_tag": "v2.56.0.windows.2",
+  "package_version": "2.56.0.2",
+  "native_git_version": "2.56.0",
+  "expected_executable": "cmd/git.exe",
+  "url": "https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.2/MinGit-2.56.0.2-64-bit.zip",
+  "sha256": "da35e72aa21c005a5a0d298cfbae110bc1609a815730ea0dde84b01a1b3cd3be",
+  "source_url": "https://github.com/git-for-windows/git/releases/tag/v2.56.0.windows.2",
+  "compressed_bytes": null,
+  "unpacked_bytes": null,
+  "sizes": "Computed only from verified actual ZIP by holding.mingit_candidate",
+  "validation": "Real ZIP + Windows native Git init/add/commit on CI; setup release gate still separate"
+}
