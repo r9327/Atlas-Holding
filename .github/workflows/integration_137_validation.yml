@@ -53,6 +53,26 @@ jobs:
       - name: Require clean checkout after tests
         shell: bash
         run: 'test -z "$(git status --porcelain --untracked-files=normal)"'
+      - name: Exercise real installed CPython MCP protocol inside native Windows Job Object
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 6
+        run: |
+          $url = "https://www.python.org/ftp/python/3.13.16/python-3.13.16-embed-amd64.zip"
+          $officialSha = "97dae5274cc54867065e8d5a3226e48c35017ed332a0fdb0e27d5b5821961297"
+          $archive = Join-Path $env:RUNNER_TEMP "atlas-mcp-official-cpython-$officialSha.zip"
+          try {
+            Invoke-WebRequest -Uri $url -OutFile $archive -MaximumRedirection 3 -TimeoutSec 180
+            if (!(Test-Path $archive)) { throw "CPython publisher ZIP unavailable" }
+            if ((Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $officialSha) {
+              throw "CPython publisher hash did not match release"
+            }
+            python -B -X utf8 -m holding.mcp_installed_companion_smoke --archive "$archive"
+            if ($LASTEXITCODE -ne 0) { throw "Installed MCP companion native Job Object/protocol smoke failed" }
+            Write-Output "NATIVE_INSTALLED_MCP_JOB_OBJECT_PASS"
+          } finally {
+            Remove-Item -Force -ErrorAction SilentlyContinue $archive
+          }
       - name: Install exact nonrelease Windows bundle packager
         if: runner.os == 'Windows'
         run: |
