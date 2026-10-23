@@ -79,11 +79,18 @@ class McpStdioTests(unittest.TestCase):
             Tool("bad", "bad schema", {"type": "object", "x": "z" * 70000}, str)
 
     def test_tool_failure_is_a_tool_result_without_exception_details(self):
-        failed = response(self.server, request("tools/call", {
-            "name": "holding.health", "arguments": {"unexpected": True},
+        def failing(_arguments):
+            raise RuntimeError("hidden private agent credential")
+        server = McpRouter((Tool(
+            "test.failure", "Safe failing tool",
+            {"type": "object", "additionalProperties": False}, failing,
+        ),), server_name="bounded", server_version="1")
+        failed = response(server, request("tools/call", {
+            "name": "test.failure", "arguments": {},
         }))["result"]
         self.assertTrue(failed["isError"])
         self.assertEqual(failed["content"][0]["text"], "Trusted local tool failed")
+        self.assertNotIn("credential", json.dumps(failed))
 
     def test_unknown_tool_and_method_are_protocol_errors(self):
         missing = response(self.server, request("tools/call", {
