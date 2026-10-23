@@ -311,3 +311,33 @@ moteur doit vérifier son installation/ACL, puis projeter les observations
 à travers l'IPC HMAC existant de la PR #11. Même `RESPONSIVE` prouve
 seulement le hub interne, jamais que Doctor, Graphify, Firecrawl,
 Context7 ou un autre plugin tiers est actif.
+
+
+## Superviseur interne autonome partagé avec le moteur (23 octobre 2026)
+
+`holding/mcp_supervisor.py` gère le cycle de vie du hub **dans le processus
+du superviseur de confiance**, via un contrat de contrôle minimal :
+
+- `step(background_allowed, resources_safe, now_epoch)` démarre le hub
+  uniquement si le moteur est actif, non suspendu et que les ressources
+  sont suffisantes. Une pause, STOP ou pression ressources ferme
+  immédiatement la session et inscrit `CLOSED` au journal.
+- Une mission en attente ne peut fournir ni exécutable, ni paramètres MCP,
+  ni chemin SQLite. Tous ces éléments viennent de l'initialisation
+  provisionnée hors des prompts. Windows vérifie les ACL du journal
+  partagé et de l'exécutable autorisé avant lancement.
+- Le superviseur utilise la **même base SQLite que le moteur** pour
+  `mcp_hub_observations`. Chaque découverte `server/discover` est
+  vérifiée réellement puis inscrite. Les lectures du Control Center
+  suivent la projection HMAC v5 de la PR #11, sans faux état de plugin.
+  Les missions du moteur ne sont pas modifiées par ces écritures.
+- Les tests exécutent un vrai hub : démarrage, deux probes sur un même PID,
+  Pause puis reprise sur une nouvelle session, contrôle des ressources,
+  STOP, corruption du binaire épinglé, écriture/lisibilité SQLite et
+  absence d'altération des missions existantes.
+
+La **liaison dans `HoldingService.start/run/close`**, ainsi que le schéma
+d'installation fournissant l'empreinte du vrai interpréteur autorisé, se
+font sur la branche d'intégration PR #11 après incorporation des modules
+PR #5 ; ce lot reste une dépendance séparée et ne l'affirme pas installé
+dans une version de distribution Windows.
