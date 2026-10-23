@@ -40,6 +40,7 @@ def _unique_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
 @dataclass(frozen=True)
 class McpEnrollmentPlan:
     source: Path
+    source_sha256: str
     payload: bytes
     sha256: str
     pinned_module_count: int
@@ -125,7 +126,9 @@ def prepare_v5_mcp_enrollment(
     if not 1 <= len(prepared) <= MAX_INSTALL_CONFIG_BYTES:
         raise McpEnrollmentError("Pinned installation exceeds config size budget")
     return McpEnrollmentPlan(
-        source=source_config, payload=prepared,
+        source=source_config,
+        source_sha256=hashlib.sha256(raw).hexdigest(),
+        payload=prepared,
         sha256=hashlib.sha256(prepared).hexdigest(),
         pinned_module_count=len(pins.entries),
     )
@@ -133,11 +136,12 @@ def prepare_v5_mcp_enrollment(
 
 def create_new_v5_config(*, plan: McpEnrollmentPlan, destination: Path) -> Path:
     """Write a new, exclusive config: never overwrite source or another file."""
-    if (type(plan) is not McpEnrollmentPlan or type(destination) is not Path
+    if (type(plan) is not McpEnrollmentPlan or not isinstance(destination, Path)
             or not destination.is_absolute() or destination.is_symlink()
             or destination.parent.resolve() != plan.source.parent.resolve()
             or destination == plan.source or not destination.name.endswith(".json")
-            or hashlib.sha256(plan.payload).hexdigest() != plan.sha256):
+            or hashlib.sha256(plan.payload).hexdigest() != plan.sha256
+            or hashlib.sha256(plan.source.read_bytes()).hexdigest() != plan.source_sha256):
         raise McpEnrollmentError("Invalid exclusive installer destination")
     if os.name == "nt":
         require_private_windows_path(destination.parent)
