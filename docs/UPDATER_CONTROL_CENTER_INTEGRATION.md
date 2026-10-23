@@ -74,3 +74,18 @@ restores the previous pointer. This is an acceptance primitive only: it does
 not yet pin the launched EXE to the selected slot, validate Windows ACLs,
 coordinate shutdown/restart, or provide a signed release manifest. Those
 installer gates remain required before the new path can be wired to production.
+
+## Installed engine update-health enrollment
+
+The real daemon now accepts `--update-health-handshake` only together with its
+pinned installed configuration. On native Windows it consumes exactly one
+32-byte read capability from non-interactive stdin, opens the existing
+read-only dashboard IPC over the real durable SQLite projection, and emits only
+a bounded port/engine identity handshake. Update mode does not launch the Qt
+viewer and never receives a control capability.
+
+The listener remains owned by `HoldingService`: failed output enrollment closes
+it, and normal service teardown revokes it. This supplies the engine-side half
+of real post-switch acceptance. The trusted Windows parent still needs to
+verify the selected slot/ACL, launch this mode with private pipes, enforce a
+bounded handshake timeout, and own termination/rollback.

@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 import subprocess
 import sys
@@ -487,6 +488,74 @@ json.dump({'schema_version':1,'request_id':r['request_id'],'status':'OK',
         # The endpoint has no Linux fallback that could fake native Windows.
         if __import__("os").name != "nt":
             self.assertEqual(_native_ipc_smoke(), 2)
+
+    def test_real_service_exposes_readonly_update_health_from_private_pipe(self):
+        from unittest.mock import patch
+        from holding.daemon_entry import _enable_update_health_ipc
+        from holding.dashboard_ipc import DashboardIpcClient
+
+        self.save()
+        installation = Installation.load(self.config)
+        key = b"u" * 32
+        output = io.StringIO()
+        with installation.build_service() as service:
+            service.start()
+            with patch("holding.daemon_entry.os.name", "nt"):
+                port, engine_id = _enable_update_health_ipc(
+                    service, io.BytesIO(key), output_stream=output,
+                )
+            self.assertEqual(json.loads(output.getvalue()), {
+                "engine_id": engine_id, "port": port, "schema": 1,
+            })
+            state = DashboardIpcClient(
+                port=port, secret=key, engine_id=engine_id,
+            ).fetch()
+            self.assertEqual(state.engine_id, engine_id)
+            self.assertFalse(state.paused)
+            self.assertFalse(state.stop_requested)
+            self.assertIsNotNone(service._dashboard_ipc)
+        self.assertIsNone(service._dashboard_ipc)
+
+    def test_update_health_refuses_console_and_malformed_capability(self):
+        from unittest.mock import Mock, patch
+        from holding.daemon_entry import _enable_update_health_ipc
+
+        class Console(io.BytesIO):
+            def isatty(self):
+                return True
+
+        service = Mock()
+        with patch("holding.daemon_entry.os.name", "nt"):
+            for source in (Console(b"u" * 32), io.BytesIO(b"short"),
+                           io.BytesIO(b"u" * 33)):
+                with self.subTest(source=source):
+                    with self.assertRaises(BootstrapError):
+                        _enable_update_health_ipc(
+                            service, source, output_stream=io.StringIO(),
+                        )
+        service.enable_dashboard_ipc.assert_not_called()
+
+    def test_update_health_cli_requires_config_and_excludes_diagnostics(self):
+        from unittest.mock import patch
+        from holding.daemon_entry import main
+
+        with self.assertRaises(SystemExit):
+            main(["--update-health-handshake"])
+        if __import__("os").name != "nt":
+            self.save()
+            self.assertEqual(main([
+                "--update-health-handshake", "--config", str(self.config),
+            ]), 2)
+        with patch("holding.daemon_entry._enable_update_health_ipc") as health:
+            self.assertEqual(main([
+                "--update-health-handshake", "--self-test",
+                "--config", str(self.config),
+            ]), 2)
+            self.assertEqual(main([
+                "--update-health-handshake", "--native-ipc-smoke",
+                "--config", str(self.config),
+            ]), 2)
+            health.assert_not_called()
 
     def test_unpinned_inline_code_refused(self):
         self.data['arguments']=['-c','print(123)']
