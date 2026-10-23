@@ -283,3 +283,34 @@ La validation [GitHub Actions #39914235599](https://github.com/r9327/Atlas-Holdi
 sur le SHA f092462f6959e27991a1e5d4236a191b56264833 est **PASS sur
 Ubuntu et Windows**, y compris les tests natifs Windows. Cette référence
 n'atteste **pas** la nouvelle télémétrie v4 ajoutée après ce SHA.
+
+
+## États MCP du hub interne via IPC authentifié v5 (23 octobre 2026)
+
+- Le moteur peut désormais relire la table `mcp_hub_observations` de la
+  PR #5 **si elle a été provisionnée dans la même base SQLite** que le
+  moteur Holding. Sans cette table ou sans observation, le champ `hub`
+  de la projection vaut strictement `null` : pas de faux plugin actif.
+- Schéma de snapshot v5 : observation du hub interne seule, PID, date,
+  ancienneté, empreinte SHA-256 de l'interpréteur local et version de
+  protocole **uniquement** pour un état `RESPONSIVE` de moins de
+  31 secondes. Plus de 30 secondes : `STALE`, sans version valide.
+  Les valeurs falsifiées, l'âge incohérent, le digest incorrect, les
+  dates futures et les champs supplémentaires sont rejetés.
+- Le canal HMAC existant du moteur est conservé. Les versions de lecture
+  antérieures v1/v2/v3/v4 restent acceptées. Les observations MCP ne
+  deviennent pas des droits de commande, des états d'agents ni une preuve
+  que Firecrawl/Context7/Doctor/Graphify sont installés ou actifs.
+- L'onglet « Services externes » affiche le hub interne à part et
+  le rafraîchit même sur **heartbeat authentifié sans nouvelle séquence
+  de mission**. Les commandes Pause/Stop restent sous les verrous
+  de fraîcheur et de confirmation indépendants.
+- Contrats de tests : projection depuis le journal réel, absence sans
+  journal, expiration, corruption, validation stricte IPC et rendu Qt
+  du heartbeat. Le démarrage de la session et la configuration du
+  journal dans le processus moteur nécessitent encore l'intégration
+  physique des PR #5 et #11 ; ce lot ne fusionne aucune branche.
+
+Référence PR #5 : `9252098ac8878046090eace4ba13a327574913c0`,
+[GitHub Actions Ubuntu/Windows PASS](https://github.com/r9327/Atlas-Holding/actions/runs/39943399313).
+La certification v5 de la PR #11 est distincte et reste requise.
