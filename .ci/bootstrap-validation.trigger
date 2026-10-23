@@ -14,3 +14,5 @@ Batch: native official CPython 3.13.16 SHA-pinned runnable embeddable smoke, fix
 Batch: verify stage receipt, reject post-install DLL/module/site modifications and run real publisher-pinned embedded Python on native Windows exact-SHA.
 
 Batch: actual Windows Setup consent flow installs or reuses SHA-256 pinned embedded Python; native release smoke, strict NTFS ACL and rollback certification.
+
+Batch: package true pinned CPython ZIP and source manifests in AtlasHoldingSetup.exe; enforce complete builder/setup CLI arguments, native Windows/Ubuntu exact-SHA certification.
