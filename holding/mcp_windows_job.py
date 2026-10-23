@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 
 from .mcp_local_inventory import PinnedLocalPlugin, inspect_pinned_plugin
 
@@ -36,6 +37,16 @@ _INVALID_HANDLE = ctypes.c_void_p(-1).value
 
 class WindowsJobError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class JobResourceObservation:
+    pid: int
+    process_state: str
+    observed_epoch: int
+    job_memory_limit_bytes: int | None
+    active_process_limit: int | None
+    security_scope: str = "RESOURCE_LIMITS_NOT_SANDBOX"
 
 
 class _BasicLimitInformation(ctypes.Structure):
@@ -95,6 +106,10 @@ def _kernel32():
     kernel32.SetInformationJobObject.argtypes = [
         wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
     kernel32.SetInformationJobObject.restype = wintypes.BOOL
+    kernel32.QueryInformationJobObject.argtypes = [
+        wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+        wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+    kernel32.QueryInformationJobObject.restype = wintypes.BOOL
     kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     kernel32.OpenProcess.restype = wintypes.HANDLE
     kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
@@ -185,6 +200,29 @@ class ManagedHubProcess:
     job_handle: int
     _kernel: object
     _closed: bool = False
+
+    def observe(self) -> JobResourceObservation:
+        """Read native limits; never infer plugin permissions or AI activity."""
+        when = int(time.time())
+        if self._closed:
+            return JobResourceObservation(
+                self.process.pid, "CLOSED", when, None, None)
+        limits = _ExtendedLimitInformation()
+        size = wintypes.DWORD(0)
+        if not self._kernel.QueryInformationJobObject(
+                self.job_handle, _JOB_EXTENDED_INFO,
+                ctypes.byref(limits), ctypes.sizeof(limits),
+                ctypes.byref(size)):
+            raise _win_error("resource observation")
+        required = KILL_ON_JOB_CLOSE | JOB_MEMORY_LIMIT | ACTIVE_PROCESS_LIMIT
+        if (limits.BasicLimitInformation.LimitFlags & required) != required:
+            raise WindowsJobError("Windows Job Object resource policy changed")
+        return JobResourceObservation(
+            self.process.pid,
+            "RUNNING" if self.process.poll() is None else "EXITED",
+            when, int(limits.JobMemoryLimit),
+            int(limits.BasicLimitInformation.ActiveProcessLimit),
+        )
 
     def close(self) -> None:
         if self._closed:
