@@ -60,6 +60,23 @@ class ProvisionedMcpBootstrapTests(unittest.TestCase):
             }],
         }
         self.write_manifest()
+        if os.name == "nt":
+            # The default runner Temp DACL is not evidence of a private
+            # supervisor installation. Provision an explicit trusted ACL.
+            from holding.mcp_windows_acl import current_windows_user_sid
+            sid = current_windows_user_sid()
+            for target, rights in (
+                    (self.root, "(OI)(CI)F"),
+                    (self.cache_path, "F"),
+                    (self.manifest, "F")):
+                for command in (
+                        ["icacls", str(target), "/inheritance:r"],
+                        ["icacls", str(target), "/grant:r",
+                         f"*{sid}:{rights}", f"*S-1-5-18:{rights}",
+                         f"*S-1-5-32-544:{rights}"]):
+                    subprocess.run(
+                        command, check=True, stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE, timeout=10)
 
     def write_manifest(self, value=None):
         self.manifest.write_text(
