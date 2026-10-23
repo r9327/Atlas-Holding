@@ -163,6 +163,22 @@ class ControlCenterWindow(QMainWindow):
         model_history_page = QWidget()
         model_history_layout = QVBoxLayout(model_history_page)
         model_history_layout.addWidget(self.model_history_note)
+        self.model_role = QComboBox()
+        self.model_role.setObjectName("modelHistoryRoleFilter")
+        self.model_role.addItems(
+            ["Tous", "CEO", "ARCHITECT", "CODER", "AUDITOR", "DOCTOR"]
+        )
+        self.model_search = QLineEdit()
+        self.model_search.setObjectName("modelHistorySearchFilter")
+        self.model_search.setPlaceholderText(
+            "Rechercher mission, modèle ou empreinte…"
+        )
+        self.model_role.currentTextChanged.connect(self._filter_model_history)
+        self.model_search.textChanged.connect(self._filter_model_history)
+        history_filters = QHBoxLayout()
+        history_filters.addWidget(self.model_role)
+        history_filters.addWidget(self.model_search)
+        model_history_layout.addLayout(history_filters)
         model_history_layout.addWidget(self.model_history)
         tabs.addTab(model_history_page, "Historique IA")
         proof_page = QWidget()
@@ -218,6 +234,22 @@ class ControlCenterWindow(QMainWindow):
                 and (not query or any(query in cell.casefold() for cell in cells))
             )
             self.logs.setRowHidden(row, not visible)
+
+    @Slot(str)
+    def _filter_model_history(self, _unused: str = "") -> None:
+        role = self.model_role.currentText()
+        query = self.model_search.text().strip().casefold()
+        for row in range(self.model_history.rowCount()):
+            cells = tuple(
+                self.model_history.item(row, col).text()
+                for col in range(self.model_history.columnCount())
+                if self.model_history.item(row, col) is not None
+            )
+            visible = (
+                (role == "Tous" or (cells and cells[0] == role))
+                and (not query or any(query in cell.casefold() for cell in cells))
+            )
+            self.model_history.setRowHidden(row, not visible)
 
     def render_project_status(self, *, project: str, repository: str,
                               git_status: object, eligible_missions: int) -> None:
@@ -360,6 +392,7 @@ class ControlCenterWindow(QMainWindow):
             usage.benchmark_digest,
         ) for usage in state.model_history)
         _replace_rows(self.model_history, history_rows)
+        self._filter_model_history()
         self.agent_telemetry.setText(
             f"Agents : {len(agent_rows)} état(s) fournis par le moteur"
             if agent_rows else
