@@ -26,6 +26,7 @@ from .github_full_evidence import GitHubEvidenceError
 from .process_agent import AgentProgram
 from .service import HoldingService, ServiceSettings, termination_signals
 from .mcp_local_inventory import PinnedLocalPlugin
+from .mcp_package_pin import McpPackagePin, McpPackagePinError
 
 
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -63,6 +64,7 @@ class DashboardInstallation:
 class McpInstallation:
     interpreter_pin: PinnedLocalPlugin
     response_timeout: float
+    package_pin: McpPackagePin | None = None
 
 
 @dataclass(frozen=True)
@@ -196,9 +198,11 @@ class Installation:
         return DashboardInstallation(viewer, info['readonly'])
 
     @staticmethod
-    def _mcp_config(info: object) -> McpInstallation:
-        if type(info) is not dict or set(info) != {
-                "interpreter", "interpreter_sha256", "response_timeout"}:
+    def _mcp_config(info: object, *, require_package_pin: bool = False) -> McpInstallation:
+        required = {"interpreter", "interpreter_sha256", "response_timeout"}
+        if require_package_pin:
+            required.add("module_sha256")
+        if type(info) is not dict or set(info) != required:
             raise BootstrapError("Invalid pinned MCP installation")
         raw, digest, timeout = (
             info["interpreter"], info["interpreter_sha256"],
@@ -223,9 +227,17 @@ class Installation:
             raise BootstrapError("Installed MCP interpreter unavailable") from exc
         if not hmac.compare_digest(observed, digest):
             raise BootstrapError("MCP interpreter changed since onboarding")
+        package_pin = None
+        if require_package_pin:
+            try:
+                package_pin = McpPackagePin.from_manifest(info["module_sha256"])
+                if not package_pin.verify(Path(__file__).resolve().parent.parent):
+                    raise McpPackagePinError("Installed package digest mismatch")
+            except (McpPackagePinError, OSError) as exc:
+                raise BootstrapError("MCP package code changed since onboarding") from exc
         return McpInstallation(
             PinnedLocalPlugin("atlas-holding-internal", "1.0", canonical, digest),
-            float(timeout))
+            float(timeout), package_pin)
 
     @classmethod
     def load(cls, filename: Path) -> 'Installation':
@@ -241,7 +253,7 @@ class Installation:
                 'health_directory','executable','executable_sha256','arguments',
                 'argument_sha256','timeout_seconds'}
         if (not isinstance(info, dict) or type(info.get('schema')) is not int
-                or info['schema'] not in {1, 2, 3, 4}
+                or info['schema'] not in {1, 2, 3, 4, 5}
                 or set(info) != (base if info['schema'] == 1 else
                     base | {'github'} if info['schema'] == 2 else
                     base | {'github', 'dashboard'} if info['schema'] == 3 else
@@ -288,16 +300,17 @@ class Installation:
             raise BootstrapError('Agent executable changed since onboarding')
         github = (
             cls._github_config(info['github'])
-            if info['schema'] in {2, 3, 4} and info['github'] is not None else None
+            if info['schema'] in {2, 3, 4, 5} and info['github'] is not None else None
         )
         # Schema v2 is GitHub-enabled only; schema v3 permits a local-only
         # viewer when no account is configured, without inventing authority.
         if info['schema'] == 2 and github is None:
             raise BootstrapError('GitHub schema requires configured broker')
         dashboard = (cls._dashboard_config(info['dashboard'])
-                     if info['schema'] in {3, 4} else None)
-        mcp = (cls._mcp_config(info["mcp"])
-               if info["schema"] == 4 and info["mcp"] is not None else None)
+                     if info['schema'] in {3, 4, 5} else None)
+        mcp = (cls._mcp_config(
+                    info["mcp"], require_package_pin=info["schema"] == 5)
+               if info["schema"] in {4, 5} and info["mcp"] is not None else None)
         return cls(locations['database'],info['repository'],locations['canonical_root'],
                    locations['workspace'],locations['health_directory'],exe,checksum,
                    tuple(args),pins,float(info['timeout_seconds']),github,dashboard,mcp)
@@ -324,7 +337,8 @@ class Installation:
             service.enable_local_mcp(
                 interpreter_pin=self.mcp.interpreter_pin,
                 package_root=Path(__file__).resolve().parent.parent,
-                response_timeout=self.mcp.response_timeout)
+                response_timeout=self.mcp.response_timeout,
+                package_pin=self.mcp.package_pin)
         return service
 
 
