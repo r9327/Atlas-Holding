@@ -194,6 +194,14 @@ json.dump({'schema_version':1,'request_id':r['request_id'],'status':'OK',
                     service._mcp_supervisor._session.observe().state,
                     'NOT_STARTED')
 
+    def test_frozen_executable_cannot_fake_embedded_mcp_python(self):
+        from unittest.mock import patch
+        self._enable_mcp_package_pin()
+        self.save()
+        with patch("holding.daemon_entry.sys.frozen", True, create=True):
+            with self.assertRaisesRegex(BootstrapError, "bundled Python interpreter"):
+                Installation.load(self.config)
+
     def test_schema_five_refuses_forged_removed_or_unknown_module_evidence(self):
         self._enable_mcp_package_pin()
         manifest = self.data['mcp']['module_sha256']
