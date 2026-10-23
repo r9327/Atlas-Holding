@@ -539,8 +539,13 @@ json.dump({'schema_version':1,'request_id':r['request_id'],'status':'OK',
         from unittest.mock import patch
         from holding.daemon_entry import main
 
-        with self.assertRaises(SystemExit):
-            main(["--update-health-handshake"])
+        if __import__("os").name == "nt":
+            with self.assertRaises(SystemExit):
+                main(["--update-health-handshake"])
+        else:
+            self.assertEqual(main(["--update-health-handshake"]), 2)
+        with patch("holding.daemon_entry.os.name", "posix"):
+            self.assertEqual(main(["--update-health-handshake"]), 2)
         if __import__("os").name != "nt":
             self.save()
             self.assertEqual(main([

@@ -89,3 +89,14 @@ it, and normal service teardown revokes it. This supplies the engine-side half
 of real post-switch acceptance. The trusted Windows parent still needs to
 verify the selected slot/ACL, launch this mode with private pipes, enforce a
 bounded handshake timeout, and own termination/rollback.
+
+`launch_installed_engine_health_session` now supplies that parent-side process
+boundary for an already installed, pinned runtime pair: it repeats native ACL,
+binary and config verification, launches without a shell or inherited secrets,
+passes a fresh random capability through stdin, parses one bounded handshake,
+and returns an `UpdateEngineSession`. Invalid output, timeout, early exit or
+later rollback terminates the candidate with a bounded terminate/kill path.
+
+The remaining integration gap is deliberately narrower: bind the signed update
+slot layout to `InstalledEngineSpec`, coordinate shutdown of the old daemon,
+and restart the previous pinned runtime if the new candidate cannot be accepted.

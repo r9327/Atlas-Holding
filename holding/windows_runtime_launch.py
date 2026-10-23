@@ -8,11 +8,13 @@ process is NOT proof of a healthy engine or an autonomous roadmap.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import secrets
 import subprocess
 import sys
 from typing import Mapping
@@ -187,6 +189,40 @@ def _interactive_user_session() -> bool:
         return False
 
 
+def _runtime_environment() -> dict[str, str]:
+    return {
+        key: value for key, value in os.environ.items()
+        if key.upper() in {
+            "SYSTEMROOT", "WINDIR", "LOCALAPPDATA", "APPDATA", "USERPROFILE",
+            "TEMP", "TMP", "PROGRAMDATA", "PATH", "HOMEDRIVE", "HOMEPATH",
+        }
+    }
+
+
+def _stop_engine_process(process: subprocess.Popen) -> None:
+    """Close pipes and stop one engine process with bounded escalation."""
+    failure = None
+    try:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+    except (OSError, subprocess.SubprocessError) as exc:
+        failure = exc
+    finally:
+        for stream in (process.stdin, process.stdout):
+            try:
+                if stream is not None:
+                    stream.close()
+            except (OSError, ValueError):
+                pass
+    if failure is not None:
+        raise RuntimeLaunchError("Installed engine process could not be stopped") from failure
+
+
 def launch_installed_engine(
     spec: InstalledEngineSpec, *, approved: bool,
 ) -> EngineLaunch:
@@ -198,13 +234,6 @@ def launch_installed_engine(
     executable, config = verify_installed_engine(spec)
     # Never use shell, inherited stdin, arbitrary environment tokens, or the
     # caller's cwd. Configured roadmap content cannot supply CLI parameters.
-    safe = {
-        key: value for key, value in os.environ.items()
-        if key.upper() in {
-            "SYSTEMROOT", "WINDIR", "LOCALAPPDATA", "APPDATA", "USERPROFILE",
-            "TEMP", "TMP", "PROGRAMDATA", "PATH", "HOMEDRIVE", "HOMEPATH",
-        }
-    }
     try:
         child = subprocess.Popen(
             [executable, "--config", config],
@@ -214,7 +243,7 @@ def launch_installed_engine(
             stderr=subprocess.DEVNULL,
             shell=False,
             close_fds=True,
-            env=safe,
+            env=_runtime_environment(),
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except OSError as exc:
@@ -222,3 +251,85 @@ def launch_installed_engine(
     if child.poll() is not None:
         raise RuntimeLaunchError("Installed engine exited during startup")
     return EngineLaunch(child)
+
+
+def launch_installed_engine_health_session(
+    spec: InstalledEngineSpec, *, approved: bool,
+    handshake_timeout: float = 10.0,
+):
+    """Start a pinned engine and return its authenticated health session.
+
+    The fresh capability crosses only the child's anonymous stdin pipe. The
+    child returns a bounded endpoint identity on stdout; actual acceptance is
+    still performed by ``update_health`` through a HMAC snapshot fetch.
+    """
+    from .dashboard_ipc import DashboardIpcClient
+    from .update_health import UpdateEngineSession
+
+    if type(approved) is not bool or not approved:
+        raise RuntimeLaunchError("Interactive engine launch not authorized")
+    if (type(handshake_timeout) not in (int, float)
+            or not .25 <= handshake_timeout <= 30):
+        raise RuntimeLaunchError("Invalid update health handshake timeout")
+    if not _interactive_user_session():
+        raise RuntimeLaunchError("Engine cannot launch outside interactive Windows session")
+    executable, config = verify_installed_engine(spec)
+    capability = secrets.token_bytes(32)
+    child = None
+    try:
+        child = subprocess.Popen(
+            [executable, "--config", config, "--update-health-handshake"],
+            cwd=str(spec.install_root), stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            shell=False, close_fds=True, env=_runtime_environment(),
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if child.stdin is None or child.stdout is None:
+            raise RuntimeLaunchError("Engine update health pipes unavailable")
+        child.stdin.write(capability)
+        child.stdin.flush()
+        child.stdin.close()
+        pool = ThreadPoolExecutor(max_workers=1)
+        try:
+            future = pool.submit(child.stdout.readline, 4097)
+            try:
+                raw = future.result(timeout=float(handshake_timeout))
+            except FutureTimeout as exc:
+                _stop_engine_process(child)
+                child = None
+                raise RuntimeLaunchError("Engine update health handshake timed out") from exc
+        finally:
+            pool.shutdown(wait=True, cancel_futures=True)
+        if len(raw) > 4096:
+            raise RuntimeLaunchError("Oversized engine update health handshake")
+        try:
+            response = json.loads(raw, object_pairs_hook=_unique_json)
+        except (UnicodeError, ValueError, TypeError, RecursionError) as exc:
+            raise RuntimeLaunchError("Invalid engine update health handshake") from exc
+        if (type(response) is not dict
+                or set(response) != {"schema", "port", "engine_id"}
+                or type(response["schema"]) is not int
+                or response["schema"] != 1
+                or type(response["port"]) is not int
+                or not 1 <= response["port"] <= 65535
+                or type(response["engine_id"]) is not str
+                or not 1 <= len(response["engine_id"]) <= 80
+                or child.poll() is not None):
+            raise RuntimeLaunchError("Invalid engine update health handshake")
+        child.stdout.close()
+        client = DashboardIpcClient(
+            port=response["port"], secret=capability,
+            engine_id=response["engine_id"],
+        )
+        stopped = False
+        def close_candidate() -> None:
+            nonlocal stopped
+            if stopped:
+                return
+            stopped = True
+            _stop_engine_process(child)
+        return UpdateEngineSession(client, close_candidate)
+    except BaseException:
+        if child is not None:
+            _stop_engine_process(child)
+        raise
