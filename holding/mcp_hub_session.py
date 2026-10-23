@@ -159,9 +159,15 @@ class LocalMcpHubSession:
             if process.poll() is None:
                 # POSIX start_new_session=True makes process.pid its group ID.
                 if os.name == "posix":
-                    os.killpg(process.pid, signal.SIGKILL)
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass  # A racing, already exited process.
                 else:
-                    process.kill()
+                    try:
+                        process.kill()
+                    except ProcessLookupError:
+                        pass
             process.wait(timeout=5)
             for pipe in (process.stdin, process.stdout):
                 if pipe is not None:
