@@ -136,10 +136,18 @@ def stage_pinned_embedded_python(
     if (not 1 <= archive.stat().st_size <= _MAX_ARCHIVE_BYTES
             or _sha_file(archive) != pin.zip_sha256):
         raise EmbeddedRuntimeError("CPython archive failed exact release hash")
-    files = {
-        file.name: file for file in (approved_package_root / "holding").iterdir()
-        if file.suffix == ".py"
-    }
+    source_dir = approved_package_root / "holding"
+    if (source_dir.is_symlink() or not source_dir.is_dir()
+            or source_dir.resolve(strict=True) != source_dir):
+        raise EmbeddedRuntimeError("Trusted Holding module directory required")
+    files = {}
+    for file in source_dir.iterdir():
+        if file.suffix.lower() in {".pyd", ".so", ".dll", ".pyc"}:
+            raise EmbeddedRuntimeError("Unpinned executable Holding import")
+        if file.suffix == ".py":
+            if file.name in files:
+                raise EmbeddedRuntimeError("Repeated Holding module")
+            files[file.name] = file
     if set(files) != set(pin.module_sha256):
         raise EmbeddedRuntimeError("Holding module inventory differs from release")
     for name, source in files.items():
