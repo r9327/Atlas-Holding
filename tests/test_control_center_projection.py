@@ -47,7 +47,8 @@ class ControlCenterProjectionTests(unittest.TestCase):
 
     def test_durable_pause_stop_are_projected_atomically(self):
         payload, state = self.project()
-        self.assertEqual(payload["schema_version"], 2)
+        self.assertEqual(payload["schema_version"], 3)
+        self.assertEqual(payload["services"], [])
         self.assertIs(state.paused, False)
         self.assertIs(state.stop_requested, False)
         with ControlPlane(self.path) as control:
@@ -128,6 +129,53 @@ class ControlCenterProjectionTests(unittest.TestCase):
         self.assertEqual(by_id["unrelated"].state, "DONE_UNVERIFIED")
         self.assertIsNone(by_id["unrelated"].completion_evidence)
         self.assertNotIn("verified sync:", json.dumps(payload))
+
+    def test_external_services_are_real_sqlite_observations_not_plugins(self):
+        from holding.schema import SYNC_STATE_SCHEMA
+        with StateStore(self.path) as store:
+            apply_schema(store.db, SYNC_STATE_SCHEMA)
+            store.db.execute(
+                "INSERT INTO external_service_health "
+                "(service,status,observed_at,consecutive_successes,"
+                "consecutive_failures,retry_attempts,retry_not_before,reason,"
+                "updated_epoch) VALUES (?,?,?,?,?,?,?,?,?)",
+                ("github", "ONLINE", NOW - 12, 3, 0, 0, None,
+                 "access-token=NEVER-EXPOSE", NOW - 12),
+            )
+            store.db.execute(
+                "INSERT INTO external_service_health "
+                "(service,status,observed_at,consecutive_successes,"
+                "consecutive_failures,retry_attempts,retry_not_before,reason,"
+                "updated_epoch) VALUES (?,?,?,?,?,?,?,?,?)",
+                ("firecrawl", "OFFLINE", NOW - 901, 0, 2, 1, NOW + 30,
+                 "Authorization header leak", NOW - 901),
+            )
+        payload, state = self.project()
+        self.assertEqual(payload["schema_version"], 3)
+        by_name = {service.name: service for service in state.services}
+        self.assertEqual(by_name["github"].status, "ONLINE")
+        self.assertEqual(by_name["github"].age_seconds, 12)
+        self.assertEqual(by_name["firecrawl"].status, "STALE")
+        self.assertEqual(by_name["firecrawl"].age_seconds, 901)
+        self.assertEqual(state.network, "DEGRADED")
+        self.assertEqual(state.plugins, ())  # Service != installed MCP plugin
+        self.assertNotIn("NEVER-EXPOSE", json.dumps(payload))
+        self.assertNotIn("Authorization header", json.dumps(payload))
+
+    def test_expired_single_online_service_never_means_online_stable(self):
+        from holding.schema import SYNC_STATE_SCHEMA
+        with StateStore(self.path) as store:
+            apply_schema(store.db, SYNC_STATE_SCHEMA)
+            store.db.execute(
+                "INSERT INTO external_service_health "
+                "(service,status,observed_at,consecutive_successes,"
+                "consecutive_failures,retry_attempts,retry_not_before,reason,"
+                "updated_epoch) VALUES (?,?,?,?,?,?,?,?,?)",
+                ("github", "ONLINE", NOW - 301, 2, 0, 0, None, None, NOW - 301),
+            )
+        _, state = self.project()
+        self.assertEqual(state.services[0].status, "STALE")
+        self.assertNotEqual(state.network, "ONLINE_STABLE")
 
     def test_event_details_are_not_exposed_to_ui(self):
         with StateStore(self.path) as store:
