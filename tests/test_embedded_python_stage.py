@@ -224,5 +224,54 @@ class EmbeddedPythonStageTests(unittest.TestCase):
             EmbeddedPythonRelease(13, "a" * 40, self.modules)
 
 
+class WindowsSetupMcpCompanionTests(EmbeddedPythonStageTests):
+    """Real ZIP/file staging; only the native ACL interface is patched."""
+
+    def test_approved_companion_is_staged_under_chosen_install_drive(self):
+        from unittest.mock import patch
+        from holding.windows_setup import stage_embedded_mcp_companion
+        with (
+            patch("holding.windows_engine_enrollment._require_native_windows"),
+            patch("holding.windows_setup.validate_runtime_acl"),
+            patch("holding.windows_setup.secure_runtime_acl"),
+        ):
+            enrolled = stage_embedded_mcp_companion(
+                install_root=self.dest, archive=self.archive,
+                trusted_source_root=self.package_root,
+                pin=self.pin, approved=True)
+        self.assertTrue(enrolled.directory.is_relative_to(self.dest / "mcp-python"))
+        self.assertEqual(enrolled.status, "STAGED_NOT_EXECUTED")
+        self.assertEqual(enrolled.interpreter_sha256, sha(self.members["python.exe"]))
+
+    def test_companion_requires_explicit_setup_approval(self):
+        from unittest.mock import patch
+        from holding.windows_setup import stage_embedded_mcp_companion
+        with patch("holding.windows_engine_enrollment._require_native_windows") as native:
+            with self.assertRaises(ValueError):
+                stage_embedded_mcp_companion(
+                    install_root=self.dest, archive=self.archive,
+                    trusted_source_root=self.package_root, pin=self.pin,
+                    approved=False)
+            native.assert_not_called()
+        self.assertEqual(list(self.dest.iterdir()), [])
+
+    def test_failed_native_acl_rolls_back_only_new_companion(self):
+        from unittest.mock import patch
+        from holding.windows_setup import stage_embedded_mcp_companion
+        from holding.windows_runtime_acl import RuntimeAclError
+        with (
+            patch("holding.windows_engine_enrollment._require_native_windows"),
+            patch("holding.windows_setup.validate_runtime_acl",
+                  side_effect=[None, None, None, RuntimeAclError("Native ACL rejected")]),
+            patch("holding.windows_setup.secure_runtime_acl"),
+        ):
+            with self.assertRaises(RuntimeAclError):
+                stage_embedded_mcp_companion(
+                    install_root=self.dest, archive=self.archive,
+                    trusted_source_root=self.package_root,
+                    pin=self.pin, approved=True)
+        self.assertEqual(list(self.dest.iterdir()), [])
+
+
 if __name__ == "__main__":
     unittest.main()
