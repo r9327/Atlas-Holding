@@ -239,6 +239,33 @@ class ControlCenterUiTests(unittest.TestCase):
         finally:
             window.close()
 
+    def test_service_health_tab_does_not_claim_plugin_installation(self):
+        payload = snapshot()
+        payload.update(
+            schema_version=3, paused=False, stop_requested=False,
+            services=[
+                {"name": "github", "status": "ONLINE", "age_seconds": 12},
+                {"name": "firecrawl", "status": "STALE", "age_seconds": 901},
+            ],
+        )
+        state = consume_dashboard_snapshot(
+            json.dumps(payload).encode("utf-8"),
+            trusted_engine_id="engine-1", expected_sequence=42, now_epoch=NOW,
+        )
+        window = ControlCenterWindow(trusted_engine_id="engine-1")
+        try:
+            self.assertTrue(window.render_state(state))
+            self.assertEqual(window.services.rowCount(), 2)
+            self.assertEqual(window.services.item(0, 0).text(), "github")
+            self.assertEqual(window.services.item(0, 1).text(), "ONLINE")
+            self.assertEqual(window.services.item(1, 1).text(), "STALE")
+            self.assertIn("pas une preuve d'installation",
+                          window.services_note.text())
+            self.assertEqual(window.plugins.rowCount(), 1)
+            self.assertNotIn("firecrawl", window.plugin_telemetry.text())
+        finally:
+            window.close()
+
     def test_bounded_large_roadmap_and_log_page_keep_unmodified_qt_cells(self):
         payload = snapshot()
         template = deepcopy(payload["tasks"][0])
