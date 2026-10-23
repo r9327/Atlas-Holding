@@ -248,3 +248,28 @@ Cette observation **ne prouve pas la santé du plugin**, l'existence d'une
 session d'agent ou la disponibilité du réseau. Des tests natifs attestent
 également que tout échec de rattachement au Job ou de reprise du thread
 fait disparaître l'enfant suspendu, sans exécution non supervisée.
+
+
+## Windows ACL privées pour le bootstrap et le cache (23 octobre 2026)
+
+Un contrôle natif `holding/mcp_windows_acl.py` lit les SID et DACL Win32 via
+`GetNamedSecurityInfoW`, `GetAce` et `EqualSid`. Avant **et après**
+la lecture du manifeste, son propre fichier et le dossier susceptible de
+le remplacer doivent appartenir à l'utilisateur courant, SYSTEM ou au
+groupe Administrateurs, sans droit d'écriture accordé à un SID non fiable.
+Les DACL NULL, ACE non pris en charge, ACL énormes et reparse points
+sont rejetés. Sur POSIX, les vérifications UID/mode préexistantes restent
+actives.
+
+Le bootstrap Windows protège également le fichier SQLite du cache et son
+dossier, même si l'accès aux données se fait en mode SQLite read-only. Sans
+cette vérification, un autre utilisateur aurait pu altérer à la fois le
+contenu d'une page et le hash stocké pour lui faire passer le contrôle
+d'intégrité. Un échec est bloquant, sans fuite des chemins ou contenus vers
+le protocole MCP.
+
+Les tests Windows configurent des ACL privées via SID explicites, puis
+attribuent volontairement un droit d'écriture à Everyone sur le manifeste,
+son dossier ou le cache : **aucun outil MCP ne doit être exposé dans ces cas**.
+Cela ne remplace pas la politique d'installation Windows, la protection
+des binaires au moment de leur exécution et le confinement des vrais plugins.
