@@ -464,6 +464,7 @@ def configure_and_launch_engine(
     *, install_root: Path, atlas_root: Path, runtime_pins: dict[str, str],
     adapter_sha256: str, approved: bool, launch_approved: bool,
     model_name: str | None = None,
+    embedded_python_pin: EmbeddedPythonRelease | None = None,
 ):
     """Explicit first-run GUI handoff. No model/adapter is silently invented.
 
@@ -536,6 +537,18 @@ def configure_and_launch_engine(
             secure_runtime_acl(folder)
     selected = enroll_local_model(
         install_root, selected_model=model_name, approved=True)
+    embedded = None
+    if embedded_python_pin is not None:
+        if type(embedded_python_pin) is not EmbeddedPythonRelease:
+            raise EngineEnrollmentError("Untrusted bundled MCP release identity")
+        companion = (install_root / "mcp-python" /
+                     ("python-embedded-" + embedded_python_pin.zip_sha256[:16]))
+        try:
+            embedded = verify_staged_embedded_python(
+                directory=companion, pin=embedded_python_pin)
+        except (OSError, ValueError) as exc:
+            raise EngineEnrollmentError(
+                "MCP companion must be verified before engine enrollment") from exc
     request = EngineEnrollmentRequest(
         install_root=install_root,
         runtime_directory=runtime,
@@ -549,6 +562,8 @@ def configure_and_launch_engine(
         agent_sha256=adapter_sha256,
         agent_arguments=(selected.path,),
         agent_argument_pins={str(selected.path): selected.sha256},
+        mcp_runtime=embedded,
+        mcp_release=embedded_python_pin,
     )
     receipt = enroll_pinned_engine(request, approved=True)
     if not launch_approved:
@@ -1056,6 +1071,7 @@ def main(argv: list[str] | None = None) -> int:
                     adapter_sha256=args.adapter_sha256,
                     approved=True, launch_approved=run_it,
                     model_name=chosen_model,
+                    embedded_python_pin=mcp_pin,
                 )
                 events.put(("engine_activation", status, pid))
             except (OSError, ValueError, TypeError,
