@@ -90,6 +90,29 @@ class McpPackagePinTests(unittest.TestCase):
         with self.assertRaises(McpPackagePinError):
             build_installation_module_pins(self.root / "missing")
 
+    def test_code_digest_change_after_launch_invalidates_protocol_evidence(self):
+        from holding.mcp_hub_session import LocalMcpHubSession
+        from holding.mcp_local_inventory import PinnedLocalPlugin
+        import hashlib
+        import sys
+        root = Path(__file__).resolve().parents[1]
+        executable = Path(sys.executable).resolve()
+        interpreter = PinnedLocalPlugin(
+            "hub-python", "3.13", executable,
+            hashlib.sha256(executable.read_bytes()).hexdigest())
+        pin = build_installation_module_pins(root)
+        with patch("holding.mcp_package_pin.McpPackagePin.verify",
+                   side_effect=[True, False]):
+            with LocalMcpHubSession(
+                    interpreter_pin=interpreter, package_root=root,
+                    package_pin=pin, response_timeout=8) as session:
+                process = session._process
+                result = session.discover()
+                self.assertEqual(result.state, "BINARY_CHANGED")
+                self.assertIsNone(result.protocol_version)
+                self.assertIsNone(session._process)
+                self.assertIsNotNone(process.poll())
+
     def test_trusted_entrypoint_package_digest_is_checked_before_process_spawn(self):
         from holding.mcp_hub_session import LocalMcpHubSession, McpSessionError
         from holding.mcp_local_inventory import PinnedLocalPlugin
