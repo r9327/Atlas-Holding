@@ -163,6 +163,61 @@ json.dump({'schema_version':1,'request_id':r['request_id'],'status':'OK',
             'response_timeout': 8,
         }
 
+    def _enable_mcp_package_pin(self):
+        from holding.mcp_package_pin import build_installation_module_pins
+        self._enable_mcp()
+        self.data['schema'] = 5
+        root = Path(__file__).resolve().parents[1]
+        pins = build_installation_module_pins(root)
+        self.data['mcp']['module_sha256'] = dict(pins.entries)
+
+    def test_schema_five_ensures_every_installed_mcp_module_is_pinned(self):
+        from contextlib import nullcontext
+        from unittest.mock import patch
+        self._enable_mcp_package_pin()
+        self.save()
+        installation = Installation.load(self.config)
+        self.assertIsNotNone(installation.mcp.package_pin)
+        self.assertTrue(installation.mcp.package_pin.verify(
+            Path(__file__).resolve().parents[1]))
+        windows_guard = (
+            patch('holding.mcp_supervisor.require_private_windows_path')
+            if sys.platform == 'win32' else nullcontext())
+        with windows_guard:
+            with installation.build_service() as service:
+                self.assertIsNotNone(service._mcp_supervisor)
+                self.assertIsNotNone(
+                    service._mcp_supervisor._session._package_pin)
+                service.start()
+                # No module startup or network access until an allowed tick.
+                self.assertEqual(
+                    service._mcp_supervisor._session.observe().state,
+                    'NOT_STARTED')
+
+    def test_schema_five_refuses_forged_removed_or_unknown_module_evidence(self):
+        self._enable_mcp_package_pin()
+        manifest = self.data['mcp']['module_sha256']
+        self.data['mcp']['module_sha256'] = dict(
+            manifest, **{'mcp_entry.py': '0' * 64})
+        self.save()
+        with self.assertRaisesRegex(BootstrapError, 'package code changed'):
+            Installation.load(self.config)
+        self._enable_mcp_package_pin()
+        del self.data['mcp']['module_sha256']['mcp_entry.py']
+        self.save()
+        with self.assertRaises(BootstrapError):
+            Installation.load(self.config)
+        self._enable_mcp_package_pin()
+        self.data['mcp']['module_sha256']['injected.py'] = 'a' * 64
+        self.save()
+        with self.assertRaisesRegex(BootstrapError, 'package code changed'):
+            Installation.load(self.config)
+        self._enable_mcp_package_pin()
+        del self.data['mcp']['module_sha256']
+        self.save()
+        with self.assertRaisesRegex(BootstrapError, 'pinned MCP installation'):
+            Installation.load(self.config)
+
     def test_schema_four_installs_real_local_mcp_and_observes_engine_state(self):
         from contextlib import nullcontext
         from types import SimpleNamespace
