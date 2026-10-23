@@ -23,7 +23,7 @@ No updater command is exposed from Qt, and no engine IPC schema changes.
 
 ## Still required
 Trusted update-root enrollment from the installed launcher, signed release
-metadata, exclusive Windows update lock, native ACL + executable verification,
+metadata, native ACL + executable verification,
 coordinated shutdown/restart, real IPC health acceptance, power-loss rollback,
 and end-to-end signed installer certification in PR #9.
 
@@ -41,3 +41,15 @@ is only for read-only local observations and does not create an update grant.
 A real verified child subprocess test checks that the path arrives without
 making the readonly viewer able to pause the engine. The exact Windows
 installed-root selection and ACL proof remain separate release gates.
+
+## Exclusive update lock
+
+Release-pointer activation and interrupted-switch recovery now share a
+non-blocking operating-system lock stored at `.atlas-update.lock` in the trusted
+installation root. The persistent file is never used as evidence and is not
+deleted on release; the kernel releases the held lock if a process exits.
+Concurrent processes fail closed before reading or mutating switch metadata.
+
+This closes only the serialization primitive. Trusted root enrollment, Windows
+ACL verification, coordinated process shutdown and native restart/rollback are
+still separate gates.

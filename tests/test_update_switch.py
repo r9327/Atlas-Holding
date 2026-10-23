@@ -2,10 +2,13 @@
 import json
 from hashlib import sha256
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 import zipfile
 
+from holding.update_lock import UpdateLockError, exclusive_update_lock
 from holding.update_stage import stage_release_archive
 from holding.update_switch import (
     ReleaseSwitchError, activate_staged_release,
@@ -166,6 +169,77 @@ class ReleaseSwitchTests(unittest.TestCase):
         with self.assertRaises(ReleaseSwitchError):
             self.activate("v1")
         self.assertFalse((self.root / ".atlas-switch.pending.json").exists())
+
+    def test_exclusive_lock_blocks_second_process_and_then_releases(self):
+        self.stage("v1")
+        child_code = """
+from pathlib import Path
+import sys
+from holding.update_lock import UpdateLockError, exclusive_update_lock
+try:
+    with exclusive_update_lock(Path(sys.argv[1])):
+        print("ACQUIRED", flush=True)
+except UpdateLockError:
+    print("BUSY", flush=True)
+"""
+        with exclusive_update_lock(self.root):
+            blocked = subprocess.run(
+                [sys.executable, "-c", child_code, str(self.root)],
+                cwd=Path(__file__).parents[1], text=True,
+                capture_output=True, timeout=10, check=True,
+            )
+        acquired = subprocess.run(
+            [sys.executable, "-c", child_code, str(self.root)],
+            cwd=Path(__file__).parents[1], text=True,
+            capture_output=True, timeout=10, check=True,
+        )
+        self.assertEqual(blocked.stdout.strip(), "BUSY")
+        self.assertEqual(acquired.stdout.strip(), "ACQUIRED")
+
+    def test_activation_refuses_while_another_process_holds_lock(self):
+        self.stage("v1")
+        child_code = """
+from pathlib import Path
+import sys
+from holding.update_lock import exclusive_update_lock
+with exclusive_update_lock(Path(sys.argv[1])):
+    print("READY", flush=True)
+    sys.stdin.readline()
+"""
+        child = subprocess.Popen(
+            [sys.executable, "-c", child_code, str(self.root)],
+            cwd=Path(__file__).parents[1], text=True,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        )
+        self.addCleanup(lambda: child.poll() is None and child.kill())
+        self.assertEqual(child.stdout.readline().strip(), "READY")
+        with self.assertRaisesRegex(ReleaseSwitchError, "another update operation"):
+            self.activate("v1")
+        self.assertIsNone(read_active_release(self.root))
+        child.stdin.write("\n")
+        child.stdin.flush()
+        self.assertEqual(child.wait(timeout=10), 0)
+        child.stdin.close()
+        child.stdout.close()
+
+    def test_symlinked_lock_file_is_refused(self):
+        self.root.mkdir(parents=True)
+        target = Path(self.tmp.name) / "outside.lock"
+        target.write_bytes(b"x")
+        try:
+            (self.root / ".atlas-update.lock").symlink_to(target)
+        except (OSError, NotImplementedError):
+            self.skipTest("filesystem symlinks unavailable")
+        with self.assertRaisesRegex(UpdateLockError, "unsafe"):
+            with exclusive_update_lock(self.root):
+                self.fail("unsafe lock acquired")
+
+    def test_non_regular_lock_file_is_refused(self):
+        self.root.mkdir(parents=True)
+        (self.root / ".atlas-update.lock").mkdir()
+        with self.assertRaisesRegex(UpdateLockError, "safely|unsafe"):
+            with exclusive_update_lock(self.root):
+                self.fail("unsafe lock acquired")
 
 
 if __name__ == "__main__":

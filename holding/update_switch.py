@@ -14,6 +14,7 @@ from pathlib import Path
 import tempfile
 from typing import Callable
 
+from .update_lock import UpdateLockError, exclusive_update_lock
 from .update_stage import _MARKER, _RELEASE, _RESERVED, _SHA
 
 _ACTIVE = "active-release.json"
@@ -177,11 +178,12 @@ def _new_pending(root: Path, previous: ReleasePointer | None, target: ReleasePoi
         os.fsync(file.fileno())
 
 
-def recover_interrupted_switch(root: Path) -> bool:
+def _recover_interrupted_switch_locked(root: Path) -> bool:
     """Revert any pending switch without executing or deleting version files.
 
     Intended for the trusted launcher at startup BEFORE launching the engine.
-    Unknown/modified pointers are refused rather than blindly overwritten.
+    The caller holds the update lock. Unknown/modified pointers are refused
+    rather than blindly overwritten.
     """
     _check_root(root)
     pending = _pending_record(root)
@@ -197,18 +199,27 @@ def recover_interrupted_switch(root: Path) -> bool:
     return True
 
 
-def activate_staged_release(
+def recover_interrupted_switch(root: Path) -> bool:
+    """Serialize and revert a pending switch before engine launch."""
+    try:
+        with exclusive_update_lock(root):
+            return _recover_interrupted_switch_locked(root)
+    except UpdateLockError as exc:
+        raise ReleaseSwitchError(str(exc)) from exc
+
+
+def _activate_staged_release_locked(
     root: Path,
     *,
     release: str,
     approved_archive_sha256: str,
     health_probe: Callable[[Path], bool],
 ) -> ReleaseSwitchResult:
-    """Atomically select a staged slot, reverting if a trusted probe fails.
+    """Atomically select a staged slot while holding the update lock.
 
     The external caller must provide a separately AUTHENTICATED SHA, enforce
-    single-writer privileges and ensure the running app is stopped as needed.
-    The probe itself is supplied by trusted launcher code, never from the ZIP.
+    trusted privileges and ensure the running app is stopped as needed. The
+    probe itself is supplied by trusted launcher code, never from the ZIP.
     """
     _check_root(root)
     if (
@@ -243,3 +254,23 @@ def activate_staged_release(
     return ReleaseSwitchResult(
         "ACTIVATED", release, previous.release if previous else None,
     )
+
+
+def activate_staged_release(
+    root: Path,
+    *,
+    release: str,
+    approved_archive_sha256: str,
+    health_probe: Callable[[Path], bool],
+) -> ReleaseSwitchResult:
+    """Serialize and atomically activate a staged release."""
+    try:
+        with exclusive_update_lock(root):
+            return _activate_staged_release_locked(
+                root,
+                release=release,
+                approved_archive_sha256=approved_archive_sha256,
+                health_probe=health_probe,
+            )
+    except UpdateLockError as exc:
+        raise ReleaseSwitchError(str(exc)) from exc
