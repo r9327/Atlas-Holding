@@ -20,6 +20,7 @@ from typing import Mapping
 
 from .windows_runtime_payload import verify_runtime_payload, verify_pinned_adapter
 from .bootstrap_assets_cli import read_pinned_manifest
+from .embedded_python_stage import EmbeddedPythonRelease, stage_pinned_embedded_python
 
 _HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 
@@ -47,6 +48,8 @@ def build_windows_installer(
     runtime_pins: Mapping[str, str] | None = None,
     adapter_source: Path | None = None,
     adapter_sha256: str | None = None,
+    embedded_python_archive: Path | None = None,
+    embedded_python_pin: EmbeddedPythonRelease | None = None,
 ) -> WindowsBuildResult:
     """Bundle the pinned setup wizard; native E2E and signing are separate gates."""
     if sys.platform != "win32":
@@ -65,6 +68,10 @@ def build_windows_installer(
         raise ValueError("Complete packaged adapter and pinned hash required")
     if adapter_source is not None and runtime_directory is None:
         raise ValueError("Agent bundle needs both engine and Control Center")
+    if (embedded_python_archive is None) != (embedded_python_pin is None):
+        raise ValueError("Bundled embedded Python ZIP requires complete trusted release pins")
+    if embedded_python_archive is not None and runtime_directory is None:
+        raise ValueError("Embedded MCP Python requires an engine/Control Center bundle")
     if adapter_source is not None:
         verify_pinned_adapter(adapter_source, adapter_sha256)
     if runtime_directory is not None:
@@ -105,6 +112,29 @@ def build_windows_installer(
             verify_pinned_adapter(adapter_source, adapter_sha256)
             verify_pinned_adapter(bundled_adapter, adapter_sha256)
 
+        embedded_zip = None
+        embedded_sources = None
+        embedded_pins_file = None
+        embedded_pins_hash = None
+        if embedded_python_pin is not None:
+            # Verify ZIP/native members plus exact code from an independently
+            # pinned release before the packaging tool receives any bytes.
+            validated = stage_pinned_embedded_python(
+                archive=embedded_python_archive, approved_package_root=root,
+                target_parent=workspace, pin=embedded_python_pin)
+            embedded_sources = validated.directory / "holding"
+            embedded_zip = workspace / "mcp-embedded-python.zip"
+            with embedded_python_archive.open("rb") as reader, embedded_zip.open("xb") as writer:
+                shutil.copyfileobj(reader, writer, 1024 * 1024)
+            if _sha256(embedded_zip) != embedded_python_pin.zip_sha256:
+                raise ValueError("Bundled embedded CPython differs from trusted release")
+            embedded_pins_file = workspace / "mcp-source-pins.json"
+            embedded_pins_file.write_text(
+                json.dumps(dict(sorted(embedded_python_pin.module_sha256.items())),
+                           sort_keys=True, separators=(",", ":")) + "\n",
+                encoding="utf-8")
+            embedded_pins_hash = _sha256(embedded_pins_file)
+
         shim = workspace / "atlas_windows_entry.py"
         shim_lines = [
             "from pathlib import Path",
@@ -118,10 +148,20 @@ def build_windows_installer(
             f"expected = {expected_manifest_sha256.lower()!r}",
             f"runtime_pins = {dict(runtime_pins) if runtime_pins is not None else None!r}",
             f"adapter_pin = {adapter_sha256!r}",
+            f"mcp_zip_pin = {embedded_python_pin.zip_sha256 if embedded_python_pin else None!r}",
+            f"mcp_minor = {embedded_python_pin.python_minor if embedded_python_pin else None!r}",
+            f"mcp_source_pin = {embedded_pins_hash!r}",
             "if adapter_pin is not None:",
             "    verify_pinned_adapter(base / 'agents' / 'AtlasHoldingAgent.exe', adapter_pin)",
             "if runtime_pins is not None:",
             "    verify_runtime_payload(base / 'runtime', runtime_pins)",
+            "if mcp_zip_pin is not None:",
+            "    zip_file = base / 'mcp-embedded-python.zip'",
+            "    mcp_pins_file = base / 'mcp-source-pins.json'",
+            "    if hashlib.sha256(zip_file.read_bytes()).hexdigest() != mcp_zip_pin:",
+            "        raise SystemExit(2)",
+            "    if hashlib.sha256(mcp_pins_file.read_bytes()).hexdigest() != mcp_source_pin:",
+            "        raise SystemExit(2)",
             "if sys.argv[1:] == ['--self-test']:",
             "    read_pinned_manifest(manifest, expected_sha256=expected)",
             "    raise SystemExit(0)",
@@ -151,6 +191,15 @@ def build_windows_installer(
             "        '--adapter-root', str(base / 'agents'),",
             "        '--adapter-sha256', adapter_pin,",
             "    ])",
+            "if mcp_zip_pin is not None:",
+            "    wizard_args.extend([",
+            "        '--mcp-archive', str(base / 'mcp-embedded-python.zip'),",
+            "        '--mcp-archive-sha256', mcp_zip_pin,",
+            "        '--mcp-source-root', str(base / 'mcp-source'),",
+            "        '--mcp-source-pins', str(base / 'mcp-source-pins.json'),",
+            "        '--mcp-source-pins-sha256', mcp_source_pin,",
+            "        '--mcp-python-minor', str(mcp_minor),",
+            "    ])",
             "raise SystemExit(main(wizard_args))",
         ]
         shim.write_text("\n".join(shim_lines) + "\n", encoding="utf-8")
@@ -178,6 +227,15 @@ def build_windows_installer(
                 "--add-data",
                 str(bundled_adapter) + os.pathsep + "agents",
             ]
+        if embedded_zip is not None:
+            for name, source, dest in (
+                ("embedded", embedded_zip, "."),
+                ("pins", embedded_pins_file, "."),
+                ("sources", embedded_sources, "mcp-source/holding"),
+            ):
+                command[-1:-1] = [
+                    "--add-data", str(source) + os.pathsep + dest,
+                ]
         subprocess.run(command, cwd=root, check=True, timeout=900,
                        shell=False)
         built = stage / "AtlasHoldingSetup.exe"
