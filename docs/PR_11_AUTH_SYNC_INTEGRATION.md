@@ -411,3 +411,43 @@ CPython acceptant `-m`. La future distribution autonome doit livrer un
 interpréteur embeddable fiable, verrouiller les droits de ses modules et
 satisfaire ces mêmes preuves avant d'activer MCP. Le v5 ne prétend donc pas
 que l'installateur EXE complet est déjà certifié.
+
+
+## Préparation de configuration MCP v5 par l'installateur (23 octobre 2026)
+
+Le module `holding/mcp_enrollment.py` fournit maintenant une interface
+d'installation **appelable par un installateur de confiance**, sans accès
+réseau ni exécution de processus supplémentaires :
+
+- `prepare_v5_mcp_enrollment` transforme une configuration GUI valide
+  des schémas v3, v4 ou v5 non encore activée en document v5 **complet**.
+  L'installateur doit fournir séparément les SHA-256 du binaire CPython
+  et de **chaque module installé** issus de sa livraison vérifiée ;
+  il n'est pas permis de « certifier » les fichiers en calculant simplement
+  leur empreinte puis en les déclarant approuvés.
+- La préparation ne modifie aucun fichier et refuse les doublons de clés
+  JSON, les schémas inconnus, les données sources modifiées entre deux
+  lectures, tout ancien MCP déjà enrôlé et les dépassements de 32 Kio.
+  `McpPackagePin.verify` vérifie les octets locaux contre les empreintes
+  fournies par le processus d'installation approuvé.
+- `create_new_v5_config` crée exclusivement une **nouvelle** configuration
+  dans le même répertoire que l'ancienne, avec `O_EXCL`, écriture
+  synchronisée sur disque, contrôles ACL sous Windows, vérification de
+  relecture par `Installation.load`, et suppression du fichier incomplet
+  en cas d'échec. Jamais d'écrasement implicite de l'ancienne config.
+- Le lancement réel du hub utilise désormais CPython
+  `-E -S -B -m holding.mcp_entry`, en ignorant les variables
+  d'environnement Python et en désactivant le mécanisme `site` pouvant
+  importer des packages tiers ; lancement limité au répertoire signé
+  et au binaire épinglé.
+
+Des tests couvrent les vrais manifests, la non-modification de l'ancienne
+installation, la création exclusive, les empreintes frauduleuses, le
+changement de configuration, le refus d'un EXE PyInstaller et la forme exacte
+du lancement sur Windows et POSIX.
+
+**Limite réelle :** ce lot implémente une API de provisionnement, **pas
+encore l'interface graphique de Setup ni un interpréteur Python embeddable
+livré dans une release**. Le binaire et les empreintes doivent venir d'une
+chaîne de distribution autorisée avant toute activation. Aucun nouvel EXE
+installable n'est déclaré prêt.
