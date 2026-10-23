@@ -2,6 +2,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import gc
+from copy import deepcopy
 import json
 import unittest
 import weakref
@@ -208,6 +209,57 @@ class ControlCenterUiTests(unittest.TestCase):
         window.close()
         self.assertFalse(window._status_timer.isActive())
 
+
+    def test_bounded_large_roadmap_and_log_page_keep_unmodified_qt_cells(self):
+        payload = snapshot()
+        template = deepcopy(payload["tasks"][0])
+        template.update({
+            "state": "READY", "phase": "CODING", "progress": "WAITING",
+            "candidate_sha": None, "completion_evidence": None,
+        })
+        payload["tasks"] = []
+        for index in range(350):
+            row = deepcopy(template)
+            row["id"] = f"task-{index}"
+            row["title"] = f"Roadmap operation {index}"
+            payload["tasks"].append(row)
+        payload["sequence"] = 500
+        payload["log_page"]["items"] = []
+        for index in range(200):
+            payload["log_page"]["items"].append({
+                "sequence": 300 + index, "category": "CI",
+                "message": f"CI log event {index}",
+                "task_id": f"task-{index}", "plugin_name": "github",
+                "evidence_digest": None,
+            })
+        window = ControlCenterWindow(trusted_engine_id="engine-1")
+        def validate():
+            return consume_dashboard_snapshot(
+                json.dumps(payload).encode("utf-8"),
+                trusted_engine_id="engine-1",
+                expected_sequence=payload["sequence"], now_epoch=NOW,
+            )
+        try:
+            self.assertTrue(window.render_state(validate()))
+            self.assertEqual(window.tasks.rowCount(), 350)
+            self.assertEqual(window.logs.rowCount(), 200)
+            self.assertEqual(window.proofs.rowCount(), 0)
+            window.tasks.selectRow(111)
+            kept = window.tasks.item(111, 0)
+            payload["sequence"] = 501
+            payload["tasks"][222]["title"] = "New title from authenticated host"
+            self.assertTrue(window.render_state(validate()))
+            self.assertIs(window.tasks.item(111, 0), kept)
+            self.assertEqual(window.tasks.currentRow(), 111)
+            self.assertEqual(
+                window.tasks.item(222, 0).text(),
+                "New title from authenticated host",
+            )
+            window.log_search.setText("log event 199")
+            self.assertTrue(window.logs.isRowHidden(0))
+            self.assertFalse(window.logs.isRowHidden(199))
+        finally:
+            window.close()
 
     def test_project_git_state_is_display_only_and_repository_scoped(self):
         from types import SimpleNamespace
