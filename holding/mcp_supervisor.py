@@ -13,6 +13,7 @@ from threading import RLock
 from .mcp_hub_journal import HubObservationJournal, DurableHubObservation
 from .mcp_hub_session import LocalMcpHubSession, McpSessionObservation
 from .mcp_local_inventory import PinnedLocalPlugin
+from .mcp_package_pin import McpPackagePin
 from .mcp_windows_acl import require_private_windows_path
 
 
@@ -24,7 +25,8 @@ class InternalMcpSupervisor:
     """Resource- and STOP-gated internal hub with actual session observations."""
 
     def __init__(self, *, database: Path, interpreter_pin: PinnedLocalPlugin,
-                 package_root: Path, response_timeout: float = 3.0) -> None:
+                 package_root: Path, response_timeout: float = 3.0,
+                 package_pin: McpPackagePin | None = None) -> None:
         if (not isinstance(database, Path) or not database.is_absolute()
                 or not database.is_file() or database.is_symlink()
                 or type(interpreter_pin) is not PinnedLocalPlugin
@@ -35,7 +37,7 @@ class InternalMcpSupervisor:
             require_private_windows_path(interpreter_pin.executable)
         self._session = LocalMcpHubSession(
             interpreter_pin=interpreter_pin, package_root=package_root,
-            response_timeout=response_timeout)
+            response_timeout=response_timeout, package_pin=package_pin)
         self._journal = HubObservationJournal(database)
         self._lock = RLock()
         self._closed = False
@@ -73,6 +75,7 @@ class InternalMcpSupervisor:
                         interpreter_pin=previous._pin,
                         package_root=previous._root,
                         response_timeout=previous._timeout,
+                        package_pin=previous._package_pin,
                     )
                 self._enabled = True
             observed = self._session.observe()
@@ -84,6 +87,7 @@ class InternalMcpSupervisor:
                         interpreter_pin=old._pin,
                         package_root=old._root,
                         response_timeout=old._timeout,
+                        package_pin=old._package_pin,
                     )
                 try:
                     self._session.start()
