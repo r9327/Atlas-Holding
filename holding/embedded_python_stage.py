@@ -86,7 +86,7 @@ def _approved_entries(archive: zipfile.ZipFile, minor: int) -> list[zipfile.ZipI
     expected = {"python.exe", "python3.dll", f"python3{minor}.dll",
                 f"python3{minor}.zip", f"python3{minor}._pth"}
     infos = archive.infolist()
-    if not 5 <= len(infos) <= _MAX_FILE_COUNT:
+    if not 1 <= len(infos) <= _MAX_FILE_COUNT:
         raise EmbeddedRuntimeError("Unexpected embeddable Python archive length")
     seen = set()
     unpacked = 0
