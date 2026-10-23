@@ -129,6 +129,10 @@ class ControlCenterWindow(QMainWindow):
 
         root = QWidget()
         layout = QVBoxLayout(root)
+        self.project_status = QLabel("Projet actif : non connecté")
+        self.project_status.setObjectName("projectGitStatus")
+        self.project_status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(self.project_status)
         layout.addWidget(self.status)
         layout.addWidget(tabs)
         self.setCentralWidget(root)
@@ -148,6 +152,16 @@ class ControlCenterWindow(QMainWindow):
                 and (not query or any(query in cell.casefold() for cell in cells))
             )
             self.logs.setRowHidden(row, not visible)
+
+    def render_project_status(self, *, project: str, repository: str,
+                              git_status: object, eligible_missions: int) -> None:
+        """Read-only, operator-supplied status; never authorizes engine actions."""
+        from .control_center_project import validate_project_status
+        view = validate_project_status(
+            project=project, repository=repository,
+            git_status=git_status, eligible_missions=eligible_missions,
+        )
+        self.project_status.setText(view)
 
     @property
     def displayed_sequence(self) -> int | None:
