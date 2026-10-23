@@ -27,6 +27,7 @@ from .process_agent import AgentProgram
 from .service import HoldingService, ServiceSettings, termination_signals
 from .mcp_local_inventory import PinnedLocalPlugin
 from .mcp_package_pin import McpPackagePin, McpPackagePinError
+from .embedded_python_stage import EmbeddedPythonRelease, verify_staged_embedded_python
 
 
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -65,6 +66,7 @@ class McpInstallation:
     interpreter_pin: PinnedLocalPlugin
     response_timeout: float
     package_pin: McpPackagePin | None = None
+    package_root: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -198,15 +200,19 @@ class Installation:
         return DashboardInstallation(viewer, info['readonly'])
 
     @staticmethod
-    def _mcp_config(info: object, *, require_package_pin: bool = False) -> McpInstallation:
+    def _mcp_config(info: object, *, require_package_pin: bool = False,
+                    installed_companion: bool = False,
+                    install_root: Path | None = None) -> McpInstallation:
         # A PyInstaller frozen EXE is not the embeddable CPython interpreter
         # needed by "python -B -m holding.mcp_entry". Fail during setup
         # rather than silently advertising a usable local MCP runtime.
-        if getattr(sys, "frozen", False):
+        if getattr(sys, "frozen", False) and not installed_companion:
             raise BootstrapError("MCP requires an explicitly bundled Python interpreter, not a frozen app EXE")
         required = {"interpreter", "interpreter_sha256", "response_timeout"}
         if require_package_pin:
             required.add("module_sha256")
+        if installed_companion:
+            required.update({"package_root", "source_release_zip_sha256", "python_minor"})
         if type(info) is not dict or set(info) != required:
             raise BootstrapError("Invalid pinned MCP installation")
         raw, digest, timeout = (
@@ -224,7 +230,8 @@ class Installation:
         except OSError as exc:
             raise BootstrapError("Installed MCP interpreter unavailable") from exc
         if (not binary.is_absolute() or '..' in binary.parts or binary.is_symlink()
-                or not canonical.is_file() or canonical != running):
+                or not canonical.is_file()
+                or (not installed_companion and canonical != running)):
             raise BootstrapError("MCP interpreter must match installed runtime")
         try:
             observed = _hash_file(canonical)
@@ -232,17 +239,49 @@ class Installation:
             raise BootstrapError("Installed MCP interpreter unavailable") from exc
         if not hmac.compare_digest(observed, digest):
             raise BootstrapError("MCP interpreter changed since onboarding")
+        package_root = Path(__file__).resolve().parent.parent
+        if installed_companion:
+            raw_root = info["package_root"]
+            archive_hash = info["source_release_zip_sha256"]
+            minor = info["python_minor"]
+            if (type(raw_root) is not str or not 1 <= len(raw_root) <= 4096
+                    or type(archive_hash) is not str or not _DIGEST.fullmatch(archive_hash)
+                    or type(minor) is not int or not 13 <= minor <= 19
+                    or install_root is None):
+                raise BootstrapError("Invalid installed MCP companion identity")
+            package_root = Path(raw_root)
+            expected = (
+                install_root / "mcp-python" /
+                ("python-embedded-" + archive_hash[:16]))
+            if (not package_root.is_absolute() or package_root != expected
+                    or package_root.is_symlink()
+                    or not package_root.is_dir()
+                    or canonical.parent != package_root
+                    or canonical.name.lower() != "python.exe"):
+                raise BootstrapError("Installed MCP companion outside approved root")
         package_pin = None
         if require_package_pin:
             try:
                 package_pin = McpPackagePin.from_manifest(info["module_sha256"])
-                if not package_pin.verify(Path(__file__).resolve().parent.parent):
+                if not package_pin.verify(package_root):
                     raise McpPackagePinError("Installed package digest mismatch")
             except (McpPackagePinError, OSError) as exc:
                 raise BootstrapError("MCP package code changed since onboarding") from exc
+        if installed_companion:
+            try:
+                release = EmbeddedPythonRelease(
+                    python_minor=minor, zip_sha256=archive_hash,
+                    module_sha256=info["module_sha256"])
+                staged = verify_staged_embedded_python(
+                    directory=package_root, pin=release)
+                if staged.interpreter_sha256 != digest:
+                    raise BootstrapError("Installed MCP interpreter release pin changed")
+            except (OSError, ValueError) as exc:
+                raise BootstrapError("Pinned MCP companion receipt invalid") from exc
         return McpInstallation(
             PinnedLocalPlugin("atlas-holding-internal", "1.0", canonical, digest),
-            float(timeout), package_pin)
+            float(timeout), package_pin,
+            package_root if installed_companion else None)
 
     @classmethod
     def load(cls, filename: Path) -> 'Installation':
@@ -258,7 +297,7 @@ class Installation:
                 'health_directory','executable','executable_sha256','arguments',
                 'argument_sha256','timeout_seconds'}
         if (not isinstance(info, dict) or type(info.get('schema')) is not int
-                or info['schema'] not in {1, 2, 3, 4, 5}
+                or info['schema'] not in {1, 2, 3, 4, 5, 6}
                 or set(info) != (base if info['schema'] == 1 else
                     base | {'github'} if info['schema'] == 2 else
                     base | {'github', 'dashboard'} if info['schema'] == 3 else
@@ -305,17 +344,20 @@ class Installation:
             raise BootstrapError('Agent executable changed since onboarding')
         github = (
             cls._github_config(info['github'])
-            if info['schema'] in {2, 3, 4, 5} and info['github'] is not None else None
+            if info['schema'] in {2, 3, 4, 5, 6} and info['github'] is not None else None
         )
         # Schema v2 is GitHub-enabled only; schema v3 permits a local-only
         # viewer when no account is configured, without inventing authority.
         if info['schema'] == 2 and github is None:
             raise BootstrapError('GitHub schema requires configured broker')
         dashboard = (cls._dashboard_config(info['dashboard'])
-                     if info['schema'] in {3, 4, 5} else None)
+                     if info['schema'] in {3, 4, 5, 6} else None)
         mcp = (cls._mcp_config(
-                    info["mcp"], require_package_pin=info["schema"] == 5)
-               if info["schema"] in {4, 5} and info["mcp"] is not None else None)
+                    info["mcp"],
+                    require_package_pin=info["schema"] in {5, 6},
+                    installed_companion=info["schema"] == 6,
+                    install_root=locations["database"].parent.parent)
+               if info["schema"] in {4, 5, 6} and info["mcp"] is not None else None)
         return cls(locations['database'],info['repository'],locations['canonical_root'],
                    locations['workspace'],locations['health_directory'],exe,checksum,
                    tuple(args),pins,float(info['timeout_seconds']),github,dashboard,mcp)
@@ -341,7 +383,8 @@ class Installation:
         if self.mcp is not None:
             service.enable_local_mcp(
                 interpreter_pin=self.mcp.interpreter_pin,
-                package_root=Path(__file__).resolve().parent.parent,
+                package_root=(self.mcp.package_root
+                              or Path(__file__).resolve().parent.parent),
                 response_timeout=self.mcp.response_timeout,
                 package_pin=self.mcp.package_pin)
         return service
