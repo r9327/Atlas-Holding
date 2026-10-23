@@ -277,6 +277,36 @@ class ControlCenterUiTests(unittest.TestCase):
         finally:
             window.close()
 
+    def test_hub_label_drops_responsive_on_viewer_timeout(self):
+        payload = snapshot()
+        payload.update(
+            schema_version=5, paused=False, stop_requested=False,
+            services=[], model_history=[], hub={
+                "state": "RESPONSIVE", "pid": 1234,
+                "observed_epoch": payload["generated_at"] - 4,
+                "age_seconds": 4, "source_sha256": "d" * 64,
+                "protocol_version": "2026-07-28",
+            },
+        )
+        trusted = consume_dashboard_snapshot(
+            json.dumps(payload).encode("utf-8"),
+            trusted_engine_id="engine-1", expected_sequence=42, now_epoch=NOW,
+        )
+        window = ControlCenterWindow(trusted_engine_id="engine-1")
+        try:
+            with patch("holding.control_center_ui.monotonic", return_value=100):
+                self.assertTrue(window.render_state(trusted))
+            self.assertIn("RESPONSIVE", window.hub_status.text())
+            with patch("holding.control_center_ui.monotonic", return_value=131):
+                window._refresh_connection_status()
+            self.assertNotIn("RESPONSIVE", window.hub_status.text())
+            self.assertIn("non vérifiée", window.hub_status.text())
+            with patch("holding.control_center_ui.monotonic", return_value=132):
+                self.assertTrue(window.acknowledge_authenticated_state(trusted))
+            self.assertIn("RESPONSIVE", window.hub_status.text())
+        finally:
+            window.close()
+
     def test_model_history_tab_does_not_fabricate_active_agents(self):
         payload = snapshot()
         payload.update(
