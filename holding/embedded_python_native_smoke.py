@@ -19,6 +19,7 @@ import tempfile
 
 from .embedded_python_stage import (
     EmbeddedPythonRelease, stage_pinned_embedded_python,
+    verify_staged_embedded_python,
 )
 
 
@@ -61,6 +62,10 @@ def smoke_official_embedded_python(*, archive: Path) -> dict[str, object]:
         staged = stage_pinned_embedded_python(
             archive=archive, approved_package_root=checkout,
             target_parent=dest, pin=release)
+        proven = verify_staged_embedded_python(
+            directory=staged.directory, pin=release)
+        if proven.interpreter_sha256 != staged.interpreter_sha256:
+            raise RuntimeError("Staged native runtime changed before execution")
         # Importing an actual module from the strict ". / python313.zip"
         # path demonstrates that Python was genuinely started from the
         # separately staged interpreter, not sys.executable of the runner.
