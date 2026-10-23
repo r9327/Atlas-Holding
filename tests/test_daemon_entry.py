@@ -153,6 +153,80 @@ json.dump({'schema_version':1,'request_id':r['request_id'],'status':'OK',
         }
         return script
 
+    def _enable_mcp(self):
+        self._enable_dashboard(readonly=True)
+        self.data['schema'] = 4
+        executable = Path(sys.executable).resolve()
+        self.data['mcp'] = {
+            'interpreter': str(executable),
+            'interpreter_sha256': hashlib.sha256(executable.read_bytes()).hexdigest(),
+            'response_timeout': 8,
+        }
+
+    def test_schema_four_installs_real_local_mcp_and_observes_engine_state(self):
+        from contextlib import nullcontext
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from holding.mcp_hub_journal import HubObservationJournal
+
+        self._enable_mcp()
+        self.save()
+        installation = Installation.load(self.config)
+        self.assertIsNotNone(installation.mcp)
+        context = (
+            patch('holding.mcp_supervisor.require_private_windows_path')
+            if sys.platform == 'win32' else nullcontext()
+        )
+        with context:
+            with installation.build_service() as service:
+                self.assertIsNotNone(service._mcp_supervisor)
+                # The provisioned hub must not start during installer load.
+                self.assertEqual(
+                    service._mcp_supervisor._session.observe().state,
+                    'NOT_STARTED',
+                )
+                service.resource_guard.check = lambda: SimpleNamespace(
+                    safe=True, reason='')
+                service.start()
+                self.assertEqual(service.run(max_ticks=1).action, 'COMPLETE')
+                with HubObservationJournal(Path(self.data['database']), readonly=True) as journal:
+                    first = journal.latest(now_epoch=int(time.time()))
+                self.assertEqual(first.state, 'RESPONSIVE')
+                self.assertIsNotNone(first.pid)
+                with StateStore(Path(self.data['database'])) as store:
+                    store.set_paused(True)
+                self.assertEqual(service.run(max_ticks=1).action, 'WAIT')
+                with HubObservationJournal(Path(self.data['database']), readonly=True) as journal:
+                    paused = journal.latest(now_epoch=int(time.time()))
+                self.assertEqual(paused.state, 'CLOSED')
+                with StateStore(Path(self.data['database'])) as store:
+                    store.set_paused(False)
+                self.assertEqual(service.run(max_ticks=1).action, 'COMPLETE')
+                with HubObservationJournal(Path(self.data['database']), readonly=True) as journal:
+                    resumed = journal.latest(now_epoch=int(time.time()))
+                self.assertEqual(resumed.state, 'RESPONSIVE')
+                self.assertNotEqual(resumed.pid, first.pid)
+            with HubObservationJournal(Path(self.data['database']), readonly=True) as journal:
+                closed = journal.latest(now_epoch=int(time.time()))
+            self.assertEqual(closed.state, 'CLOSED')
+
+    def test_schema_four_rejects_unpinned_mcp_without_service_launch(self):
+        self._enable_mcp()
+        self.data['mcp']['interpreter_sha256'] = '0' * 64
+        self.save()
+        with self.assertRaisesRegex(BootstrapError, 'changed since onboarding'):
+            Installation.load(self.config)
+        self._enable_mcp()
+        self.data['mcp']['interpreter'] = str(self.script)
+        self.save()
+        with self.assertRaisesRegex(BootstrapError, 'MCP interpreter'):
+            Installation.load(self.config)
+        self._enable_mcp()
+        self.data['mcp']['response_timeout'] = True
+        self.save()
+        with self.assertRaisesRegex(BootstrapError, 'MCP interpreter settings'):
+            Installation.load(self.config)
+
     def test_schema_three_launches_real_pinned_viewer(self):
         self._enable_dashboard()
         self.save()
