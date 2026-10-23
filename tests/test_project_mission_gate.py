@@ -64,6 +64,7 @@ class ProjectMissionGateTests(unittest.TestCase):
             "expected_profile_digest": self.entry.digest,
             "expected_snapshot_sha": SHA,
             "expected_source_digest": DIGEST,
+            "runtime_repository": "r9327/Dof-Atlas",
             "source": "trusted:roadmap",
             "trusted_importer": self._record,
         }
@@ -145,8 +146,26 @@ class ProjectMissionGateTests(unittest.TestCase):
                 self.registry, json.dumps(self.roadmap).encode(),
                 raw, expected_profile_digest=self.entry.digest,
                 expected_snapshot_sha=SHA, expected_source_digest=DIGEST,
+                runtime_repository="r9327/Dof-Atlas",
                 source="trusted:roadmap", trusted_importer=self._record)
         self.assertFalse(self.calls)
+
+    def test_installed_runtime_repository_must_match_selected_project(self):
+        with self.assertRaisesRegex(ProjectMissionGateError, "installed engine"):
+            self.invoke(runtime_repository="example/another")
+        self.assertEqual(self.calls, [])
+
+    def test_planner_blocked_lot_cannot_be_silently_imported_ready(self):
+        self.roadmap["lots"][1]["state"] = "BLOCKED"
+        with self.assertRaisesRegex(ProjectMissionGateError, "blocked planner"):
+            self.invoke()
+        self.assertEqual(self.calls, [])
+
+    def test_user_decision_flag_cannot_be_hidden_in_auto_mission(self):
+        self.missions["missions"][0]["product_decision_required"] = True
+        with self.assertRaisesRegex(ProjectMissionGateError, "differs"):
+            self.invoke()
+        self.assertEqual(self.calls, [])
 
     def test_failing_importer_does_not_claim_completion(self):
         def blocked(raw, *, source):
