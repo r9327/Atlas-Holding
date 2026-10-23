@@ -5,6 +5,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from pathlib import Path
+from threading import Event
 import tempfile
 import time
 import unittest
@@ -124,6 +125,50 @@ class LiveDashboardTests(unittest.TestCase):
                 self.assertFalse(window.resume_button.isEnabled())
                 self.assertTrue(window.logs.rowCount() > 0)
             finally:
+                window.close()
+
+    def test_second_command_waits_for_new_authenticated_durable_state(self):
+        write_key = b"v" * 32
+        with DashboardIpcServer.for_database(
+                self.db, engine_id=ENGINE, secret=KEY,
+                control_secret=write_key) as host:
+            read = DashboardIpcClient(
+                port=host.port, secret=KEY, engine_id=ENGINE)
+            write = DashboardControlClient(port=host.port, secret=write_key)
+            allow_write = Event()
+            original_send = write.send
+
+            def delayed_send(action):
+                if not allow_write.wait(3):
+                    raise RuntimeError("Timed out waiting for test writer")
+                return original_send(action)
+
+            window = LiveControlCenterWindow(
+                read, control=write, refresh_ms=250)
+            try:
+                self.until(lambda: window.pause_button.isEnabled())
+                baseline = window.displayed_sequence
+                with patch.object(write, "send", side_effect=delayed_send) as send:
+                    window.pause_button.click()
+                    self.assertIsNotNone(window._awaiting_confirmation)
+                    self.assertFalse(window.pause_button.isEnabled())
+                    self.assertFalse(window.resume_button.isEnabled())
+                    self.assertFalse(window.stop_button.isEnabled())
+                    # Programmatic button slots must not bypass the interlock.
+                    window.request_pause()
+                    window.request_stop()
+                    self.assertEqual(send.call_count, 1)
+                    allow_write.set()
+                    self.until(lambda: window.resume_button.isEnabled())
+                self.assertIsNone(window._awaiting_confirmation)
+                self.assertGreater(window.displayed_sequence, baseline)
+                with StateStore(self.db) as store:
+                    count = store.db.execute(
+                        "SELECT count(*) FROM events WHERE event='PAUSED'"
+                    ).fetchone()[0]
+                self.assertEqual(count, 1)
+            finally:
+                allow_write.set()
                 window.close()
 
     def test_readonly_view_disables_mutating_buttons(self):
