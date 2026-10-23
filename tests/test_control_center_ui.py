@@ -209,6 +209,31 @@ class ControlCenterUiTests(unittest.TestCase):
         self.assertFalse(window._status_timer.isActive())
 
 
+    def test_project_git_state_is_display_only_and_repository_scoped(self):
+        from types import SimpleNamespace
+        window = ControlCenterWindow(trusted_engine_id="engine-1")
+        git_status = SimpleNamespace(
+            repository="r9327/Dof-Atlas",
+            head="a" * 40, remote_head="a" * 40,
+            ahead=0, behind=0, remote_checked=True, dirty=False,
+        )
+        try:
+            window.render_project_status(
+                project="DOFUS Atlas", repository="r9327/Dof-Atlas",
+                git_status=git_status, eligible_missions=2,
+            )
+            self.assertIn("Git : à jour", window.project_status.text())
+            before = window.project_status.text()
+            with self.assertRaisesRegex(ValueError, "another repository"):
+                window.render_project_status(
+                    project="Other", repository="r9327/Atlas-Holding",
+                    git_status=git_status, eligible_missions=2,
+                )
+            self.assertEqual(window.project_status.text(), before)
+            self.assertEqual(window.displayed_sequence, None)
+        finally:
+            window.close()
+
     def test_v2_sync_evidence_is_not_misreported_as_ci_certification(self):
         payload = snapshot()
         task = payload["tasks"][0]
