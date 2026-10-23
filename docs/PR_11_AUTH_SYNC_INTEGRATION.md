@@ -253,3 +253,33 @@ Draft jusqu'à l'intégration et à l'exécution de la certification finale.
   des raisons, compatibilité schéma v2, refus du contenu v3 forgé et affichage Qt.
 - La validation définitive attend une CI exacte SHA sur Ubuntu/Windows et
   la qualification native ; les tests committés ne sont pas des preuves PASS.
+
+
+## Historique des modèles réellement utilisés — protocole IPC v4 (23 octobre 2026)
+
+La projection du Control Center relit désormais la table persistée
+mission_model_usage, jointe aux model_profiles enregistrés depuis le bootstrap
+authentifié. Elle n'affiche que les dernières affectations documentées (au
+maximum 20 après une lecture SQLite bornée à 1 000 lignes récentes) dont la
+mission appartient à la page projetée. Le rôle, le nom enregistré du modèle,
+l'horodatage et les deux digests SHA-256 (modèle/benchmark) sont consultables
+dans un onglet « Historique IA » avec recherche et filtre de rôle.
+
+L'absence de ligne n'est **pas une preuve qu'aucun agent n'est installé** et
+un usage antérieur n'est **pas la preuve d'un agent actuellement actif**.
+Les tableaux Agents/Plugins continuent à n'affirmer aucun état non attesté.
+Les modèles ne sont pas exécutés par le viewer et les secrets du moteur ne
+traversent pas l'IPC. Les schémas de lecture v1/v2/v3 sont conservés ;
+les nouveaux champs sont requis et strictement validés en v4.
+
+Contrats ajoutés : jointure avec les empreintes persistées, bornes de taille,
+refus de rôles, missions, digests ou dates falsifiés, maintien des filtres
+locaux et affichage du temps dans le fuseau de la session Windows. Les tests
+pour la version v4 devront réussir sur le nouveau SHA de certification.
+
+### Référence verte précédente
+
+La validation [GitHub Actions #39914235599](https://github.com/r9327/Atlas-Holding/actions/runs/39914235599)
+sur le SHA f092462f6959e27991a1e5d4236a191b56264833 est **PASS sur
+Ubuntu et Windows**, y compris les tests natifs Windows. Cette référence
+n'atteste **pas** la nouvelle télémétrie v4 ajoutée après ce SHA.
