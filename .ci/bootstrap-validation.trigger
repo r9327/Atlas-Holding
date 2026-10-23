@@ -12,3 +12,5 @@ Batch: repair pathlib Path subclass checks after actual Ubuntu+Windows bootstrap
 Batch: native official CPython 3.13.16 SHA-pinned runnable embeddable smoke, fixed missing-member contract and full Windows bootstrap certification.
 
 Batch: verify stage receipt, reject post-install DLL/module/site modifications and run real publisher-pinned embedded Python on native Windows exact-SHA.
+
+Batch: actual Windows Setup consent flow installs or reuses SHA-256 pinned embedded Python; native release smoke, strict NTFS ACL and rollback certification.
