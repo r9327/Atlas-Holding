@@ -79,6 +79,9 @@ class HoldingService:
         self._github_health = None
         self._dashboard_ipc = None
         self._dashboard_session = None
+        self._mcp_supervisor = None
+        self._mcp_last_refresh = 0.0
+        self.last_mcp_error: str | None = None
 
     @classmethod
     def from_local_agent(cls, settings: ServiceSettings, *, program,
@@ -135,6 +138,46 @@ class HoldingService:
         service._qa_repair = QaRepairCoordinator(
             service.engine.store, git, service.engine.lease)
         return service
+
+    def enable_local_mcp(self, *, interpreter_pin, package_root: Path,
+                         response_timeout: float = 3.0) -> None:
+        """Explicit trusted installer hook. Never accepted from a roadmap."""
+        if self._started or self._mcp_supervisor is not None:
+            raise RuntimeError("MCP supervisor must be enrolled before daemon start")
+        from .mcp_local_inventory import PinnedLocalPlugin
+        from .mcp_supervisor import InternalMcpSupervisor
+        if type(interpreter_pin) is not PinnedLocalPlugin:
+            raise ValueError("MCP interpreter requires an enrolled immutable binary pin")
+        self._mcp_supervisor = InternalMcpSupervisor(
+            database=self.settings.database,
+            interpreter_pin=interpreter_pin, package_root=package_root,
+            response_timeout=response_timeout,
+        )
+
+    def _refresh_local_mcp(self, *, allowed: bool, resources_safe: bool) -> None:
+        """Bounded optional observation, never a work authorization grant."""
+        supervisor = self._mcp_supervisor
+        if supervisor is None:
+            return
+        when = time.monotonic()
+        if allowed and resources_safe and when - self._mcp_last_refresh < 15:
+            return  # Low RAM/CPU steady-state; signed hub proof expires at 30 s.
+        self._mcp_last_refresh = when
+        try:
+            supervisor.step(
+                background_allowed=allowed, resources_safe=resources_safe,
+                now_epoch=int(time.time()),
+            )
+            self.last_mcp_error = None
+        except Exception:
+            self.last_mcp_error = "Local MCP supervisor unavailable"
+            # A failed optional MCP recorder cannot run in parallel to an
+            # unverified daemon state. Stop the child, retain code worker.
+            try:
+                supervisor.close(now_epoch=int(time.time()))
+            except Exception:
+                pass
+            self._mcp_supervisor = None
 
     def enable_git_push(
         self, *, expected_account_id: str, expected_policy_sha: str,
@@ -288,6 +331,8 @@ class HoldingService:
             raise ValueError("max_ticks must be >= 1")
         iterations = 0
         while not self._stop.is_set():
+            mcp_allowed = False
+            mcp_resources_safe = False
             # Do not claim new work without a healthy agent. The daemon keeps its
             # lease and may resume once the adapter passes its real health check.
             # Persistent STOP is never delayed by resource pressure or a dead model.
@@ -308,6 +353,7 @@ class HoldingService:
                             'LEASE_LOST', None,
                             'Lease lost during GitHub health probe')
                 resources = self.resource_guard.check()
+                mcp_resources_safe = resources.safe
                 if not resources.safe:
                     result = Tick("RESOURCE_PRESSURE", None, resources.reason)
                 else:
@@ -334,6 +380,16 @@ class HoldingService:
                     else:
                         result = Tick("AGENT_UNAVAILABLE", None,
                                       "No trusted role adapter is ready")
+            mcp_allowed = (
+                mcp_resources_safe
+                and not self.engine.store.background_suspended()
+                and result.action not in {
+                    "STOPPED", "LEASE_LOST", "RESOURCE_PRESSURE", "AGENT_UNAVAILABLE"
+                }
+            )
+            self._refresh_local_mcp(
+                allowed=mcp_allowed, resources_safe=mcp_resources_safe,
+            )
             iterations += 1
             if result.action in {"STOPPED", "LEASE_LOST"}:
                 return result
@@ -345,6 +401,7 @@ class HoldingService:
                 self._stop.wait(self.settings.idle_seconds)
         # Shutdown persists a STOP command for a deterministic next boot.
         self.engine.stop()
+        self._refresh_local_mcp(allowed=False, resources_safe=False)
         return Tick("STOPPED", None, "Shutdown requested")
 
     def close(self) -> None:
@@ -360,9 +417,16 @@ class HoldingService:
                 self.disable_dashboard_ipc()
             finally:
                 try:
-                    self.engine.close()
+                    if self._mcp_supervisor is not None:
+                        try:
+                            self._mcp_supervisor.close(now_epoch=int(time.time()))
+                        finally:
+                            self._mcp_supervisor = None
                 finally:
-                    self._started = False
+                    try:
+                        self.engine.close()
+                    finally:
+                        self._started = False
 
     def __enter__(self) -> "HoldingService":
         return self
