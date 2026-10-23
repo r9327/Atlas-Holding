@@ -115,6 +115,8 @@ class McpStdioTests(unittest.TestCase):
     def test_tool_schema_rejects_unimplemented_or_unsafe_claims(self):
         bad = [
             {"type": "object", "$ref": "https://host/schema"},
+            {"type": ["object", "null"]},
+            {"type": {"unsafe": "object"}},
             {"type": "object", "properties": {"x": {"type": "number"}},
              "required": [["x"]]},
             {"type": "object", "properties": {"x": {"type": "string"}},
@@ -130,6 +132,23 @@ class McpStdioTests(unittest.TestCase):
         for schema in bad:
             with self.subTest(schema=schema), self.assertRaises(ValueError):
                 Tool("invalid", "Invalid", schema, lambda _args: "never")
+
+    def test_numeric_enum_never_matches_boolean_alias(self):
+        server = McpRouter((Tool(
+            "exact", "Exact type",
+            {"type": "object", "additionalProperties": False,
+             "properties": {"n": {"type": "integer", "enum": [True, 2]}},
+             "required": ["n"]},
+            lambda _arguments: "ok",
+        ),), server_name="bounded", server_version="1")
+        forbidden = response(server, request("tools/call", {
+            "name": "exact", "arguments": {"n": 1},
+        }))
+        self.assertEqual(forbidden["error"]["code"], -32602)
+        allowed = response(server, request("tools/call", {
+            "name": "exact", "arguments": {"n": 2},
+        }))
+        self.assertFalse(allowed["result"]["isError"])
 
     def test_non_finite_or_oversized_schema_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "finite JSON"):
