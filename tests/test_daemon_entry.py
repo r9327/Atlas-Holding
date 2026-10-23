@@ -171,6 +171,102 @@ json.dump({'schema_version':1,'request_id':r['request_id'],'status':'OK',
         pins = build_installation_module_pins(root)
         self.data['mcp']['module_sha256'] = dict(pins.entries)
 
+    def _trusted_mcp_enrollment(self):
+        from holding.mcp_package_pin import build_installation_module_pins
+        self._enable_dashboard(readonly=True)
+        self.save()
+        interpreter = Path(sys.executable).resolve()
+        root = Path(__file__).resolve().parents[1]
+        pin = build_installation_module_pins(root)
+        return {
+            "source_config": self.config,
+            "installed_package_root": root,
+            "interpreter_path": interpreter,
+            "trusted_interpreter_sha256":
+                hashlib.sha256(interpreter.read_bytes()).hexdigest(),
+            "trusted_module_sha256": dict(pin.entries),
+            "timeout_seconds": 3,
+        }
+
+    def test_installer_prepares_and_exclusively_writes_real_mcp_v5_config(self):
+        from contextlib import nullcontext
+        from unittest.mock import patch
+        from holding.mcp_enrollment import (
+            prepare_v5_mcp_enrollment, create_new_v5_config)
+        context = (patch("holding.mcp_enrollment.require_private_windows_path")
+                   if sys.platform == "win32" else nullcontext())
+        with context:
+            params = self._trusted_mcp_enrollment()
+            prior = self.config.read_bytes()
+            plan = prepare_v5_mcp_enrollment(**params)
+            self.assertEqual(self.config.read_bytes(), prior)
+            self.assertGreaterEqual(plan.pinned_module_count, 7)
+            self.assertEqual(json.loads(plan.payload)["schema"], 5)
+            output = self.root / "install-v5.json"
+            self.assertEqual(create_new_v5_config(plan=plan, destination=output),
+                             output)
+            self.assertEqual(self.config.read_bytes(), prior)
+            loaded = Installation.load(output)
+            self.assertIsNotNone(loaded.mcp.package_pin)
+            self.assertTrue(loaded.mcp.package_pin.verify(params["installed_package_root"]))
+            with self.assertRaises(FileExistsError):
+                create_new_v5_config(plan=plan, destination=output)
+            self.assertEqual(output.read_bytes(), plan.payload)
+
+    def test_installer_refuses_release_manifest_mismatch_or_config_rollback(self):
+        from contextlib import nullcontext
+        from unittest.mock import patch
+        from holding.mcp_enrollment import (
+            prepare_v5_mcp_enrollment, create_new_v5_config, McpEnrollmentError)
+        context = (patch("holding.mcp_enrollment.require_private_windows_path")
+                   if sys.platform == "win32" else nullcontext())
+        with context:
+            params = self._trusted_mcp_enrollment()
+            forged = dict(params)
+            forged["trusted_interpreter_sha256"] = "0" * 64
+            with self.assertRaises(McpEnrollmentError):
+                prepare_v5_mcp_enrollment(**forged)
+            forged = dict(params)
+            forged["trusted_module_sha256"] = dict(
+                params["trusted_module_sha256"], **{"mcp_entry.py": "0" * 64})
+            with self.assertRaises(McpEnrollmentError):
+                prepare_v5_mcp_enrollment(**forged)
+            plan = prepare_v5_mcp_enrollment(**params)
+            self.data["timeout_seconds"] = 4
+            self.save()
+            target = self.root / "config-enrolled.json"
+            with self.assertRaises(McpEnrollmentError):
+                create_new_v5_config(plan=plan, destination=target)
+            self.assertFalse(target.exists())
+
+    def test_installer_rejects_duplicate_keys_and_implicit_mcp_replacement(self):
+        from contextlib import nullcontext
+        from unittest.mock import patch
+        from holding.mcp_enrollment import (
+            prepare_v5_mcp_enrollment, McpEnrollmentError)
+        context = (patch("holding.mcp_enrollment.require_private_windows_path")
+                   if sys.platform == "win32" else nullcontext())
+        with context:
+            params = self._trusted_mcp_enrollment()
+            source = self.config.read_text(encoding="utf-8")
+            self.config.write_text(source[:-1] + ', "schema":3}',
+                                   encoding="utf-8")
+            with self.assertRaisesRegex(McpEnrollmentError, "Duplicate"):
+                prepare_v5_mcp_enrollment(**params)
+            self._enable_mcp_package_pin()
+            self.save()
+            with self.assertRaisesRegex(McpEnrollmentError, "replace existing"):
+                prepare_v5_mcp_enrollment(**params)
+
+    def test_installer_never_accepts_frozen_app_as_mcp_interpreter(self):
+        from unittest.mock import patch
+        from holding.mcp_enrollment import (
+            prepare_v5_mcp_enrollment, McpEnrollmentError)
+        params = self._trusted_mcp_enrollment()
+        with patch("holding.mcp_enrollment.sys.frozen", True, create=True):
+            with self.assertRaisesRegex(McpEnrollmentError, "not a frozen EXE"):
+                prepare_v5_mcp_enrollment(**params)
+
     def test_schema_five_ensures_every_installed_mcp_module_is_pinned(self):
         from contextlib import nullcontext
         from unittest.mock import patch
