@@ -292,6 +292,23 @@ class ControlCenterWindow(QMainWindow):
         if self._last_received_at is not None:
             self._status_timer.start()
 
+    def _display_local_hub(self, state: DashboardState) -> None:
+        hub = state.hub
+        if hub is None:
+            self.hub_status.setText(
+                "Hub MCP interne : aucune observation authentifiée reçue"
+            )
+            return
+        detail = (
+            f"Hub MCP interne : {hub.state} · "
+            f"observation {hub.age_seconds} s · "
+            f"PID {hub.pid if hub.pid is not None else '—'} · "
+            f"SHA256 {hub.source_sha256[:12]}…"
+        )
+        if hub.state == "RESPONSIVE":
+            detail += f" · protocole {hub.protocol_version}"
+        self.hub_status.setText(detail)
+
     def acknowledge_authenticated_state(self, state: DashboardState) -> bool:
         """Renew freshness only after a new MAC-verified IPC response."""
         if not isinstance(state, DashboardState):
@@ -301,6 +318,9 @@ class ControlCenterWindow(QMainWindow):
         if self._sequence is None or state.sequence != self._sequence:
             return False
         self._last_received_at = monotonic()
+        # A signed same-sequence heartbeat can update independent supervisor
+        # observations without implying a new durable mission transition.
+        self._display_local_hub(state)
         self.status.setText(self._last_status_text)
         self._status_timer.start()
         return True
@@ -390,21 +410,7 @@ class ControlCenterWindow(QMainWindow):
             else f"{service.age_seconds} s",
         ) for service in state.services)
         _replace_rows(self.services, service_rows)
-        hub = state.hub
-        if hub is None:
-            self.hub_status.setText(
-                "Hub MCP interne : aucune observation authentifiée reçue"
-            )
-        else:
-            detail = (
-                f"Hub MCP interne : {hub.state} · "
-                f"observation {hub.age_seconds} s · "
-                f"PID {hub.pid if hub.pid is not None else '—'} · "
-                f"SHA256 {hub.source_sha256[:12]}…"
-            )
-            if hub.state == "RESPONSIVE":
-                detail += f" · protocole {hub.protocol_version}"
-            self.hub_status.setText(detail)
+        self._display_local_hub(state)
         history_rows = tuple((
             usage.role, usage.task_id, usage.model_name,
             datetime.fromtimestamp(usage.observed_at).astimezone().strftime(
