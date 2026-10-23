@@ -277,7 +277,7 @@ def launch_verified_local_hub(*, interpreter_pin: PinnedLocalPlugin,
             if key in os.environ:
                 env[key] = os.environ[key]
         child = subprocess.Popen(
-            [str(interpreter_pin.executable), "-B", "-m", "holding.mcp_entry"],
+            [str(interpreter_pin.executable), "-E", "-S", "-B", "-m", "holding.mcp_entry"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             cwd=str(package_root), env=env, shell=False,
             creationflags=CREATE_SUSPENDED | subprocess.CREATE_NO_WINDOW,
