@@ -210,6 +210,35 @@ class ControlCenterUiTests(unittest.TestCase):
         self.assertFalse(window._status_timer.isActive())
 
 
+    def test_empty_agent_and_plugin_projections_do_not_claim_offline(self):
+        window = ControlCenterWindow(trusted_engine_id="engine-1")
+        try:
+            self.assertTrue(window.render_state(self.state()))
+            self.assertIn("1 état(s)", window.agent_telemetry.text())
+            self.assertIn("1 état(s)", window.plugin_telemetry.text())
+
+            payload = snapshot()
+            payload["sequence"] = 43
+            payload["log_page"]["items"][0]["sequence"] = 42
+            payload["log_page"]["items"][0]["plugin_name"] = None
+            payload["agents"] = []
+            payload["plugins"] = []
+            empty = consume_dashboard_snapshot(
+                json.dumps(payload).encode("utf-8"),
+                trusted_engine_id="engine-1",
+                expected_sequence=43, now_epoch=NOW,
+            )
+            self.assertTrue(window.render_state(empty))
+            self.assertEqual(window.agents.rowCount(), 0)
+            self.assertEqual(window.plugins.rowCount(), 0)
+            self.assertIn("disponibilité non déterminable",
+                          window.agent_telemetry.text())
+            self.assertIn("disponibilité non déterminable",
+                          window.plugin_telemetry.text())
+            self.assertNotIn("OFFLINE", window.plugin_telemetry.text())
+        finally:
+            window.close()
+
     def test_bounded_large_roadmap_and_log_page_keep_unmodified_qt_cells(self):
         payload = snapshot()
         template = deepcopy(payload["tasks"][0])
