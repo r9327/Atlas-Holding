@@ -553,6 +553,12 @@ ACL, puis contrôle des ACL du binaire, du dossier de modules et de
 chaque source `.py`. Un échec de droit effectue un rollback des seuls
 fichiers fraîchement créés, sans modifier une installation précédente.
 
+En relançant l'installateur sur un répertoire qui contient déjà une
+version embeddable du **même SHA**, l'étape relit tous les fichiers natifs
+et sources puis rend `REUSED_VERIFIED_NOT_EXECUTED` sans retélécharger
+ni recopier. Une installation précédente corrompue est refusée **sans
+suppression silencieuse** de ses données.
+
 `execute_setup` peut recevoir optionnellement l'archive CPython et
 les empreintes de sources authentifiées avec le bundle moteur. Une
 activation partielle est refusée ; l'étape n'est lancée qu'après le
