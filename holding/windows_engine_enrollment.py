@@ -289,14 +289,21 @@ def enroll_pinned_engine(
     # Do not create a user-writable config root just to make enrollment pass.
     _canonical(data_root, directory=True)
     _canonical(config_root, directory=True)
-    _native_security((
+    security_targets = (
         request.install_root,
         request.runtime_directory.parent,
         request.runtime_directory,
         request.runtime_directory / "AtlasHoldingControlCenter.exe",
         request.runtime_directory / "AtlasHoldingEngine.exe",
         data_root, config_root,
-    ))
+    )
+    if request.mcp_runtime is not None:
+        root = request.mcp_runtime.directory
+        security_targets += (
+            root.parent, root, root / "python.exe", root / "holding",
+        ) + tuple(root / "holding" / name
+                  for name in sorted(request.mcp_release.module_sha256))
+    _native_security(security_targets)
     payload = _document(request)
     if len(payload) > 32 * 1024:
         raise EngineEnrollmentError("Trusted engine config exceeds size limit")
