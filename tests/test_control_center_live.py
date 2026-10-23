@@ -179,6 +179,10 @@ class LiveDashboardTests(unittest.TestCase):
                     # Programmatic button slots must not bypass the interlock.
                     window.request_pause()
                     window.request_stop()
+                    # submit() queues work on another thread. A zero call
+                    # count immediately after click is not evidence that the
+                    # command was lost; wait until the worker enters send().
+                    self.until(lambda: send.call_count == 1)
                     self.assertEqual(send.call_count, 1)
                     allow_write.set()
                     self.until(lambda: window.resume_button.isEnabled())
