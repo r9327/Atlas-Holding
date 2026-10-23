@@ -10,3 +10,5 @@ Batch: verified offline CPython embeddable ZIP staging, SHA-256 Holding sources,
 Batch: repair pathlib Path subclass checks after actual Ubuntu+Windows bootstrap CI failure; rerun exact-head tests.
 
 Batch: native official CPython 3.13.16 SHA-pinned runnable embeddable smoke, fixed missing-member contract and full Windows bootstrap certification.
+
+Batch: verify stage receipt, reject post-install DLL/module/site modifications and run real publisher-pinned embedded Python on native Windows exact-SHA.
