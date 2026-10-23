@@ -43,6 +43,7 @@ def import_verified_project_missions(
     expected_profile_digest: str,
     expected_snapshot_sha: str,
     expected_source_digest: str,
+    runtime_repository: str,
     source: str,
     trusted_importer: Callable[..., object],
 ) -> object:
@@ -51,6 +52,8 @@ def import_verified_project_missions(
     The registry lock prevents changing project selection during the import.
     The *actual* control plane must independently authorize execution later.
     """
+    if not isinstance(runtime_repository, str) or not runtime_repository or "/" not in runtime_repository:
+        raise ProjectMissionGateError("trusted runtime repository required")
     if not callable(trusted_importer):
         raise ProjectMissionGateError("trusted mission importer is required")
     if not isinstance(source, str) or not source.strip() or len(source) > 500:
@@ -85,6 +88,10 @@ def import_verified_project_missions(
         )
         if document["repo"] != binding.repository:
             raise ProjectMissionGateError("operational roadmap targets another project")
+        # A selected UI project does not authorize changing the repo of the
+        # installed engine, whose canonical root and Git grants are pinned.
+        if binding.repository != runtime_repository:
+            raise ProjectMissionGateError("selected project differs from installed engine repository")
         plan = validate_roadmap_plan(
             planner_bytes,
             expected_repository=binding.repository,
@@ -92,6 +99,10 @@ def import_verified_project_missions(
             expected_source_digest=binding.source_digest,
         )
         lots = {lot.lot_id: lot for lot in plan.lots}
+        if any(lot.state in {"BLOCKED", "REQUIRES_DECISION"} for lot in plan.lots):
+            # The live importer writes all missions as READY. Never smuggle
+            # a planner-blocked lot into that executable state.
+            raise ProjectMissionGateError("blocked planner lots require explicit replan")
         mission_ids = set()
         for mission in document["missions"]:
             if not isinstance(mission, dict):
@@ -115,7 +126,7 @@ def import_verified_project_missions(
                     or mission["acceptance"] != list(lot.acceptance)
                     or type(mission.get("external_required", False)) is not bool
                     or mission.get("external_required", False) != lot.external_evidence_required
-                    or type(mission.get("product_decision_required", False)) is not bool):
+                    or mission.get("product_decision_required", False) is not False):
                 raise ProjectMissionGateError("mission differs from approved lot")
             priority = mission.get("priority", 0)
             if type(priority) is not int or not -1000 <= priority <= 1000:
