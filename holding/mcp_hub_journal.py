@@ -12,7 +12,7 @@ from pathlib import Path
 import re
 import sqlite3
 
-from .mcp_hub_session import McpSessionObservation
+from .mcp_hub_session import LocalMcpHubSession, McpSessionObservation
 from .mcp_stdio import PROTOCOL_VERSION
 
 
@@ -101,7 +101,7 @@ class HubObservationJournal:
         if self.readonly:
             raise McpObservationError("Read-only journal")
         if (type(observation) is not McpSessionObservation
-                or observation.state not in _STATES
+                or type(observation.state) is not str or observation.state not in _STATES
                 or type(source_sha256) is not str or not _SHA.fullmatch(source_sha256)
                 or type(now_epoch) is not int or not 0 <= now_epoch <= _MAX_EPOCH
                 or type(observation.external_plugins_tested) is not bool
@@ -141,6 +141,16 @@ class HubObservationJournal:
             )
         return cursor.lastrowid
 
+    def record_live_session(self, session: LocalMcpHubSession, *,
+                            now_epoch: int) -> int:
+        """Capture an actual local session, not an agent-declared status."""
+        if type(session) is not LocalMcpHubSession:
+            raise McpObservationError("Only an observed supervisor session is accepted")
+        return self.record(
+            session.observe(), source_sha256=session._pin.expected_sha256,
+            now_epoch=now_epoch,
+        )
+
     def latest(self, *, now_epoch: int) -> DurableHubObservation | None:
         if type(now_epoch) is not int or not 0 <= now_epoch <= _MAX_EPOCH:
             raise McpObservationError("Invalid trusted journal clock")
@@ -157,7 +167,8 @@ class HubObservationJournal:
                 or (pid is not None
                     and (type(pid) is not int or not 1 <= pid <= 2**32 - 1))
                 or (state == "RESPONSIVE") !=
-                    (protocol == PROTOCOL_VERSION)):
+                    (protocol == PROTOCOL_VERSION)
+                or (state == "RESPONSIVE" and pid is None)):
             raise McpObservationError("Corrupted hub journal evidence")
         # A positive observation does not stay fresh indefinitely; other
         # states are persisted historically, never upgraded to RESPONSiVE.
