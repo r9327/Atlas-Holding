@@ -141,7 +141,8 @@ class HoldingService:
         return service
 
     def enable_local_mcp(self, *, interpreter_pin, package_root: Path,
-                         response_timeout: float = 3.0) -> None:
+                         response_timeout: float = 3.0,
+                         package_pin=None) -> None:
         """Explicit trusted installer hook. Never accepted from a roadmap."""
         if self._started or self._mcp_supervisor is not None:
             raise RuntimeError("MCP supervisor must be enrolled before daemon start")
@@ -152,7 +153,7 @@ class HoldingService:
         self._mcp_supervisor = InternalMcpSupervisor(
             database=self.settings.database,
             interpreter_pin=interpreter_pin, package_root=package_root,
-            response_timeout=response_timeout,
+            response_timeout=response_timeout, package_pin=package_pin,
         )
 
     def _refresh_local_mcp(self, *, allowed: bool, resources_safe: bool) -> None:
