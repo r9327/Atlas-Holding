@@ -1,0 +1,24 @@
+{
+  "schema": "project-profile/v1",
+  "name": "dofus-atlas",
+  "repository": "r9327/Dof-Atlas",
+  "branch": "feat/holding-managed-candidate",
+  "checkout_dir": "dofus-atlas-worktree",
+  "commands": {
+    "test": [
+      "python",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "tests",
+      "-p",
+      "test_atlas_doctor.py"
+    ]
+  },
+  "adapters": [
+    "doctor",
+    "graphify",
+    "ai-context"
+  ]
+}

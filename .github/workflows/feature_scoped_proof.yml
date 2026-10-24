@@ -15,6 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
@@ -25,7 +26,17 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import subprocess, sys
-          candidates = ("test_document_intake.py", "test_project_profile.py", "test_update_plan.py", "test_document_csv.py", "test_document_exchange.py", "test_document_source.py", "test_documentalist_cli.py", "test_document_html.py", "test_document_cache.py", "test_document_markdown.py", "test_document_folder.py")
+          candidates = (
+              "test_document_intake.py", "test_document_csv.py",
+              "test_document_exchange.py", "test_document_source.py",
+              "test_documentalist_cli.py", "test_document_html.py",
+              "test_document_cache.py", "test_document_markdown.py",
+              "test_document_folder.py", "test_project_profile.py",
+              "test_project_profile_cli.py", "test_project_profile_examples.py",
+              "test_project_registry.py", "test_project_registry_cli.py",
+              "test_project_plan_binding.py", "test_project_mission_gate.py",
+              "test_update_plan.py",
+          )
           present = [name for name in candidates if (Path("tests") / name).is_file()]
           if not present:
               raise SystemExit("No new feature tests in this branch")
@@ -33,3 +44,6 @@ jobs:
               print("Testing", name, flush=True)
               subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", name, "-v"], check=True)
           PY
+      - name: Checkout clean after tests
+        shell: bash
+        run: test -z "$(git status --porcelain --untracked-files=normal)"
