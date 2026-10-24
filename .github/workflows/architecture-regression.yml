@@ -1,0 +1,41 @@
+name: Holding Architecture Regression
+
+on:
+  pull_request:
+    branches: [main]
+    types: [ready_for_review, labeled]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  architecture:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.action == 'ready_for_review' ||
+      github.event.label.name == 'ci:validate'
+    name: Architecture regression (stdlib)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Python 3.13
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - name: Run architectural policy tests
+        run: python -B -X utf8 -m unittest discover -s tests -p 'test_architecture_guard.py' -v
+      - name: Reject new verified architectural debt
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: python -B -X utf8 -m tools.architecture_guard --base-ref "$BASE_SHA"
+      - name: Require clean checkout
+        shell: bash
+        run: test -z "$(git status --porcelain --untracked-files=normal)"
