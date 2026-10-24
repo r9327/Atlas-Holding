@@ -1,0 +1,124 @@
+name: Authorization sync integration validation
+
+on:
+  pull_request:
+    branches: [main]
+    types: [ready_for_review, labeled]
+  # Explicit one-shot integration run. Ordinary code commits do not trigger FULL.
+  push:
+    branches: [feat/integration-137]
+    paths:
+      - .ci/integration-validation.trigger
+
+permissions:
+  contents: read
+
+jobs:
+  integration-tests:
+    if: >-
+      (github.event_name == 'push' &&
+       github.ref == 'refs/heads/feat/integration-137') ||
+      (github.event_name == 'pull_request' &&
+       github.head_ref == 'feat/integration-137' &&
+       (github.event.action == 'ready_for_review' ||
+        github.event.label.name == 'ci:validate'))
+    name: Authorization sync integration on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact integration SHA
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Python 3.13
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Install Qt runtime library on Linux
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libegl1
+      - name: Install exact UI runtime used by the integrated tests
+        run: python -m pip install --disable-pip-version-check PySide6==6.12.0
+      - name: Check Python syntax without bytecode writes
+        run: python -c "import ast,pathlib; [ast.parse(p.read_text(encoding='utf-8'),filename=str(p)) for d in ('holding','tests') for p in pathlib.Path(d).rglob('*.py')]"
+      - name: Run complete integrated unittest collection
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -B -X utf8 -m unittest discover -s tests -p "test_*.py" -v
+      - name: Require clean checkout after tests
+        shell: bash
+        run: 'test -z "$(git status --porcelain --untracked-files=normal)"'
+      - name: Exercise real installed CPython MCP protocol inside native Windows Job Object
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 6
+        run: |
+          $url = "https://www.python.org/ftp/python/3.13.16/python-3.13.16-embed-amd64.zip"
+          $officialSha = "97dae5274cc54867065e8d5a3226e48c35017ed332a0fdb0e27d5b5821961297"
+          $archive = Join-Path $env:RUNNER_TEMP "atlas-mcp-official-cpython-$officialSha.zip"
+          try {
+            Invoke-WebRequest -Uri $url -OutFile $archive -MaximumRedirection 3 -TimeoutSec 180
+            if (!(Test-Path $archive)) { throw "CPython publisher ZIP unavailable" }
+            if ((Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $officialSha) {
+              throw "CPython publisher hash did not match release"
+            }
+            python -B -X utf8 -m holding.mcp_installed_companion_smoke --archive "$archive"
+            if ($LASTEXITCODE -ne 0) { throw "Installed MCP companion native Job Object/protocol smoke failed" }
+            Write-Output "NATIVE_INSTALLED_MCP_JOB_OBJECT_PASS"
+          } finally {
+            Remove-Item -Force -ErrorAction SilentlyContinue $archive
+          }
+      - name: Install exact nonrelease Windows bundle packager
+        if: runner.os == 'Windows'
+        run: |
+          python -m pip install --disable-pip-version-check --only-binary=:all: "pyinstaller==6.22.3"
+      - name: Build and execute frozen Control Center and engine smokes on real Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 16
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP "atlas-control-center-candidate-$env:GITHUB_RUN_ID"
+          python -B -m holding.windows_control_center_build --kind all --output-dir "$output"
+          if ($LASTEXITCODE -ne 0) { throw "Native Control Center packaging failed" }
+          $exe = Join-Path $output "AtlasHoldingControlCenter.exe"
+          if (!(Test-Path $exe) -or (Get-Item $exe).Length -lt 1000000) {
+            throw "Native viewer executable is missing or incomplete"
+          }
+          $ok = Start-Process -FilePath $exe -ArgumentList '--self-test' -PassThru -Wait
+          if ($ok.ExitCode -ne 0) { throw "Frozen Qt Control Center self-test failed: $($ok.ExitCode)" }
+          $denied = Start-Process -FilePath $exe -ArgumentList @('--self-test','--port','1234') -PassThru -Wait
+          if ($denied.ExitCode -ne 2) { throw "Bundled viewer did not reject mixed self-test arguments" }
+          $engine = Join-Path $output "AtlasHoldingEngine.exe"
+          if (!(Test-Path $engine) -or (Get-Item $engine).Length -lt 1000000) {
+            throw "Native headless daemon executable is missing or incomplete"
+          }
+          & $engine --self-test
+          if ($LASTEXITCODE -ne 0) { throw "Frozen durable engine SQLite self-test failed" }
+          & $engine --self-test --config invalid
+          if ($LASTEXITCODE -ne 2) { throw "Frozen engine accepted conflicting self-test args" }
+          Write-Output "NONRELEASE_GUI_QT_SMOKE_PASS"
+          python -B -X utf8 tests/native_windows_runtime_smoke.py --viewer "$exe" --engine "$engine"
+          if ($LASTEXITCODE -ne 0) { throw "Frozen GUI-to-engine native private-pipe smoke failed" }
+          Write-Output "NONRELEASE_ENGINE_SQLITE_SMOKE_PASS"
+          $agent = Join-Path $output "AtlasHoldingAgent.exe"
+          if (!(Test-Path $agent) -or (Get-Item $agent).Length -lt 1000000) {
+            throw "Frozen local agent executable is missing or incomplete"
+          }
+          python -B -X utf8 tests/native_windows_agent_smoke.py --agent "$agent"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Frozen local agent failed native Ollama protocol v1"
+          }
+          Write-Output "Agent SHA256: $((Get-FileHash -Algorithm SHA256 $agent).Hash.ToLowerInvariant())"
+          Write-Output "Viewer SHA256: $((Get-FileHash -Algorithm SHA256 $exe).Hash.ToLowerInvariant())"
+          Write-Output "Engine SHA256: $((Get-FileHash -Algorithm SHA256 $engine).Hash.ToLowerInvariant())"
+          Remove-Item -Force -Recurse "$output"
+          if (git status --porcelain --untracked-files=normal) {
+            throw "Frozen viewer build mutated checked-out sources"
+          }

@@ -1,1 +1,1 @@
-"""Atlas Holding foundational policy contracts and core primitives."""
+"""Atlas Holding bootstrap, core, agents, tools, UI, and release contracts."""

@@ -13,10 +13,13 @@ import sqlite3
 import time
 
 from .sqlite_backup import create_snapshot, Snapshot
-from .schema import MODEL_SCHEMA_V1, RUNTIME_SCHEMA_V2, RUNTIME_SCHEMA_V3, apply_schema
+from .schema import (
+    MODEL_SCHEMA_V1, RUNTIME_SCHEMA_V2, RUNTIME_SCHEMA_V3,
+    RUNTIME_SCHEMA_V4, RUNTIME_SCHEMA_V5, apply_schema,
+)
 from .state_store import StateStore, StoreError
 
-CURRENT_SCHEMA = 3
+CURRENT_SCHEMA = 5
 SHA256 = re.compile(r'^[0-9a-f]{64}$')
 
 
@@ -66,6 +69,10 @@ class SchemaMigrator:
                 apply_schema(self.store.db, RUNTIME_SCHEMA_V2)
             if version < 3:
                 apply_schema(self.store.db, RUNTIME_SCHEMA_V3)
+            if version < 4:
+                apply_schema(self.store.db, RUNTIME_SCHEMA_V4)
+            if version < 5:
+                apply_schema(self.store.db, RUNTIME_SCHEMA_V5)
             self.store.db.execute(f'PRAGMA user_version={CURRENT_SCHEMA}')
             self._require_integrity()
             self.store._event(

@@ -9,6 +9,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
+import hashlib
 import json
 import re
 import sqlite3
@@ -17,6 +18,10 @@ from typing import Iterable, Iterator
 
 from .autonomy import Decision, KNOWN_OPERATIONS, Mission, StandingGrant, choose_next
 from .schema import CORE_SCHEMA, apply_schema
+from .standing_grant import (
+    StandingGrantError, authorize_operation, serialize_github_authorization,
+    validate_standing_grant_record,
+)
 
 SHA_RE = re.compile(r"^[a-fA-F0-9]{40}$")
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -190,7 +195,85 @@ class StateStore:
             raise StoreError("Invalid exact repository")
         with self._transaction():
             self.db.execute("UPDATE grants SET enabled=0 WHERE repo=?", (repo,))
+            if self.db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' "
+                    "AND name='github_authorization_grants'").fetchone():
+                self.db.execute(
+                    "UPDATE github_authorization_grants SET enabled=0 WHERE repo=?",
+                    (repo,))
             self._event(None, "GRANT_REVOKED", repo)
+
+    def install_github_grant_for_onboarding(
+        self, raw_grant: bytes, *, expected_record_sha256: str,
+        observed_account_id: str, expected_policy_sha: str,
+        repository: str, now_epoch: int, lease_owner: str,
+    ) -> None:
+        """Persist authenticated consent metadata; never stores a GitHub token."""
+        try:
+            record = validate_standing_grant_record(
+                raw_grant, expected_record_sha256=expected_record_sha256,
+                expected_policy_sha=expected_policy_sha,
+                observed_account_id=observed_account_id,
+                repository=repository, now_epoch=now_epoch)
+        except StandingGrantError as exc:
+            raise StoreError("Invalid GitHub onboarding grant") from exc
+        with self._transaction():
+            self._assert_daemon_fence(lease_owner)
+            try:
+                self.db.execute(
+                    """INSERT INTO github_authorization_grants(
+                       repo,raw_grant,grant_sha256,account_id,policy_sha,
+                       expires_epoch,enabled,updated_epoch)
+                       VALUES(?,?,?,?,?,?,1,?)
+                       ON CONFLICT(repo) DO UPDATE SET
+                       raw_grant=excluded.raw_grant,
+                       grant_sha256=excluded.grant_sha256,
+                       account_id=excluded.account_id,
+                       policy_sha=excluded.policy_sha,
+                       expires_epoch=excluded.expires_epoch,
+                       enabled=1,updated_epoch=excluded.updated_epoch""",
+                    (repository, raw_grant, record.grant_sha256,
+                     record.account_id, record.policy_sha,
+                     record.expires_at, now_epoch))
+            except sqlite3.OperationalError as exc:
+                raise StoreError("GitHub grant schema is not installed") from exc
+            self._event(None, "GITHUB_GRANT_INSTALLED",
+                        f"{repository}:{record.grant_id}:{record.grant_sha256}")
+
+    def github_authorization_receipt(
+        self, *, repository: str, operation: str, branch: str,
+        candidate_sha: str, expected_account_id: str,
+        expected_policy_sha: str, now_epoch: int,
+    ) -> tuple[bytes, str]:
+        """Revalidate persisted consent and bind a fresh exact-SHA receipt."""
+        try:
+            row = self.db.execute(
+                "SELECT * FROM github_authorization_grants WHERE repo=?",
+                (repository,)).fetchone()
+        except sqlite3.OperationalError as exc:
+            raise StoreError("GitHub grant schema is not installed") from exc
+        if row is None or not bool(row["enabled"]):
+            raise StoreError("No active GitHub authorization grant")
+        if (row["account_id"] != expected_account_id
+                or row["policy_sha"] != expected_policy_sha
+                or type(row["raw_grant"]) is not bytes
+                or type(row["expires_epoch"]) is not int
+                or type(row["enabled"]) is not int
+                or row["expires_epoch"] <= now_epoch):
+            raise StoreError("GitHub authorization metadata is stale")
+        try:
+            decision = authorize_operation(
+                row["raw_grant"],
+                expected_record_sha256=row["grant_sha256"],
+                expected_policy_sha=expected_policy_sha,
+                observed_account_id=expected_account_id,
+                repository=repository, operation=operation,
+                now_epoch=now_epoch, branch=branch,
+                candidate_sha=candidate_sha)
+            receipt = serialize_github_authorization(decision)
+        except StandingGrantError as exc:
+            raise StoreError("GitHub authorization revalidation failed") from exc
+        return receipt, hashlib.sha256(receipt).hexdigest()
 
     def set_paused(self, paused: bool) -> None:
         with self._transaction():
@@ -310,6 +393,57 @@ class StateStore:
             self.db.execute(
                 "UPDATE missions SET failures_without_progress=? WHERE id=?", (attempts, mission_id)
             )
+
+    def defer_running(self, mission_id: str, reason: str, *, lease_owner: str) -> None:
+        """Return a safely untouched external mission to READY without a retry."""
+        with self._transaction():
+            self._assert_daemon_fence(lease_owner)
+            self._transition(mission_id, "RUNNING", "READY", reason[:160])
+
+    def block_running(self, mission_id: str, reason: str, *, lease_owner: str) -> None:
+        """Persist a deterministic external safety refusal without fake retries."""
+        with self._transaction():
+            self._assert_daemon_fence(lease_owner)
+            self._transition(mission_id, "RUNNING", "BLOCKED", reason[:160])
+
+    def complete_github_sync_mission(
+        self, mission_id: str, *, sync_operation: str, branch: str,
+        candidate_sha: str, idempotency_key: str, lease_owner: str,
+    ) -> None:
+        """Set DONE only from this exact operation's settled durable journal."""
+        operation_map = {
+            "push": "github.push", "ready_for_review": "github.pr_ready",
+            "merge": "github.merge",
+        }
+        if (sync_operation not in operation_map.values()
+                or not BRANCH_RE.fullmatch(branch) or branch.startswith("refs/")
+                or branch in {"main", "master"} or ".." in branch or "//" in branch
+                or not SHA_RE.fullmatch(candidate_sha)
+                or not DIGEST_RE.fullmatch(idempotency_key)):
+            raise StoreError("Invalid verified GitHub synchronization result")
+        with self._transaction():
+            self._assert_daemon_fence(lease_owner)
+            mission = self.db.execute(
+                "SELECT repo,operation,external_required FROM missions "
+                "WHERE id=? AND state='RUNNING'", (mission_id,)).fetchone()
+            if (mission is None or not bool(mission["external_required"])
+                    or operation_map.get(mission["operation"]) != sync_operation):
+                raise StoreError("Mission does not match GitHub synchronization result")
+            proof = self.db.execute(
+                """SELECT 1 FROM github_sync_attempts
+                   WHERE operation=? AND repo=? AND branch=? AND candidate_sha=?
+                   AND idempotency_key=? AND status='SUCCEEDED' LIMIT 1""",
+                (sync_operation, mission["repo"], branch,
+                 candidate_sha.lower(), idempotency_key)).fetchone()
+            if proof is None:
+                raise StoreError("GitHub synchronization has no settled exact-SHA proof")
+            self._transition(
+                mission_id, "RUNNING", "DONE",
+                f"verified sync:{sync_operation}:{idempotency_key}")
+            self.db.execute(
+                "UPDATE missions SET candidate_sha=?,evidence_sha=?,"
+                "failures_without_progress=0 WHERE id=?",
+                (candidate_sha.lower(), candidate_sha.lower(), mission_id))
 
     def interrupt_running(self, mission_id: str, *, lease_owner: str, reason: str) -> None:
         """Quarantine an interrupted worker without consuming its retry budget.
@@ -443,7 +577,8 @@ class StateStore:
     def begin_sync_attempt(
         self, *, operation: str, repo: str, branch: str, candidate_sha: str,
         attempt: int, idempotency_key: str, updated_epoch: int,
-        lease_owner: str,
+        lease_owner: str, recovery_context: bytes | None = None,
+        recovery_context_sha256: str | None = None,
     ) -> None:
         """Atomically persist PENDING before any privileged network mutation."""
         self._validate_sync_identity(
@@ -451,6 +586,15 @@ class StateStore:
         if (type(attempt) is not int or not 1 <= attempt <= 3
                 or type(updated_epoch) is not int or updated_epoch < 0):
             raise StoreError("Invalid GitHub synchronization attempt")
+        if ((recovery_context is None) != (recovery_context_sha256 is None)
+                or recovery_context is not None and (
+                    not isinstance(recovery_context, bytes)
+                    or not 1 <= len(recovery_context) <= 16 * 1024
+                    or not isinstance(recovery_context_sha256, str)
+                    or not DIGEST_RE.fullmatch(recovery_context_sha256)
+                    or hashlib.sha256(recovery_context).hexdigest()
+                    != recovery_context_sha256)):
+            raise StoreError("Invalid synchronization recovery context")
         candidate_sha = candidate_sha.lower()
         with self._transaction():
             self._assert_daemon_fence(lease_owner)
@@ -487,6 +631,14 @@ class StateStore:
                 (operation, repo, branch, candidate_sha, attempt,
                  idempotency_key, updated_epoch),
             )
+            if recovery_context is not None:
+                self.db.execute(
+                    """INSERT INTO github_sync_context(
+                       operation,repo,branch,candidate_sha,attempt,pre_state,
+                       pre_state_sha256,recorded_epoch) VALUES(?,?,?,?,?,?,?,?)""",
+                    (operation, repo, branch, candidate_sha, attempt,
+                     recovery_context, recovery_context_sha256, updated_epoch),
+                )
             self._event(None, "SYNC_ATTEMPT_STARTED",
                         f"{operation}:{repo}:{candidate_sha}:{attempt}")
 
@@ -530,6 +682,37 @@ class StateStore:
                ORDER BY attempt""",
             (operation, repo, branch, candidate_sha.lower()),
         ))
+
+    def sync_recovery_context(
+        self, *, operation: str, repo: str, branch: str,
+        candidate_sha: str, attempt: int,
+    ) -> dict | None:
+        self._validate_sync_identity(
+            operation, repo, branch, candidate_sha, "0" * 64)
+        if type(attempt) is not int or not 1 <= attempt <= 3:
+            raise StoreError("Invalid synchronization attempt")
+        row = self.db.execute(
+            """SELECT pre_state,pre_state_sha256,recorded_epoch
+               FROM github_sync_context WHERE operation=? AND repo=? AND branch=?
+               AND candidate_sha=? AND attempt=?""",
+            (operation, repo, branch, candidate_sha.lower(), attempt),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            raw = bytes(row["pre_state"])
+            digest = row["pre_state_sha256"]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise StoreError(
+                "Malformed synchronization recovery context") from exc
+        if (not isinstance(digest, str) or not DIGEST_RE.fullmatch(digest)
+                or hashlib.sha256(raw).hexdigest() != digest):
+            raise StoreError("Synchronization recovery context integrity mismatch")
+        return {
+            "pre_state": raw,
+            "pre_state_sha256": digest,
+            "recorded_epoch": row["recorded_epoch"],
+        }
 
     def integrity_check(self) -> bool:
         return self.db.execute("PRAGMA integrity_check").fetchone()[0] == "ok"

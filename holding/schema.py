@@ -193,6 +193,60 @@ RUNTIME_SCHEMA_V2 = (
     + ROADMAP_SCHEMA
 )
 RUNTIME_SCHEMA_V3 = SYNC_STATE_SCHEMA
+SYNC_RECOVERY_SCHEMA = (
+    """CREATE TABLE IF NOT EXISTS github_sync_context (
+        operation TEXT NOT NULL,
+        repo TEXT NOT NULL,
+        branch TEXT NOT NULL,
+        candidate_sha TEXT NOT NULL,
+        attempt INTEGER NOT NULL,
+        pre_state BLOB NOT NULL,
+        pre_state_sha256 TEXT NOT NULL,
+        recorded_epoch INTEGER NOT NULL,
+        PRIMARY KEY(operation,repo,branch,candidate_sha,attempt),
+        FOREIGN KEY(operation,repo,branch,candidate_sha,attempt)
+            REFERENCES github_sync_attempts(operation,repo,branch,candidate_sha,attempt)
+    )""",
+)
+RUNTIME_SCHEMA_V4 = SYNC_RECOVERY_SCHEMA
+GITHUB_GRANT_SCHEMA = (
+    """CREATE TABLE IF NOT EXISTS github_authorization_grants (
+        repo TEXT PRIMARY KEY,
+        raw_grant BLOB NOT NULL,
+        grant_sha256 TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        policy_sha TEXT NOT NULL,
+        expires_epoch INTEGER NOT NULL,
+        enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+        updated_epoch INTEGER NOT NULL
+    )""",
+)
+RUNTIME_SCHEMA_V5 = GITHUB_GRANT_SCHEMA
+
+
+
+MCP_CACHE_SCHEMA = (
+    """CREATE TABLE IF NOT EXISTS mcp_cached_docs (
+        source_uri TEXT NOT NULL,
+        source_version TEXT NOT NULL,
+        captured_epoch INTEGER NOT NULL,
+        expires_epoch INTEGER NOT NULL,
+        content_sha256 TEXT NOT NULL,
+        content BLOB NOT NULL,
+        PRIMARY KEY (source_uri, source_version)
+    )""",
+)
+
+MCP_HUB_JOURNAL_SCHEMA = (
+    """CREATE TABLE IF NOT EXISTS mcp_hub_observations (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        state TEXT NOT NULL,
+        recorded_epoch INTEGER NOT NULL,
+        pid INTEGER,
+        source_sha256 TEXT NOT NULL,
+        protocol_version TEXT
+    )""",
+)
 
 
 def apply_schema(db: sqlite3.Connection, statements: Iterable[str]) -> None:

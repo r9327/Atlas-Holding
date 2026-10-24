@@ -60,6 +60,19 @@ class AuthorizationDecision:
     certifies_quality: bool = False
 
 
+@dataclass(frozen=True)
+class VerifiedGrantRecord:
+    grant_id: str
+    account_id: str
+    repository: str
+    operations: frozenset[str]
+    issued_at: int
+    expires_at: int
+    revoked_at: int | None
+    policy_sha: str
+    grant_sha256: str
+
+
 def serialize_github_authorization(decision: AuthorizationDecision) -> bytes:
     """Return the canonical bounded receipt consumed by the GitHub gate."""
     if (not isinstance(decision, AuthorizationDecision)
@@ -111,25 +124,17 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def authorize_operation(
-    raw_grant: bytes,
-    *,
-    expected_record_sha256: str,
-    expected_policy_sha: str,
-    observed_account_id: str,
-    repository: str,
-    operation: str,
-    now_epoch: int,
-    branch: str | None = None,
-    candidate_sha: str | None = None,
-) -> AuthorizationDecision:
-    """Authorize scope only; downstream safety and quality gates still apply."""
+def validate_standing_grant_record(
+    raw_grant: bytes, *, expected_record_sha256: str,
+    expected_policy_sha: str, observed_account_id: str,
+    repository: str, now_epoch: int,
+) -> VerifiedGrantRecord:
+    """Authenticate one complete durable grant without selecting an operation."""
     if (not isinstance(raw_grant, bytes) or not 1 <= len(raw_grant) <= MAX_GRANT_BYTES
             or not isinstance(expected_record_sha256, str)
             or not _DIGEST.fullmatch(expected_record_sha256)
-            or not isinstance(expected_policy_sha, str) or not _SHA.fullmatch(expected_policy_sha)
-            or operation not in ALLOWED_OPERATIONS
-            or operation in FORBIDDEN_OPERATIONS):
+            or not isinstance(expected_policy_sha, str)
+            or not _SHA.fullmatch(expected_policy_sha)):
         raise StandingGrantError("Invalid trusted authorization request")
     now_epoch = _integer(now_epoch, "current time")
     digest = hashlib.sha256(raw_grant).hexdigest()
@@ -155,11 +160,11 @@ def authorize_operation(
     if account_id != observed_account_id:
         raise StandingGrantError("Standing grant belongs to another account")
     if (not isinstance(repository, str) or not _REPOSITORY.fullmatch(repository)
+            or any(part in {".", ".."} for part in repository.split("/"))
             or payload["repository"] != repository):
         raise StandingGrantError("Standing grant belongs to another repository")
     if payload["policy_sha"] != expected_policy_sha:
         raise StandingGrantError("Standing grant uses a stale policy SHA")
-
     operations = payload["operations"]
     if (not isinstance(operations, list) or not operations
             or len(operations) > len(ALLOWED_OPERATIONS)
@@ -168,9 +173,6 @@ def authorize_operation(
             or any(item not in ALLOWED_OPERATIONS or item in FORBIDDEN_OPERATIONS
                    for item in operations)):
         raise StandingGrantError("Standing grant contains invalid operations")
-    if operation not in operations:
-        raise StandingGrantError("Operation is outside the standing grant")
-
     issued_at = _integer(payload["issued_at"], "grant issue time")
     expires_at = _integer(payload["expires_at"], "grant expiry time")
     if not issued_at <= now_epoch < expires_at or expires_at - issued_at > MAX_GRANT_SECONDS:
@@ -180,10 +182,38 @@ def authorize_operation(
         revoked_at = _integer(revoked_at, "grant revocation time")
         if revoked_at <= now_epoch:
             raise StandingGrantError("Standing grant has been revoked")
+    return VerifiedGrantRecord(
+        grant_id, account_id, repository, frozenset(operations), issued_at,
+        expires_at, revoked_at, expected_policy_sha, digest)
+
+
+def authorize_operation(
+    raw_grant: bytes,
+    *,
+    expected_record_sha256: str,
+    expected_policy_sha: str,
+    observed_account_id: str,
+    repository: str,
+    operation: str,
+    now_epoch: int,
+    branch: str | None = None,
+    candidate_sha: str | None = None,
+) -> AuthorizationDecision:
+    """Authorize scope only; downstream safety and quality gates still apply."""
+    if (operation not in ALLOWED_OPERATIONS
+            or operation in FORBIDDEN_OPERATIONS):
+        raise StandingGrantError("Invalid trusted authorization request")
+    record = validate_standing_grant_record(
+        raw_grant, expected_record_sha256=expected_record_sha256,
+        expected_policy_sha=expected_policy_sha,
+        observed_account_id=observed_account_id, repository=repository,
+        now_epoch=now_epoch)
+    if operation not in record.operations:
+        raise StandingGrantError("Operation is outside the standing grant")
 
     if operation in _BRANCH_OPERATIONS:
         if (not isinstance(branch, str) or not _BRANCH.fullmatch(branch)
-                or branch in {"main", "master"} or branch.startswith(("refs/heads/main", "refs/heads/master"))
+                or branch in {"main", "master"} or branch.startswith("refs/")
                 or ".." in branch or "//" in branch):
             raise StandingGrantError("Operation requires a safe dedicated branch")
     elif branch is not None:
@@ -195,6 +225,7 @@ def authorize_operation(
         raise StandingGrantError("Unexpected candidate SHA for local operation")
 
     return AuthorizationDecision(
-        "AUTHORIZED_SCOPE_ONLY", grant_id, account_id, repository, operation,
-        branch, candidate_sha, digest, expected_policy_sha, now_epoch, expires_at,
+        "AUTHORIZED_SCOPE_ONLY", record.grant_id, record.account_id, repository,
+        operation, branch, candidate_sha, record.grant_sha256,
+        expected_policy_sha, now_epoch, record.expires_at,
     )

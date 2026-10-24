@@ -66,6 +66,43 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(service.run(max_ticks=1).action, "QA_PENDING")
             self.assertEqual(worker.calls, ["a"])
 
+    def test_paused_mcp_is_closed_once_not_written_every_50ms(self):
+        class FakeMcpSupervisor:
+            def __init__(self):
+                self.steps = []
+                self.closed = False
+            def step(self, *, background_allowed, resources_safe, now_epoch):
+                self.steps.append((background_allowed, resources_safe))
+            def close(self, *, now_epoch=None):
+                self.closed = True
+
+        with self.make(FakeWorker()) as service:
+            mcp = FakeMcpSupervisor()
+            service._mcp_supervisor = mcp
+            with StateStore(self.db) as state:
+                state.set_paused(True)
+            service.start()
+            self.assertEqual(service.run(max_ticks=3).action, "WAIT")
+            self.assertEqual(mcp.steps, [(False, False)])
+            with StateStore(self.db) as state:
+                state.set_paused(False)
+            # A mocked guard ensures this tests the lifecycle, not free RAM.
+            from types import SimpleNamespace
+            guard_patch = patch(
+                "holding.service.ResourceGuard.check",
+                return_value=SimpleNamespace(safe=True, reason=""))
+            guard_patch.start()
+            self.addCleanup(guard_patch.stop)
+            self.assertEqual(service.run(max_ticks=1).action, "COMPLETE")
+            self.assertEqual(len(mcp.steps), 2)
+            self.assertEqual(mcp.steps[-1], (True, True))
+            with StateStore(self.db) as state:
+                state.set_paused(True)
+            service.run(max_ticks=2)
+            self.assertEqual(len(mcp.steps), 3)
+            self.assertEqual(mcp.steps[-1], (False, False))
+        self.assertTrue(mcp.closed)
+
     def test_cli_pause_resume_and_stop(self):
         with StateStore(self.db) as state:
             state.add_missions([Mission("a", REPO)])
@@ -164,6 +201,51 @@ class ServiceTests(unittest.TestCase):
             outcome = service.run(max_ticks=1)
             self.assertEqual(outcome.action, "LEASE_LOST")
             service._qa_repair.requeue_one.assert_called_once()
+
+    def test_lost_lease_during_github_probe_stops_without_dispatch(self):
+        from holding.daemon_lease import LeaseError
+        from unittest.mock import Mock
+        worker = FakeWorker()
+        with self.make(worker) as service:
+            service.start()
+            service._github_health = Mock()
+            service._github_health.refresh.side_effect = LeaseError("lost")
+            outcome = service.run(max_ticks=1)
+            self.assertEqual(outcome.action, "LEASE_LOST")
+            self.assertEqual(worker.calls, [])
+
+    def test_broken_gui_teardown_cannot_strand_engine_lease(self):
+        from unittest.mock import Mock
+        first = self.make(FakeWorker())
+        first.start()
+        viewer = Mock()
+        viewer.close.side_effect = OSError("viewer teardown failed")
+        listener = Mock()
+        first._dashboard_session = viewer
+        first._dashboard_ipc = listener
+        with self.assertRaisesRegex(OSError, "viewer teardown"):
+            first.close()
+        listener.close.assert_called_once()
+        self.assertIsNone(first._dashboard_session)
+        self.assertIsNone(first._dashboard_ipc)
+        self.assertFalse(first._started)
+        # Another daemon must be able to acquire the now-released lease.
+        with self.make(FakeWorker()) as successor:
+            successor.start()
+
+    def test_broken_dashboard_listener_cannot_strand_engine_lease(self):
+        from unittest.mock import Mock
+        first = self.make(FakeWorker())
+        first.start()
+        listener = Mock()
+        listener.close.side_effect = OSError("listener teardown failed")
+        first._dashboard_ipc = listener
+        with self.assertRaisesRegex(OSError, "listener teardown"):
+            first.close()
+        listener.close.assert_called_once()
+        self.assertFalse(first._started)
+        with self.make(FakeWorker()) as successor:
+            successor.start()
 
     def test_no_second_headless_writer(self):
         with self.make(FakeWorker()) as primary:

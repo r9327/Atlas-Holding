@@ -78,6 +78,18 @@ class OllamaTests(unittest.TestCase):
         return {'mission_id': 'code-1', 'repository': 'r9327/Dof-Atlas',
                 'acceptance': ['Add the answer field'], 'base_sha': 'a' * 40}
 
+    def test_native_adapter_self_test_is_offline_and_requires_real_config_for_work(self):
+        with patch.object(op, '_installed_model', side_effect=AssertionError('called')), \
+             patch.object(op, '_http', side_effect=AssertionError('called')):
+            self.assertEqual(op.main(['--self-test']), 0)
+            self.assertEqual(op.main(['--self-test', str(self.config_path)]), 2)
+            with patch.object(op, 'BASE', 'https://outside.example:443'):
+                self.assertEqual(op.main(['--self-test']), 2)
+        with patch('sys.stdin') as fake:
+            fake.buffer.read.return_value = (
+                b'{"protocol":1,"action":"health","payload":{}}')
+            self.assertEqual(op.main([str(self.config_path)]), 0)
+
     def test_real_loopback_health_check(self):
         result = op.dispatch(CONFIG, {'protocol': 1, 'action': 'health', 'payload': {}}, self.root)
         self.assertEqual(result['agent_ready'], True)
