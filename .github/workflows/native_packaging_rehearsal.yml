@@ -1,0 +1,62 @@
+name: Windows cross-PR native packaging rehearsal
+
+on:
+  pull_request:
+    branches: [main]
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  package-real-apps:
+    if: >-
+      github.head_ref == 'feat/09-exe-packaging-release' &&
+      github.event.label.name == 'ci:package-native'
+    name: Real frozen engine and GUI inside real setup (nonrelease)
+    runs-on: windows-latest
+    timeout-minutes: 23
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - name: Checkout exact release candidate source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Checkout exact certified main setup source
+        uses: actions/checkout@v7
+        with:
+          ref: c7aa6dae757392b863f9a32585e9309069162dec
+          path: _native/bootstrap
+          persist-credentials: false
+      - name: Checkout exact certified main integration source
+        uses: actions/checkout@v7
+        with:
+          ref: c7aa6dae757392b863f9a32585e9309069162dec
+          path: _native/integration
+          persist-credentials: false
+      - name: Python 3.13
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Install pinned PySide6 and PyInstaller for native proof
+        run: |
+          python -m pip install --disable-pip-version-check --only-binary=:all: "PySide6==6.12.0" "pyinstaller==6.22.3"
+      - name: Check integration rehearsal source syntax
+        run: |
+          python -B -c "import ast,pathlib; ast.parse(pathlib.Path('holding/native_rehearsal.py').read_text(encoding='utf-8'))"
+      - name: Compile real Qt GUI and engine, embed both in real Setup.exe and self-test
+        shell: pwsh
+        timeout-minutes: 17
+        run: |
+          $bootstrap = (Resolve-Path '_native/bootstrap').Path
+          $integration = (Resolve-Path '_native/integration').Path
+          python -B -X utf8 -m holding.native_rehearsal --bootstrap "$bootstrap" --bootstrap-sha "c7aa6dae757392b863f9a32585e9309069162dec" --integration "$integration" --integration-sha "c7aa6dae757392b863f9a32585e9309069162dec"
+          if ($LASTEXITCODE -ne 0) { throw "Real cross-PR native packaging proof failed" }
+      - name: Confirm pinned candidate source was not changed
+        shell: pwsh
+        run: |
+          $dirty = git status --porcelain --untracked-files=normal
+          $unexpected = @($dirty | Where-Object { $_ -and -not $_.StartsWith('?? _native/') })
+          if ($unexpected.Count -gt 0) { throw "Native rehearsal modified release candidate source: $unexpected" }

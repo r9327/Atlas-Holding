@@ -13,6 +13,54 @@ scénario E2E restent à réaliser. Aucun EXE ni PASS natif n'est revendiqué ic
 
 **Livrable :** utilisateur télécharge un fichier depuis GitHub Releases, double-clique pour installer Atlas Holding, choisit son disque, télécharge/configure les outils nécessaires en une fois, démarre le Control Center puis la roadmap.
 
+## Gate bloquant ajouté : paire runtime native et sécurité Windows
+
+Le contrôle `holding/release_evidence.py` refuse désormais de qualifier une
+release sans **trois artefacts observés indépendamment** (noms, SHA-256, tailles) :
+`AtlasHoldingSetup.exe`, `AtlasHoldingControlCenter.exe` et
+`AtlasHoldingEngine.exe`. Un simple setup PyInstaller ou une fenêtre qui
+s'ouvre sans moteur ne suffisent pas.
+
+La publication exige également les SHA exacts des dépendances
+`pr1` à `pr8`, plus `pr11` (intégration moteur/GUI) et `pr12`
+(garde-fous architecture). Une liste fournie par erreur sans ces PR est
+refusée avant toute qualification.
+
+La validation exige aussi de véritables preuves externes `PASS` pour les
+gates `windows-clean-install`, `native-runtime-ipc`,
+`windows-acl-isolation`, `offline-after-provisioning` et
+`e2e-roadmap`. La liste imposée ne peut plus omettre les gates IPC/ACL :
+le validateur refuse même un appel lui fournissant moins d'exigences.
+
+**Important :** les tests unitaires du validateur emploient des fichiers et
+empreintes de démonstration uniquement pour vérifier sa logique ; ils ne
+fournissent **aucune** preuve réelle de publication. Le run Windows
+non-release de la PR #11 valide actuellement les exécutables congelés, mais
+ne prouve pas une installation Windows neuve, l'isolation ACL ni une roadmap
+multi-agent autonome. Cette PR demeure en Draft.
+
+## Staging natif des trois exécutables (non-release)
+
+Le nouveau module `holding/native_candidate_stage.py` prépare **sans écraser
+les installations existantes** un dossier candidat contenant uniquement
+`AtlasHoldingSetup.exe`, `AtlasHoldingControlCenter.exe`,
+`AtlasHoldingEngine.exe` et `candidate-index.json`.
+
+Le staging vérifie les fichiers sources réels par SHA-256/taille, les copie
+dans un répertoire temporaire sur le volume de destination, **rehache** les
+copies ainsi que les sources avant publication du dossier, puis écrit un
+index de provenance lié au SHA du checkout et à toutes les dépendances requises.
+Un verrou exclusif interdit les assemblages concurrents sur le même nom.
+Chemins relatifs, liens symboliques, fichiers absents, index dupliqué,
+binaire modifié et configuration trop vieille sont rejetés.
+
+Le futur installateur peut appeler `verify_native_candidate(...,
+expected_source_sha=..., expected_upstream_shas=...)` pour recontrôler les
+binaires avant adoption. Le champ `release_ready` est **toujours false** :
+cette étape n'installe rien, ne confère aucune signature et ne fabrique aucun
+PASS d'installation. La véritable certification Windows, les ACL et les
+scénarios IA/roadmap restent obligatoires.
+
 ## Implémentation
 - Packaging reproductible sur runner Windows à partir de code versionné, versions figées, bundles/licences vérifiés, ressources Qt et vrais assets ; chemins sans installation Python préalable côté utilisateur.
 - Créer `AtlasHoldingSetup.exe` + manifest/hashes SHA-256 + guide court, dans une Release GitHub. EXE non signé possible -> avertissement SmartScreen explicite, **pas** de fausse signature ; publication testée sur Windows propre.
@@ -65,3 +113,37 @@ Voir `docs/USER_AUTONOMY_PROFILE.md` en PR #1. Gates non implémentés.
 - [ ] Redémarrer l'EXE après clôture ne rejoue pas les anciennes PR ; nouvelle roadmap ou modification déclenche uniquement le différentiel nécessaire.
 
 Se référer à `ROADMAP.md` de la PR #1 ; le test porte sur un vrai exécutable Windows, pas sur une maquette.
+
+## Répétition native multi-PR des vrais EXE (21 octobre 2026)
+
+Le workflow `.github/workflows/native_packaging_rehearsal.yml` assemble, sur un runner Windows et **sans fusionner les branches**, les commits exacts de la PR #2 (setup) et de la PR #11 (moteur et Control Center). Il compile les deux vrais exécutables, mesure leurs SHA-256, les embarque dans `AtlasHoldingSetup.exe` puis lance le self-test natif du setup et celui des deux composants. Les branches d'entrée sont épinglées à des SHA immuables, leurs checkouts vérifiés et aucun artefact n'est publié comme release.
+
+Le label `ci:package-native` déclenche ce test séparé. Cette épreuve vérifie le **câblage d'emballage et l'extraction réelle**, mais **pas** l'installation complète sur un PC vierge, l'ACL native, le lancement des agents ou une roadmap autonome. La PR reste Draft et les gates de sortie demeurent obligatoires.
+
+**Extension de la répétition :** après avoir produit le setup avec les vrais EXE, le runner exécute la fonction de staging **réelle de la PR #2** sur un chemin Windows contenant des espaces et des accents, puis lance les deux vrais EXE depuis leur dossier de version. Il teste l'absence de copie avant autorisation, la réutilisation de fichiers conformes et le refus d'écraser un moteur corrompu. Ce contrôle teste le lancement *depuis le disque choisi*, sans faire croire à une inscription de service, un raccourci, une ACL validée ou un parcours IA autonome.
+
+## Assemblage Windows trois EXE sur SHAs distincts (non-release)
+
+Le workflow `.github/workflows/native_three_binary_assembly.yml` réunit
+sans merge les commits exacts et préalablement testés des PR #2 et #11 sur
+un même **runner Windows natif**. Il compile la paire Qt/moteur autonome,
+vérifie l'autotest de chacun, exige un vrai échange IPC signé **entre les
+deux exécutables compilés**, puis construit `AtlasHoldingSetup.exe` avec
+leurs octets et leurs SHA-256 embarqués. Le `--self-test` du setup doit
+revérifier les ressources extraites, sans installation de Python chez
+l'utilisateur.
+
+L'assemblage relève de nouveau les trois empreintes depuis les fichiers
+réellement copiés, et écrit `cross-pr-nonrelease-evidence.json` comprenant
+les SHA des deux dépôts sources, tailles/empreintes observées et
+`release_ready: false`. L'entrée de test du manifeste des dépendances est
+**explicitement non téléchargeable et fictive** : ce workflow ne simule
+pas une machine Windows vierge, une IA productive, un démarrage depuis
+l'installateur ou la sécurité ACL de l'app installée. Il ne publie rien
+dans GitHub Releases et nettoie les fichiers temporaires.
+
+Ce test est volontairement séparé de la certification finale : intégrer
+réellement les autres PR, écrire la configuration du service, réaliser
+l'installation Windows choisie, prouver les ACL et exécuter une roadmap
+complète restent des gates bloquants.
+
