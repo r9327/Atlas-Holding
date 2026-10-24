@@ -31,6 +31,7 @@ _PROTECTED_SOURCES = (
     "tools/doctor_certification.py",
 )
 _MAX_RESPONSE = 2 * 1024 * 1024
+API_VERSION = "2026-03-10"
 
 
 class GitHubEvidenceError(ValueError):
@@ -71,7 +72,7 @@ class GitHubEvidenceClient:
         req = request.Request(url, headers={
             "Authorization": "Bearer " + self._token,
             "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
+            "X-GitHub-Api-Version": API_VERSION,
             "User-Agent": "atlas-holding-independent-verifier",
         }, method="GET")
         try:

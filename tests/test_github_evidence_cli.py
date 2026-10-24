@@ -17,6 +17,27 @@ SHA = "a" * 40
 REPO = "r9327/Dof-Atlas"
 
 
+def _protect_windows_file(path: Path) -> None:
+    if os.name != "nt":
+        return
+    import subprocess
+
+    from holding.windows_secret_acl import current_process_sid
+
+    sid = current_process_sid()
+    owner = subprocess.run(
+        ["icacls", str(path), "/setowner", f"*{sid}"],
+        capture_output=True, check=False, text=True,
+    )
+    completed = subprocess.run(
+        ["icacls", str(path), "/inheritance:r", "/grant:r",
+         f"*{sid}:(F)"],
+        capture_output=True, check=False, text=True,
+    )
+    if owner.returncode or completed.returncode:
+        raise RuntimeError("Unable to establish the Windows test-file ACL")
+
+
 class EvidenceCliTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -25,6 +46,7 @@ class EvidenceCliTests(unittest.TestCase):
         self.token = self.root / "github.token"
         self.token.write_text("test-private-github-token", encoding="utf-8")
         self.token.chmod(0o600)
+        _protect_windows_file(self.token)
         self.args = ["--repo", REPO, "--pr", "230",
                      "--candidate-sha", SHA,
                      "--token-file", str(self.token)]
@@ -87,6 +109,28 @@ class EvidenceCliTests(unittest.TestCase):
     def test_world_readable_token_is_rejected(self):
         self.token.chmod(0o644)
         with self.assertRaises(GitHubEvidenceError):
+            read_token_file(self.token)
+
+    @unittest.skipUnless(os.name == "nt", "Windows native ACL gate")
+    def test_inherited_windows_acl_is_rejected(self):
+        import subprocess
+
+        subprocess.run(
+            ["icacls", str(self.token), "/inheritance:e"],
+            capture_output=True, check=True, text=True,
+        )
+        with self.assertRaisesRegex(GitHubEvidenceError, "inheritance"):
+            read_token_file(self.token)
+
+    @unittest.skipUnless(os.name == "nt", "Windows native ACL gate")
+    def test_broad_windows_allow_ace_is_rejected(self):
+        import subprocess
+
+        subprocess.run(
+            ["icacls", str(self.token), "/grant", "*S-1-1-0:(R)"],
+            capture_output=True, check=True, text=True,
+        )
+        with self.assertRaisesRegex(GitHubEvidenceError, "untrusted identity"):
             read_token_file(self.token)
 
 

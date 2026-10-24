@@ -1,1 +1,1 @@
-"""Atlas Holding policy contracts and separately privileged online adapters."""
+"""Atlas Holding bootstrap, core, agents, tools, UI, and release contracts."""

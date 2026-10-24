@@ -20,11 +20,29 @@ _MAX_TOKEN_BYTES = 4096
 
 
 def read_token_file(path: Path) -> str:
-    if not path.is_absolute() or not path.is_file() or path.is_symlink():
+    if not path.is_absolute() or path.is_symlink():
         raise GitHubEvidenceError("GitHub token must be a protected regular absolute file")
-    if os.name != "nt" and stat.S_IMODE(path.stat().st_mode) & 0o077:
-        raise GitHubEvidenceError("Token file must be unreadable by group and others")
-    with path.open("rb") as stream:
+    try:
+        stream = path.open("rb")
+    except OSError as exc:
+        raise GitHubEvidenceError("GitHub token file is unavailable") from exc
+    with stream:
+        file_stat = os.fstat(stream.fileno())
+        if not stat.S_ISREG(file_stat.st_mode):
+            raise GitHubEvidenceError("GitHub token must be a protected regular absolute file")
+        if os.name == "nt":
+            import msvcrt
+
+            from .windows_secret_acl import (
+                WindowsSecretAclError, validate_secret_file_handle,
+            )
+
+            try:
+                validate_secret_file_handle(msvcrt.get_osfhandle(stream.fileno()))
+            except WindowsSecretAclError as exc:
+                raise GitHubEvidenceError(str(exc)) from exc
+        elif stat.S_IMODE(file_stat.st_mode) & 0o077:
+            raise GitHubEvidenceError("Token file must be unreadable by group and others")
         raw = stream.read(_MAX_TOKEN_BYTES + 1)
     if not 1 <= len(raw) <= _MAX_TOKEN_BYTES:
         raise GitHubEvidenceError("GitHub token is empty or oversized")
