@@ -15,6 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
@@ -33,3 +34,6 @@ jobs:
               print("Testing", name, flush=True)
               subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", name, "-v"], check=True)
           PY
+      - name: Checkout clean after tests
+        shell: bash
+        run: test -z "$(git status --porcelain --untracked-files=normal)"

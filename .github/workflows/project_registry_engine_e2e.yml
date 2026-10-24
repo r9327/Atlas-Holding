@@ -16,21 +16,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          persist-credentials: false
-      - uses: actions/checkout@v4
-        with:
-          repository: r9327/Atlas-Holding
-          ref: c7407b5828d75a6a97101aa06e952d1316739c8a
-          path: engine-src
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - name: Bind exact-SHA selected project to real ControlPlane importer
+      - name: Bind selected project to candidate ControlPlane importer
         shell: bash
         run: |
-          cp holding/project_profile.py holding/project_registry.py holding/roadmap_contract.py holding/project_plan_binding.py holding/project_mission_gate.py engine-src/holding/
-          cd engine-src
           python - <<'PY'
           import json
           from pathlib import Path
@@ -118,5 +111,8 @@ jobs:
                       raise AssertionError("engine target substitution allowed")
                   assert len(control.store.missions()) == 2
                   assert not (root / ".git").exists()
-                  print("Selected project -> actual Holding ControlPlane.import_roadmap PASS")
+                  print("Selected project -> candidate ControlPlane.import_roadmap PASS")
           PY
+      - name: Checkout clean after tests
+        shell: bash
+        run: test -z "$(git status --porcelain --untracked-files=normal)"
