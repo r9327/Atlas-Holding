@@ -1,0 +1,176 @@
+"""Signed evidence integration against the real StateStore API."""
+import hashlib
+import hmac
+import json
+from pathlib import Path
+import tempfile
+import time
+import unittest
+
+from holding.autonomy import Mission, StandingGrant
+from holding.proofs import ProofVerifier, ProofError
+from holding.state_store import StateStore, StoreError
+
+SHA = "a" * 40
+KEY = b"Only for tests: a 256-bit simulated independent key!"
+REPO = "r9327/Dof-Atlas"
+
+
+class ProofStoreTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        self.store = StateStore(root / "state.sqlite")
+        self.addCleanup(self.store.close)
+        self.proof_dir = root / "trusted"
+        self.proof_dir.mkdir()
+        self.verifier = ProofVerifier(self.proof_dir, KEY)
+        self.store.grant_for_onboarding(StandingGrant(REPO, frozenset({"code"}), int(time.time()) + 3600))
+        self.store.add_missions([Mission("first", REPO), Mission("second", REPO, dependencies=("first",))])
+        self.assertEqual(self.store.claim_next(online=False).mission_id, "first")
+        self.store.checkpoint("first", SHA)
+
+    def signed_receipt(self, *, signature_key=KEY, candidate=SHA,
+                       verdict="PASS", runner=None):
+        artifact = self.proof_dir / "result.txt"
+        artifact.write_text("Independent test result", encoding="utf-8")
+        data = {
+            "schema": 1, "mission_id": "first", "sha": candidate,
+            "runner": runner or (
+                "github_certification" if verdict == "PASS" else "doctor_atlas"),
+            "verdict": verdict, "artifact": artifact.name,
+            "artifact_sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()
+        }
+        encoded = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        envelope = {"payload": data, "mac": hmac.new(signature_key, encoded, hashlib.sha256).hexdigest()}
+        (self.proof_dir / "receipt.json").write_text(json.dumps(envelope), encoding="utf-8")
+        return "receipt.json"
+
+    def test_pass_unlocks_dependent_job_and_is_auditable(self):
+        result = self.verifier.apply(self.store, self.signed_receipt(), mission_id="first")
+        self.assertEqual(result.verdict, "PASS")
+        jobs = {m.id: m for m in self.store.missions()}
+        self.assertEqual(jobs["first"].state, "DONE")
+        self.assertEqual(jobs["first"].evidence_sha, SHA)
+        row = self.store.db.execute("SELECT receipt_digest FROM signed_proofs WHERE mission_id='first'").fetchone()
+        self.assertEqual(row[0], result.proof_digest)
+        self.assertEqual(self.store.claim_next(online=False).mission_id, "second")
+
+    def test_bad_signature_remains_qa_pending(self):
+        with self.assertRaises(ProofError):
+            self.verifier.apply(self.store, self.signed_receipt(signature_key=b"Z" * 32), mission_id="first")
+        self.assertEqual(self.store.missions()[0].state, "QA_PENDING")
+        self.assertEqual(self.store.claim_next(online=False).action, "WAIT")
+
+    def test_control_pause_can_write_sqlite_while_artifact_is_verified(self):
+        receipt = self.signed_receipt()
+        original = self.verifier.verify
+        def independent_hash(*args, **kwargs):
+            verified = original(*args, **kwargs)
+            with StateStore(self.store.path) as control:
+                control.set_paused(True)
+            return verified
+        from unittest.mock import patch
+        with patch.object(self.verifier, "verify", side_effect=independent_hash):
+            with self.assertRaisesRegex(StoreError, "paused or stopped"):
+                self.verifier.apply(self.store, receipt, mission_id="first")
+        self.assertEqual(self.store.missions()[0].state, "QA_PENDING")
+        self.assertTrue(self.store.background_suspended())
+
+    def test_stale_candidate_change_during_checksum_is_rejected(self):
+        receipt = self.signed_receipt()
+        original = self.verifier.verify
+        def change_sha(*args, **kwargs):
+            verified = original(*args, **kwargs)
+            with StateStore(self.store.path) as control:
+                control.db.execute(
+                    "UPDATE missions SET candidate_sha=? WHERE id='first'",
+                    ("c" * 40,))
+            return verified
+        from unittest.mock import patch
+        with patch.object(self.verifier, "verify", side_effect=change_sha):
+            with self.assertRaisesRegex(StoreError, "changed during proof"):
+                self.verifier.apply(self.store, receipt, mission_id="first")
+        self.assertEqual(self.store.missions()[0].state, "QA_PENDING")
+        self.assertEqual(self.store.missions()[0].candidate_sha, "c" * 40)
+
+    def test_signed_doctor_pass_is_advisory_not_final(self):
+        receipt = self.signed_receipt(verdict="PASS", runner="doctor_atlas")
+        with self.assertRaisesRegex(ProofError, "advisory"):
+            self.verifier.apply(self.store, receipt, mission_id="first")
+        self.assertEqual(self.store.missions()[0].state, "QA_PENDING")
+        self.assertEqual(self.store.missions()[0].evidence_sha, "")
+        self.assertIsNone(self.store.db.execute(
+            "SELECT name FROM sqlite_master WHERE name='signed_proofs'").fetchone())
+
+    def test_fail_blocks_without_fake_done(self):
+        self.verifier.apply(self.store, self.signed_receipt(verdict="FAIL"), mission_id="first")
+        self.assertEqual(self.store.missions()[0].state, "BLOCKED")
+        self.assertEqual(self.store.claim_next(online=False).action, "BLOCKED")
+
+    def test_legacy_string_pass_is_forbidden(self):
+        with self.assertRaises(StoreError):
+            self.store.register_test_verdict("first", candidate_sha=SHA, evidence_sha=SHA,
+                verdict="PASS", runner="doctor_adapter", artifact_id="fake")
+        self.assertEqual(self.store.missions()[0].state, "QA_PENDING")
+
+    def test_repaired_new_sha_preserves_both_signed_verdicts(self):
+        self.verifier.apply(
+            self.store, self.signed_receipt(verdict="FAIL"), mission_id="first")
+        with self.store._transaction():
+            self.store._transition("first", "BLOCKED", "READY", "test-only new code")
+            self.store._transition("first", "READY", "RUNNING", "test-only claimed")
+            self.store._transition("first", "RUNNING", "QA_PENDING")
+            self.store.db.execute(
+                "UPDATE missions SET candidate_sha=? WHERE id='first'", ("b" * 40,))
+        self.verifier.apply(
+            self.store, self.signed_receipt(candidate="b" * 40, verdict="PASS"),
+            mission_id="first")
+        history = self.store.db.execute(
+            "SELECT candidate_sha,verdict FROM signed_proof_history "
+            "WHERE mission_id='first' ORDER BY seq").fetchall()
+        self.assertEqual([tuple(row) for row in history],
+                         [(SHA, "FAIL"), ("b" * 40, "PASS")])
+        self.assertEqual(self.store.missions()[0].state, "DONE")
+        self.assertEqual(self.store.missions()[0].evidence_sha, "b" * 40)
+
+    def test_old_signed_fail_replay_is_safe_store_error(self):
+        receipt = self.signed_receipt(verdict="FAIL")
+        self.verifier.apply(self.store, receipt, mission_id="first")
+        with self.store._transaction():
+            self.store._transition("first", "BLOCKED", "READY", "simulated replay")
+            self.store._transition("first", "READY", "RUNNING", "simulated replay")
+            self.store._transition("first", "RUNNING", "QA_PENDING")
+        with self.assertRaisesRegex(StoreError, "cannot be replayed"):
+            self.verifier.apply(self.store, receipt, mission_id="first")
+        self.assertEqual(self.store.missions()[0].state, "QA_PENDING")
+        self.assertEqual(self.store.db.execute(
+            "SELECT COUNT(*) FROM signed_proof_history").fetchone()[0], 1)
+
+    def test_direct_proof_apply_cannot_bypass_pause_or_stop(self):
+        receipt = self.signed_receipt()
+        self.store.set_paused(True)
+        with self.assertRaisesRegex(StoreError, "paused or stopped"):
+            self.verifier.apply(self.store, receipt, mission_id="first")
+        self.store.set_paused(False)
+        self.store.db.execute(
+            "INSERT INTO settings(key,value) VALUES('stop_requested','1')")
+        with self.assertRaisesRegex(StoreError, "paused or stopped"):
+            self.verifier.apply(self.store, receipt, mission_id="first")
+        self.assertEqual(self.store.missions()[0].state, "QA_PENDING")
+        self.store.db.execute(
+            "UPDATE settings SET value='0' WHERE key='stop_requested'")
+        self.assertEqual(
+            self.verifier.apply(self.store, receipt, mission_id="first").verdict,
+            "PASS")
+
+    def test_receipt_is_not_replayable(self):
+        name = self.signed_receipt()
+        self.verifier.apply(self.store, name, mission_id="first")
+        with self.assertRaises(StoreError):
+            self.verifier.apply(self.store, name, mission_id="first")
+
+
+if __name__ == "__main__":
+    unittest.main()

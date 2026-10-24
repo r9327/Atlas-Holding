@@ -1,0 +1,153 @@
+name: Bootstrap Python 3.13 validation
+
+on:
+  pull_request:
+    branches: [main]
+    types: [ready_for_review, labeled]
+  push:
+    branches: [feat/02-windows-bootstrap]
+    paths: [.ci/bootstrap-validation.trigger]
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap-tests:
+    if: >-
+      (github.event_name == 'push' && github.ref_name == 'feat/02-windows-bootstrap') ||
+      (github.event_name == 'pull_request' &&
+       github.head_ref == 'feat/02-windows-bootstrap' &&
+       (github.event.action == 'ready_for_review' ||
+        github.event.label.name == 'ci:validate'))
+    name: Bootstrap unittest on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact candidate SHA
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Python 3.13
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Check Python syntax without bytecode writes
+        run: python -c "import ast,pathlib; [ast.parse(p.read_text(encoding='utf-8'),filename=str(p)) for d in ('holding','tests') for p in pathlib.Path(d).rglob('*.py')]"
+      - name: Run complete bootstrap unittest collection
+        run: python -B -X utf8 -m unittest discover -s tests -p "test_*.py" -v
+      - name: Require clean checkout after tests
+        shell: bash
+        run: 'test -z "$(git status --porcelain --untracked-files=normal)"'
+      - name: Verify official Git and OpenCode portable Windows binaries
+        if: matrix.os == 'windows-latest' && (github.event_name == 'push' || github.event.label.name == 'ci:validate')
+        shell: pwsh
+        timeout-minutes: 12
+        run: |
+          $gitUrl = "https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.2/MinGit-2.56.0.2-64-bit.zip"
+          $gitSha = "da35e72aa21c005a5a0d298cfbae110bc1609a815730ea0dde84b01a1b3cd3be"
+          $codeUrl = "https://github.com/anomalyco/opencode/releases/download/v1.18.29/opencode-windows-x64.zip"
+          $codeSha = "b32618aa3d1415f6e4f473aec248edef25759203fb707d7d968359d86d4a35ee"
+          $gitZip = Join-Path $env:RUNNER_TEMP "Atlas-MinGit-$gitSha.zip"
+          $codeZip = Join-Path $env:RUNNER_TEMP "Atlas-OpenCode-$codeSha.zip"
+          try {
+            Invoke-WebRequest -Uri $gitUrl -OutFile $gitZip -MaximumRedirection 5 -TimeoutSec 180
+            if (!(Test-Path $gitZip) -or (Get-FileHash -Algorithm SHA256 $gitZip).Hash.ToLowerInvariant() -ne $gitSha) { throw "Publisher MinGit SHA256 mismatch" }
+            python -B -X utf8 -m holding.mingit_smoke --archive "$gitZip"
+            if ($LASTEXITCODE -ne 0) { throw "Real portable MinGit VCS smoke failed" }
+            Invoke-WebRequest -Uri $codeUrl -OutFile $codeZip -MaximumRedirection 5 -TimeoutSec 180
+            if (!(Test-Path $codeZip) -or (Get-FileHash -Algorithm SHA256 $codeZip).Hash.ToLowerInvariant() -ne $codeSha) { throw "Publisher OpenCode SHA256 mismatch" }
+            python -B -X utf8 -m holding.opencode_smoke --git-archive "$gitZip" --opencode-archive "$codeZip"
+            if ($LASTEXITCODE -ne 0) { throw "Real portable OpenCode CLI smoke failed" }
+            $candidate = Join-Path $env:RUNNER_TEMP "Atlas-Holding-dual-portable-candidate.json"
+            python -B -X utf8 -m holding.portable_runtime --git-archive "$gitZip" --opencode-archive "$codeZip" --output "$candidate"
+            if ($LASTEXITCODE -ne 0 -or !(Test-Path $candidate)) { throw "Pinned production-like candidate manifest could not be derived from official files" }
+          } finally {
+            Remove-Item -Force -ErrorAction SilentlyContinue $gitZip, $codeZip
+          }
+      - name: Verify exact Ollama user x64 installer availability via native WinGet
+        if: matrix.os == 'windows-latest' && (github.event_name == 'push' || github.event.label.name == 'ci:validate')
+        shell: pwsh
+        timeout-minutes: 4
+        run: |
+          $winget = Get-Command winget.exe -ErrorAction Stop
+          & $winget.Source --version
+          if ($LASTEXITCODE -ne 0) { throw "Windows package manager cannot start" }
+          & $winget.Source show --id Ollama.Ollama --exact --version 0.32.8 --source winget --scope user --architecture x64 --disable-interactivity --accept-source-agreements
+          if ($LASTEXITCODE -ne 0) { throw "User-scoped pinned Ollama installer unavailable" }
+          Write-Output "OLLAMA_WINGET_USER_X64_PREFLIGHT_PASS"
+      - name: Install pinned Windows build packager
+        if: matrix.os == 'windows-latest' && (github.event_name == 'push' || github.event.label.name == 'ci:validate')
+        run: |
+          python -m pip install --disable-pip-version-check --only-binary=:all: "pyinstaller==6.22.3"
+      - name: Package nonrelease Windows EXE with real SHA-pinned Git/OpenCode candidate manifest
+        if: matrix.os == 'windows-latest' && (github.event_name == 'push' || github.event.label.name == 'ci:validate')
+        shell: pwsh
+        run: |
+          $candidate = Join-Path $env:RUNNER_TEMP "Atlas-Holding-dual-portable-candidate.json"
+          if (!(Test-Path $candidate)) { throw "Missing SHA-verified official candidate manifest" }
+          $pin = (Get-FileHash -Algorithm SHA256 $candidate).Hash.ToLowerInvariant()
+          $dest = Join-Path $PWD "smoke-output"
+          python -B -m holding.windows_build --manifest "$candidate" --manifest-sha256 "$pin" --output-dir "$dest"
+          if ($LASTEXITCODE -ne 0) { throw "Windows setup EXE packaging failed" }
+          $exe = Join-Path $dest "AtlasHoldingSetup.exe"
+          if (!(Test-Path $exe) -or (Get-Item $exe).Length -lt 1000000) { throw "Setup artifact invalid" }
+          Write-Output "NONRELEASE: EXE contains verified candidate pins; install/reboot/model QA not certified"
+          Write-Output "Pinned candidate manifest SHA256: $pin"
+          Write-Output "SHA256: $((Get-FileHash -Algorithm SHA256 $exe).Hash.ToLowerInvariant())"
+      - name: Execute packaged Windows manifest self-test
+        if: matrix.os == 'windows-latest' && (github.event_name == 'push' || github.event.label.name == 'ci:validate')
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD "smoke-output/AtlasHoldingSetup.exe"
+          $p = Start-Process -FilePath $exe -ArgumentList "--self-test" -PassThru -Wait
+          if ($p.ExitCode -ne 0) { throw "Packaged self-test failed: $($p.ExitCode)" }
+      - name: Verify packaged logon resume refuses missing enrollment without UI
+        if: matrix.os == 'windows-latest' && (github.event_name == 'push' || github.event.label.name == 'ci:validate')
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD "smoke-output/AtlasHoldingSetup.exe"
+          $invalid = Join-Path $PWD "smoke-output/not-registered"
+          $p = Start-Process -FilePath $exe -ArgumentList @("--resume-ollama", $invalid) -PassThru -Wait
+          if ($p.ExitCode -ne 2) { throw "Missing logon enrollment did not fail closed: $($p.ExitCode)" }
+      - name: Native embedded runtime payload, selected disk and integrity smoke
+        if: matrix.os == 'windows-latest' && (github.event_name == 'push' || github.event.label.name == 'ci:validate')
+        shell: pwsh
+        timeout-minutes: 9
+        run: |
+          $candidate = Join-Path $env:RUNNER_TEMP "Atlas-Holding-dual-portable-candidate.json"
+          if (!(Test-Path $candidate)) { throw "Trusted manifest for runtime bundle is unavailable" }
+          $pin = (Get-FileHash -Algorithm SHA256 $candidate).Hash.ToLowerInvariant()
+          python -B -X utf8 -m holding.native_embedded_setup_smoke --manifest "$candidate" --manifest-sha256 "$pin"
+          if ($LASTEXITCODE -ne 0) { throw "Frozen setup did not verify embedded pinned runtime binaries" }
+          Write-Output "NONRELEASE_SETUP_RUNTIME_BUNDLE_SMOKE_PASS"
+      - name: Real SHA-pinned Python 3.13 embeddable runtime native execution smoke
+        if: matrix.os == 'windows-latest' && (github.event_name == 'push' || github.event.label.name == 'ci:validate')
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          $url = "https://www.python.org/ftp/python/3.13.16/python-3.13.16-embed-amd64.zip"
+          $officialSha = "97dae5274cc54867065e8d5a3226e48c35017ed332a0fdb0e27d5b5821961297"
+          $archive = Join-Path $env:RUNNER_TEMP "python-3.13.16-embed-$officialSha.zip"
+          try {
+            Invoke-WebRequest -Uri $url -OutFile $archive -MaximumRedirection 3 -TimeoutSec 180
+            if (!(Test-Path $archive)) { throw "Official CPython ZIP missing" }
+            if ((Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $officialSha) {
+              throw "Downloaded CPython release SHA differs from Python.org release checksum"
+            }
+            python -B -X utf8 -m holding.embedded_python_native_smoke --archive "$archive"
+            if ($LASTEXITCODE -ne 0) { throw "Native Python embeddable execution failed" }
+          } finally {
+            Remove-Item -Force -ErrorAction SilentlyContinue $archive
+          }
+      - name: Remove nonrelease EXE and verify checkout
+        if: matrix.os == 'windows-latest' && (github.event_name == 'push' || github.event.label.name == 'ci:validate')
+        shell: pwsh
+        run: |
+          Remove-Item -Force -Recurse "smoke-output"
+          $changes = git status --porcelain --untracked-files=normal
+          if ($changes) { throw "Bootstrap source modified by packaging: $changes" }
