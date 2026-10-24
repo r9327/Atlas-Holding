@@ -127,7 +127,8 @@ class StandingGrantTests(unittest.TestCase):
             authorize(payload)
 
     def test_main_or_unsafe_branch_is_never_authorized(self):
-        for branch in ("main", "master", "refs/heads/main", "codex/../main", "codex//x"):
+        for branch in ("main", "master", "refs/heads/main", "refs/heads/feature",
+                       "codex/../main", "codex//x"):
             with self.subTest(branch=branch), self.assertRaisesRegex(
                     StandingGrantError, "safe dedicated branch"):
                 authorize(grant(), branch=branch)
