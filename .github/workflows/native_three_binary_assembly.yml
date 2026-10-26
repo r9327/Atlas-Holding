@@ -9,13 +9,15 @@ permissions:
   contents: read
 
 jobs:
-  native-assembly:
+  native_assembly:
     if: >-
       github.head_ref == 'feat/09-exe-packaging-release' &&
       github.event.label.name == 'ci:validate'
     name: Frozen Engine + Qt + Setup on real Windows
     runs-on: windows-latest
     timeout-minutes: 35
+    outputs:
+      candidate_digest: ${{ steps.candidate_upload.outputs.artifact-digest }}
     steps:
       - name: Checkout exact release candidate implementation
         uses: actions/checkout@v7
@@ -124,3 +126,76 @@ jobs:
           }
           Write-Output "NONRELEASE_WINDOWS_CANDIDATE_DIGEST=sha256:$digest"
           Write-Output "NONRELEASE_WINDOWS_CANDIDATE_SOURCE_SHA=${{ github.event.pull_request.head.sha }}"
+
+  fresh-runner-download:
+    needs: native_assembly
+    name: Downloaded setup self-test on fresh Windows runner
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - name: Download exact tested candidate from preceding job
+        uses: actions/download-artifact@v4
+        with:
+          name: NONRELEASE-AtlasHolding-Windows-Candidate-${{ github.run_id }}
+          path: ${{ runner.temp }}/downloaded-atlas-candidate
+      - name: Reverify receipt and execute setup without Python environment
+        shell: pwsh
+        run: |
+          $candidate = (Resolve-Path (Join-Path $env:RUNNER_TEMP "downloaded-atlas-candidate")).Path
+          $evidencePath = Join-Path $candidate "cross-pr-nonrelease-evidence.json"
+          $record = Get-Content -Raw -LiteralPath $evidencePath | ConvertFrom-Json
+          if ($record.release_ready -ne $false -or
+              $record.windows_clean_install_certified -ne $false -or
+              $record.source_shas.release_candidate -ne "${{ github.event.pull_request.head.sha }}") {
+            throw "Downloaded candidate receipt has an invalid release claim or source SHA"
+          }
+          foreach ($artifact in $record.artifacts) {
+            $path = Join-Path $candidate $artifact.name
+            if (!(Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Downloaded candidate is missing $($artifact.name)"
+            }
+            $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
+            if ($actual -cne $artifact.sha256 -or
+                (Get-Item -LiteralPath $path).Length -ne $artifact.size_bytes) {
+              throw "Downloaded candidate bytes differ from the build receipt"
+            }
+          }
+          $setup = Join-Path $candidate "AtlasHoldingSetup.exe"
+          $info = [System.Diagnostics.ProcessStartInfo]::new()
+          $info.FileName = $setup
+          [void]$info.ArgumentList.Add("--self-test")
+          $info.UseShellExecute = $false
+          $info.Environment.Clear()
+          $info.Environment["SystemRoot"] = $env:SystemRoot
+          $info.Environment["TEMP"] = $env:RUNNER_TEMP
+          $info.Environment["TMP"] = $env:RUNNER_TEMP
+          $process = [System.Diagnostics.Process]::Start($info)
+          if (!$process.WaitForExit(60000)) {
+            $process.Kill($true)
+            throw "Downloaded standalone setup self-test timed out"
+          }
+          if ($process.ExitCode -ne 0) {
+            throw "Downloaded standalone setup self-test failed: $($process.ExitCode)"
+          }
+          $receipt = @{
+            schema = 1
+            candidate_sha = "${{ github.event.pull_request.head.sha }}"
+            candidate_archive_sha256 = "${{ needs.native_assembly.outputs.candidate_digest }}"
+            setup_sha256 = ($record.artifacts | Where-Object name -eq "AtlasHoldingSetup.exe").sha256
+            downloaded_candidate_self_test = "PASS"
+            inherited_python_environment = $false
+            windows_clean_install_certified = $false
+            release_ready = $false
+          } | ConvertTo-Json -Compress
+          $receiptPath = Join-Path $env:RUNNER_TEMP "fresh-runner-nonrelease-receipt.json"
+          [System.IO.File]::WriteAllText($receiptPath, $receipt, [System.Text.UTF8Encoding]::new($false))
+          Write-Output "NONRELEASE_DOWNLOADED_SETUP_FRESH_RUNNER_SELFTEST_PASS"
+          Write-Output "Fresh-runner receipt SHA256: $((Get-FileHash -Algorithm SHA256 $receiptPath).Hash.ToLowerInvariant())"
+      - name: Upload fresh-runner receipt (NOT RELEASE)
+        uses: actions/upload-artifact@v4
+        with:
+          name: NONRELEASE-AtlasHolding-Fresh-Runner-Receipt-${{ github.run_id }}
+          path: ${{ runner.temp }}/fresh-runner-nonrelease-receipt.json
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0

@@ -156,6 +156,11 @@ d'`Ollama.Ollama@0.32.8` dans WinGet. Le bundle testé est conservé trois jours
 comme artefact GitHub `NONRELEASE-AtlasHolding-Windows-Candidate-*`, avec le
 SHA-256 de l'archive émis par GitHub Actions. Il reste explicitement distinct
 d'une GitHub Release et sert à obtenir la future preuve sur machine vierge.
+Un second job, sur une nouvelle VM Windows 2025, retélécharge cet artefact,
+revérifie les trois empreintes et tailles, supprime l'environnement Python du
+processus puis exécute `AtlasHoldingSetup.exe --self-test`. Son reçu séparé
+conserve `windows_clean_install_certified: false` : cette contre-épreuve prouve
+l'autonomie binaire du téléchargement, pas les clics du wizard ni un reboot.
 
 Ce test est volontairement séparé de la certification finale : réaliser
 l'installation interactive depuis l'artefact publié sur une machine Windows
