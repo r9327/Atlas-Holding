@@ -1,0 +1,63 @@
+name: Nonrelease real Ollama Windows inference
+
+on:
+  pull_request:
+    branches: [integration/windows-agent-bootstrap-20261022]
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  opt-in-real-ollama:
+    if: >-
+      github.event.label.name == 'ci:live-ollama' &&
+      github.head_ref == 'experiment/native-real-ollama-20261022' &&
+      github.event.pull_request.head.repo.full_name == 'r9327/Atlas-Holding'
+    runs-on: windows-2025
+    timeout-minutes: 35
+    steps:
+      - name: Checkout exact experimental SHA without credentials
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Python 3.13
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Prove nonrelease receipt rejects false certifications
+        shell: pwsh
+        run: |
+          python -B -X utf8 -m unittest tests.test_native_real_ollama_probe -v
+          if ($LASTEXITCODE -ne 0) { throw 'Real model evidence contract failed' }
+      - name: Build only the actual frozen Ollama adapter and isolated acceptance runner
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check --only-binary=:all: "pyinstaller==6.22.3"
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned binary packager unavailable' }
+          $target = Join-Path $env:RUNNER_TEMP "atlas-live-ollama-exes-$env:GITHUB_RUN_ID"
+          python -B -m holding.windows_control_center_build --kind agent --output-dir $target
+          if ($LASTEXITCODE -ne 0) { throw 'Native Ollama agent build failed' }
+          python -B -m holding.windows_control_center_build --kind acceptance --output-dir $target
+          if ($LASTEXITCODE -ne 0) { throw 'Native code acceptance build failed' }
+          & (Join-Path $target 'AtlasHoldingAgent.exe') --self-test
+          if ($LASTEXITCODE -ne 0) { throw 'Frozen Ollama adapter protocol invalid' }
+          & (Join-Path $target 'AtlasHoldingAcceptance.exe') --self-test
+          if ($LASTEXITCODE -ne 0) { throw 'Frozen acceptance runner invalid' }
+      - name: Install true pinned Ollama and test one real CPU model in disposable Git
+        shell: pwsh
+        timeout-minutes: 24
+        run: |
+          $target = Join-Path $env:RUNNER_TEMP "atlas-live-ollama-exes-$env:GITHUB_RUN_ID"
+          python -B -X utf8 -m tests.native_windows_real_ollama_smoke `
+            --agent (Join-Path $target "AtlasHoldingAgent.exe") `
+            --acceptance (Join-Path $target "AtlasHoldingAcceptance.exe")
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Genuine Ollama local inference did not prove a correct disposable Git commit'
+          }
+      - name: Refuse mutation of the checked-out experimental sources
+        shell: pwsh
+        run: |
+          $changes = git status --porcelain --untracked-files=normal
+          if ($changes) { throw "Local model modified experiment sources: $changes" }

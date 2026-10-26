@@ -462,6 +462,75 @@ def _native_ipc_smoke(input_stream=None, *, output_stream=None) -> int:
             return 0 if server._server.valid_read_replied.wait(timeout=18) else 2
 
 
+def _verify_installed_config(filename: Path) -> int:
+    """Validate pinned config and canonical Git without starting the service."""
+    from .git_worktree import GitSafetyError
+    try:
+        installation = Installation.load(filename)
+        GitWorktrees(
+            installation.canonical_root,
+            installation.workspace,
+            installation.repository,
+        ).inspect_canonical()
+    except (BootstrapError, GitSafetyError, OSError, ValueError):
+        print(json.dumps({"installation": "REJECTED"}, sort_keys=True))
+        return 2
+    print(json.dumps({
+        "installation": "CONFIG_AND_GIT_VERIFIED",
+        "ollama_inference": "NOT_TESTED",
+        "doctor_qa": "NOT_EXECUTED",
+        "github_push": "NOT_PERMITTED",
+    }, sort_keys=True))
+    return 0
+
+
+def _verify_installed_model_health(filename: Path) -> int:
+    """Probe the exact pinned adapter/model without creating a mission."""
+    from .git_worktree import GitSafetyError
+    from .process_agent import AgentProcessError, LocalProcessAgent
+    try:
+        installation = Installation.load(filename)
+        GitWorktrees(
+            installation.canonical_root,
+            installation.workspace,
+            installation.repository,
+        ).inspect_canonical()
+        if len(installation.arguments) != 1:
+            raise BootstrapError("Exactly one pinned local model config required")
+        agent = AgentProgram(
+            installation.executable,
+            installation.arguments,
+            timeout_seconds=installation.timeout_seconds,
+            pinned_executable_sha256=installation.executable_sha256,
+            pinned_arguments=tuple(
+                (arg, installation.argument_sha256[arg])
+                for arg in installation.arguments
+            ),
+        )
+        response = LocalProcessAgent(agent).request(
+            "health", {}, cwd=installation.canonical_root,
+        )
+        if response != {
+            "protocol": 1,
+            "action": "health",
+            "status": "ok",
+            "agent_ready": True,
+        }:
+            raise BootstrapError("Pinned model agent did not report exact health")
+    except (BootstrapError, GitSafetyError, AgentProcessError, OSError,
+            ValueError, TypeError):
+        print(json.dumps({"local_model_health": "REJECTED"}, sort_keys=True))
+        return 2
+    print(json.dumps({
+        "installation": "CONFIG_AND_GIT_VERIFIED",
+        "local_model_health": "PINNED_AGENT_AND_LOCAL_TAGS_VERIFIED",
+        "ollama_inference": "NOT_TESTED",
+        "doctor_qa": "NOT_EXECUTED",
+        "github_push": "NOT_PERMITTED",
+    }, sort_keys=True))
+    return 0
+
+
 def _enable_update_health_ipc(
     service, input_stream=None, *, output_stream=None,
 ) -> tuple[int, str]:
@@ -513,10 +582,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--self-test',action='store_true')
     parser.add_argument('--native-ipc-smoke',action='store_true')
     parser.add_argument('--update-health-handshake',action='store_true')
+    parser.add_argument('--verify-installation', action='store_true')
+    parser.add_argument('--check-model-health', action='store_true')
     args=parser.parse_args(argv)
     if sum((args.self_test, args.native_ipc_smoke,
-            args.update_health_handshake)) > 1:
+            args.update_health_handshake, args.verify_installation,
+            args.check_model_health)) > 1:
         return 2
+    if args.verify_installation:
+        if args.config is None:
+            return 2
+        return _verify_installed_config(args.config)
+    if args.check_model_health:
+        if args.config is None:
+            return 2
+        return _verify_installed_model_health(args.config)
     if args.native_ipc_smoke:
         if args.config is not None:
             return 2

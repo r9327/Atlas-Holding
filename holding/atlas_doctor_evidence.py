@@ -98,10 +98,14 @@ def consume_doctor_report(
             or type(structural) is not bool):
         raise DoctorEvidenceError("Invalid trusted Doctor invocation identity")
     try:
-        payload = json.loads(raw, object_pairs_hook=_unique_object)
+        def reject_nonfinite(_value: str) -> None:
+            raise DoctorEvidenceError("Non-finite Doctor JSON value")
+        payload = json.loads(
+            raw, object_pairs_hook=_unique_object, parse_constant=reject_nonfinite,
+        )
     except DoctorEvidenceError:
         raise
-    except (UnicodeError, ValueError) as exc:
+    except (UnicodeError, ValueError, RecursionError) as exc:
         raise DoctorEvidenceError("Doctor report is not valid JSON") from exc
     if (not isinstance(payload, dict)
             or type(payload.get("schema_version")) is not int
@@ -110,7 +114,7 @@ def consume_doctor_report(
     if payload.get("protocol") != PROTOCOL or payload.get("action") != expected_action:
         raise DoctorEvidenceError("Wrong Doctor protocol or action")
     status = payload.get("status")
-    if (status not in _STATUSES
+    if (type(status) is not str or status not in _STATUSES
             or type(payload.get("exit_code")) is not int
             or payload.get("exit_code") != _EXIT[status]):
         raise DoctorEvidenceError("Inconsistent Doctor status and declared exit code")
@@ -179,9 +183,18 @@ def consume_doctor_report(
         execution = payload.get("execution")
         if not isinstance(execution, dict):
             raise DoctorEvidenceError("Missing Doctor execution evidence")
-        tests_executed = _strings(execution.get("tests_executed"), limit=100)
-        if status == "PASS" and execution.get("status") not in {"PASS", "FOCUSED_CHECKED"}:
-            raise DoctorEvidenceError("Doctor PASS lacks successful execution evidence")
+        reported_tests = execution.get("tests_executed")
+        if reported_tests is False and status != "PASS":
+            # Real Atlas development_preflight sends a BOOLEAN for this field.
+            # False may prove NO tests ran, but True cannot identify which
+            # modules ran and MUST NOT satisfy a local PASS.
+            tests_executed = ()
+        else:
+            tests_executed = _strings(reported_tests, limit=100)
+        if status == "PASS" and (
+                execution.get("status") not in {"PASS", "FOCUSED_CHECKED"}
+                or not tests_executed):
+            raise DoctorEvidenceError("Doctor PASS lacks successful named test execution evidence")
 
     local_status = {
         ("plan", "READY"): "PLANNED_LOCAL",

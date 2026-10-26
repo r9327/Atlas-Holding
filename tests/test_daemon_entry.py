@@ -467,6 +467,128 @@ json.dump({'schema_version':1,'request_id':r['request_id'],'status':'OK',
         self.assertIsNotNone(installation.github)
         self.assertIsNotNone(installation.dashboard)
 
+    def test_installed_config_offline_verification_never_starts_service_or_db(self):
+        from holding.daemon_entry import main
+        from unittest.mock import patch
+        import contextlib
+        import io
+        self.save()
+        output = io.StringIO()
+        with patch("holding.daemon_entry.HoldingService.from_local_agent",
+                   side_effect=AssertionError("service started")), \
+             contextlib.redirect_stdout(output):
+            self.assertEqual(
+                main(['--verify-installation', '--config', str(self.config)]), 0)
+        report = json.loads(output.getvalue())
+        self.assertEqual(report['installation'], 'CONFIG_AND_GIT_VERIFIED')
+        self.assertEqual(report['ollama_inference'], 'NOT_TESTED')
+        self.assertEqual(report['doctor_qa'], 'NOT_EXECUTED')
+        self.assertFalse((self.root / 'state.sqlite').exists())
+        self.assertFalse((self.root / 'worktrees').exists())
+
+    def test_installed_config_verification_rejects_foreign_dirty_or_tampered(self):
+        from holding.daemon_entry import main
+        from unittest.mock import patch
+        import contextlib
+        import io
+        self.save()
+        def check():
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output), patch(
+                    "holding.daemon_entry.HoldingService.from_local_agent",
+                    side_effect=AssertionError("service started")):
+                result = main(['--verify-installation', '--config',
+                               str(self.config)])
+            self.assertEqual(json.loads(output.getvalue()),
+                             {'installation': 'REJECTED'})
+            self.assertEqual(result, 2)
+        git(self.repo, 'remote', 'set-url', 'origin',
+            'https://github.com/wrong/clone.git')
+        check()
+        git(self.repo, 'remote', 'set-url', 'origin',
+            'https://github.com/r9327/Dof-Atlas.git')
+        (self.repo / 'untracked.txt').write_text('dirty')
+        check()
+        (self.repo / 'untracked.txt').unlink()
+        self.script.write_text('print("tampered")')
+        check()
+
+    def test_installed_local_model_health_uses_pinned_agent_without_mission(self):
+        from holding.daemon_entry import main
+        from unittest.mock import patch
+        import contextlib
+        import io
+        self.save()
+        output = io.StringIO()
+        with (patch("holding.daemon_entry.HoldingService.from_local_agent",
+                    side_effect=AssertionError("must not start Holding")),
+              contextlib.redirect_stdout(output)):
+            code = main(["--check-model-health", "--config",
+                         str(self.config)])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(output.getvalue()), {
+            "installation": "CONFIG_AND_GIT_VERIFIED",
+            "local_model_health": "PINNED_AGENT_AND_LOCAL_TAGS_VERIFIED",
+            "ollama_inference": "NOT_TESTED",
+            "doctor_qa": "NOT_EXECUTED",
+            "github_push": "NOT_PERMITTED",
+        })
+        self.assertFalse((self.root / "state.sqlite").exists())
+        self.assertFalse((self.root / "worktrees").exists())
+
+    def test_installed_local_model_health_rejects_dirty_clone_or_tampered_pin(self):
+        from holding.daemon_entry import main
+        import contextlib
+        import io
+        self.save()
+        def reject():
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                result = main(["--check-model-health", "--config",
+                               str(self.config)])
+            self.assertEqual(result, 2)
+            self.assertEqual(json.loads(output.getvalue()),
+                             {"local_model_health": "REJECTED"})
+        (self.repo / "untracked-code.py").write_text("x=1")
+        reject()
+        (self.repo / "untracked-code.py").unlink()
+        self.script.write_text("changed after onboarding", encoding="utf-8")
+        reject()
+
+    def test_installed_model_health_rejects_false_ready_or_cli_conflicts(self):
+        from holding.daemon_entry import main
+        import contextlib
+        import io
+        # The agent returns status ok but must also assert exact agent_ready=True.
+        self.script.write_text(
+            "import json,sys\n"
+            "r=json.load(sys.stdin)\n"
+            "print(json.dumps({'protocol':1,'action':'health',"
+            "'status':'ok','agent_ready':False}))\n", encoding="utf-8")
+        self.data["argument_sha256"][str(self.script)] = hashlib.sha256(
+            self.script.read_bytes()).hexdigest()
+        self.save()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(main(["--check-model-health", "--config",
+                                   str(self.config)]), 2)
+        self.assertEqual(json.loads(output.getvalue()),
+                         {"local_model_health": "REJECTED"})
+        self.assertEqual(main(["--check-model-health"]), 2)
+        self.assertEqual(main(["--check-model-health", "--self-test"]), 2)
+        self.assertEqual(main([
+            "--check-model-health", "--verify-installation",
+            "--config", str(self.config),
+        ]), 2)
+
+    def test_installed_config_verification_mode_requires_config_and_no_other_modes(self):
+        from holding.daemon_entry import main
+        self.assertEqual(main(['--verify-installation']), 2)
+        self.assertEqual(main(['--verify-installation', '--self-test']), 2)
+        self.assertEqual(main(['--verify-installation', '--native-ipc-smoke']), 2)
+        self.assertEqual(main(['--verify-installation', '--config',
+                               '/not/a/real/installation.json', '--self-test']), 2)
+
     def test_engine_frozen_selftest_checks_real_durable_storage_offline(self):
         from holding.daemon_entry import main
         self.assertEqual(main(['--self-test']), 0)

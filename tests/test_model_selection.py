@@ -84,6 +84,19 @@ class ModelSelectionTests(unittest.TestCase):
         self.assertEqual(select(replace(benchmark(), peak_vram_bytes=BUDGET.vram_bytes + 1)).status, "BLOCKED")
         self.assertEqual(select(replace(benchmark(), context_tokens=8192)).status, "BLOCKED")
 
+    def test_cpu_only_model_can_be_measured_and_selected_without_a_gpu(self):
+        cpu = replace(benchmark("cpu-only"), peak_vram_bytes=0)
+        hardware = HardwareBudget(24 * 1024**3, 0, 16_384)
+        self.assertEqual(select(cpu, budget=hardware).model_id, "cpu-only")
+        self.assertEqual(select(benchmark(), budget=hardware).status, "BLOCKED")
+
+    def test_negative_or_boolean_vram_evidence_is_refused(self):
+        hardware = HardwareBudget(24 * 1024**3, 0, 16_384)
+        for invalid in (-1, True):
+            with self.subTest(value=invalid):
+                candidate = replace(benchmark("cpu-only"), peak_vram_bytes=invalid)
+                self.assertEqual(select(candidate, budget=hardware).status, "BLOCKED")
+
     def test_cpu_offload_does_not_excuse_impossible_measured_vram(self):
         item = replace(
             benchmark(), peak_vram_bytes=BUDGET.vram_bytes + 1,

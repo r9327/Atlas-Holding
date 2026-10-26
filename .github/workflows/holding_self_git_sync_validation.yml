@@ -1,0 +1,39 @@
+name: Holding self Git sync validation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'holding/self_git_sync.py'
+      - 'tests/test_self_git_sync.py'
+      - 'docs/HOLDING_SELF_GIT_SYNC.md'
+      - '.github/workflows/holding_self_git_sync_validation.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'holding/self_git_sync.py'
+      - 'tests/test_self_git_sync.py'
+
+permissions:
+  contents: read
+
+jobs:
+  git-sync:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Local Git sync integration tests (no GitHub mutation)
+        run: python -B -m unittest discover -s tests -p test_self_git_sync.py -v
+      - name: Checkout clean after tests
+        shell: bash
+        run: test -z "$(git status --porcelain --untracked-files=normal)"

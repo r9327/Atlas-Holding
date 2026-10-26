@@ -460,6 +460,18 @@ def execute_setup(
 
 
 
+def verify_canonical_atlas_checkout(atlas_root: Path, workspace: Path) -> None:
+    """Require the exact clean canonical repository before changing ACL/state."""
+    from .git_worktree import GitSafetyError, GitWorktrees
+    try:
+        worker = GitWorktrees(atlas_root, workspace, "r9327/Dof-Atlas")
+        worker.inspect_canonical()
+    except (GitSafetyError, OSError, ValueError) as exc:
+        raise EngineEnrollmentError(
+            "Selected Atlas checkout is not a clean r9327/Dof-Atlas clone"
+        ) from exc
+
+
 def configure_and_launch_engine(
     *, install_root: Path, atlas_root: Path, runtime_pins: dict[str, str],
     adapter_sha256: str, approved: bool, launch_approved: bool,
@@ -516,6 +528,7 @@ def configure_and_launch_engine(
         raise EngineEnrollmentError("An installed Ollama model must be selected")
     if model_name not in dict(discover_local_models()):
         raise EngineEnrollmentError("The chosen Ollama model is not installed")
+    verify_canonical_atlas_checkout(atlas_root, install_root / "workspaces")
     # Root ACL modifications are separately approved in the first-run dialog.
     # They are never attempted against a drive or user profile root.
     protect_approved_install_root(install_root, approved=True)

@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from holding.windows_control_center_build import (
     build_windows_control_center, build_windows_engine, build_windows_agent,
+    build_windows_acceptance,
 )
 
 
@@ -109,6 +110,49 @@ class ViewerBuildTests(unittest.TestCase):
         self.assertEqual(proof.bytes, 1_000_008)
         self.assertEqual(proof.sha256, hashlib.sha256(b"A" * 1_000_008).hexdigest())
         self.assertTrue((self.output / "AtlasHoldingAgent.exe").is_file())
+
+    def test_acceptance_freeze_requires_real_source_and_explicit_console_cli(self):
+        (self.holding / "windows_acceptance_entry.py").write_text(
+            "# frozen nonrelease acceptance entry\n", encoding="utf-8")
+        testing = self.root / "tests"
+        testing.mkdir()
+        (testing / "native_windows_code_mission_smoke.py").write_text(
+            "# pinned test-only mission\n", encoding="utf-8")
+        def pack(command, **options):
+            self.assertFalse(options["shell"])
+            self.assertTrue(options["check"])
+            self.assertEqual(options["cwd"], self.root)
+            self.assertIn("--console", command)
+            self.assertIn("--onefile", command)
+            self.assertNotIn("--windowed", command)
+            self.assertEqual(
+                command[command.index("--name") + 1],
+                "AtlasHoldingAcceptance")
+            entry = Path(command[-1]).read_text(encoding="utf-8")
+            self.assertIn("holding.windows_acceptance_entry import main", entry)
+            self.assertIn("main(sys.argv[1:])", entry)
+            dist = Path(command[command.index("--distpath") + 1])
+            dist.mkdir()
+            (dist / "AtlasHoldingAcceptance.exe").write_bytes(b"N" * 1_000_023)
+        with patch("holding.windows_control_center_build.sys.platform", "win32"), \
+             patch("holding.windows_control_center_build.subprocess.run",
+                   side_effect=pack):
+            proof = build_windows_acceptance(
+                output_dir=self.output, project_root=self.root)
+        self.assertFalse(proof.release_ready)
+        self.assertEqual(proof.bytes, 1_000_023)
+        self.assertEqual(proof.sha256,
+                         hashlib.sha256(b"N" * 1_000_023).hexdigest())
+        with patch("holding.windows_control_center_build.sys.platform", "win32"), \
+             patch("holding.windows_control_center_build.subprocess.run") as run:
+            with self.assertRaises(FileExistsError):
+                build_windows_acceptance(
+                    output_dir=self.output, project_root=self.root)
+            (testing / "native_windows_code_mission_smoke.py").unlink()
+            with self.assertRaises(ValueError):
+                build_windows_acceptance(
+                    output_dir=self.root / "other", project_root=self.root)
+            run.assert_not_called()
 
     def test_never_overwrite_or_package_missing_or_relative_sources(self):
         self.output.mkdir()

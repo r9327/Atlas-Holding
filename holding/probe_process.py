@@ -111,7 +111,9 @@ class _WindowsJob:
     def attach_and_resume(self, process: subprocess.Popen[str]) -> None:
         import ctypes
 
-        if process.poll() is not None or not self._kernel.AssignProcessToJobObject(
+        # This child starts CREATE_SUSPENDED. Do not trust an early
+        # Popen.poll() result; fail closed if Win32 assignment rejects it.
+        if self._handle is None or not self._kernel.AssignProcessToJobObject(
                 self._handle, process._handle):
             error = ctypes.get_last_error()
             raise ProbeProcessError(

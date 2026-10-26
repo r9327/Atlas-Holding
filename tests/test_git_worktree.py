@@ -32,6 +32,35 @@ class GitWorktreeTests(unittest.TestCase):
         self.assertNotEqual(sha,original)
         self.assertEqual(git(self.root,'rev-parse','HEAD'),original)
         self.assertFalse((self.root/'feature.py').exists())
+    @unittest.skipUnless(os.name == 'nt', 'Requires real Windows Job Objects')
+    def test_fast_git_commands_never_use_racy_running_process_attach(self):
+        from holding.windows_job import WindowsJob
+        # All Git calls are CREATE_SUSPENDED and attached before execution.
+        # The legacy attach() must never be used, including for fast queries.
+        with patch.object(WindowsJob, 'attach',
+                          side_effect=AssertionError('unsafe legacy Git attach')):
+            for _ in range(12):
+                self.assertEqual(
+                    Path(self.manager._git('rev-parse', '--show-toplevel')).resolve(),
+                    self.root.resolve(),
+                )
+
+    @unittest.skipUnless(os.name == 'nt', 'Requires real Windows Job Objects')
+    def test_failed_job_assignment_cleans_up_unassigned_suspended_git(self):
+        from holding.windows_job import WindowsJob, WindowsJobError
+        started = []
+
+        def deny_before_attach(_job, process):
+            started.append(process)
+            raise WindowsJobError('Test refuses assignment', code='TEST_DENIED')
+
+        with patch.object(WindowsJob, 'attach_suspended', deny_before_attach):
+            with self.assertRaises(WindowsJobError):
+                self.manager._git('rev-parse', '--verify', 'HEAD')
+        self.assertEqual(len(started), 1)
+        self.assertIsNotNone(started[0].poll(),
+                             'Suspended Git escaped cleanup after rejected Job')
+
     def test_real_git_nul_delimited_staging_and_commit(self):
         original = git(self.root, 'rev-parse', 'HEAD')
         work = self.manager.create('feature1')

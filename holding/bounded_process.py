@@ -114,7 +114,9 @@ class _WindowsJob:
     def attach_and_resume(self, process: subprocess.Popen) -> None:
         import ctypes
 
-        if process.poll() is not None or not self._kernel.AssignProcessToJobObject(
+        # This child is CREATE_SUSPENDED. Popen.poll() is not an
+        # authoritative pre-attach gate; Windows must decide from the handle.
+        if self._handle is None or not self._kernel.AssignProcessToJobObject(
                 self._handle, process._handle):
             raise BoundedProcessError(
                 f"AssignProcessToJobObject failed with WinError {ctypes.get_last_error()}"
