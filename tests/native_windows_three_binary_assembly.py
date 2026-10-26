@@ -198,7 +198,8 @@ def assemble(
         except BaseException:
             shutil.rmtree(output_dir)
             raise
-    _checkout(setup_root, setup_sha)
+    _checkout(setup_root, setup_sha,
+              ignore_upstream=(setup_root == candidate_root))
     _checkout(runtime_root, runtime_sha)
     print("NONRELEASE_THREE_FROZEN_BINARIES_CROSS_PR_PASS")
     return report
