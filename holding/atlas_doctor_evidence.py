@@ -183,9 +183,18 @@ def consume_doctor_report(
         execution = payload.get("execution")
         if not isinstance(execution, dict):
             raise DoctorEvidenceError("Missing Doctor execution evidence")
-        tests_executed = _strings(execution.get("tests_executed"), limit=100)
-        if status == "PASS" and execution.get("status") not in {"PASS", "FOCUSED_CHECKED"}:
-            raise DoctorEvidenceError("Doctor PASS lacks successful execution evidence")
+        reported_tests = execution.get("tests_executed")
+        if reported_tests is False and status != "PASS":
+            # Real Atlas development_preflight sends a BOOLEAN for this field.
+            # False may prove NO tests ran, but True cannot identify which
+            # modules ran and MUST NOT satisfy a local PASS.
+            tests_executed = ()
+        else:
+            tests_executed = _strings(reported_tests, limit=100)
+        if status == "PASS" and (
+                execution.get("status") not in {"PASS", "FOCUSED_CHECKED"}
+                or not tests_executed):
+            raise DoctorEvidenceError("Doctor PASS lacks successful named test execution evidence")
 
     local_status = {
         ("plan", "READY"): "PLANNED_LOCAL",
