@@ -72,6 +72,84 @@ class McpStdioTests(unittest.TestCase):
         listed = response(server, request("tools/list"))["result"]["tools"]
         self.assertEqual(listed[0]["inputSchema"]["properties"], {})
 
+    def test_tool_arguments_are_validated_before_any_handler_effect(self):
+        calls = []
+        def handler(args):
+            calls.append(dict(args))
+            return "safe"
+        server = McpRouter((Tool(
+            "read.only", "Safely checks bounded inputs",
+            {
+                "type": "object", "additionalProperties": False,
+                "required": ["query"], "properties": {
+                    "query": {"type": "string", "minLength": 1, "maxLength": 16},
+                    "limit": {"type": "integer", "enum": [1, 2, 3]},
+                    "tags": {"type": "array", "maxItems": 2,
+                             "items": {"type": "string", "maxLength": 8}},
+                },
+            }, handler,
+        ),), server_name="bounded", server_version="1")
+        invalid = [
+            {}, {"query": ""}, {"query": "x" * 17},
+            {"query": 55}, {"query": "ok", "limit": True},
+            {"query": "ok", "limit": 4},
+            {"query": "ok", "tags": ["a", "b", "c"]},
+            {"query": "ok", "unexpected": "dangerous"},
+            {"query": "ok", "tags": ["a", 2]},
+        ]
+        for arguments in invalid:
+            with self.subTest(arguments=arguments):
+                error = response(server, request("tools/call", {
+                    "name": "read.only", "arguments": arguments,
+                }))["error"]
+                self.assertEqual(error["code"], -32602)
+                self.assertEqual(calls, [])
+        valid = response(server, request("tools/call", {
+            "name": "read.only", "arguments": {
+                "query": "dofus", "limit": 2, "tags": ["pvm"],
+            },
+        }))["result"]
+        self.assertFalse(valid["isError"])
+        self.assertEqual(calls, [{"query": "dofus", "limit": 2, "tags": ["pvm"]}])
+
+    def test_tool_schema_rejects_unimplemented_or_unsafe_claims(self):
+        bad = [
+            {"type": "object", "$ref": "https://host/schema"},
+            {"type": ["object", "null"]},
+            {"type": {"unsafe": "object"}},
+            {"type": "object", "properties": {"x": {"type": "number"}},
+             "required": [["x"]]},
+            {"type": "object", "properties": {"x": {"type": "string"}},
+             "required": ["unknown"]},
+            {"type": "object", "properties": {"x": {"type": "string"}},
+             "required": ["x", "x"]},
+            {"type": "array"},
+            {"type": "array", "items": {"type": "object"}, "maxItems": 5000},
+            {"type": "object", "properties": {
+                "injection": {"type": "string", "pattern": ".*"}
+            }},
+        ]
+        for schema in bad:
+            with self.subTest(schema=schema), self.assertRaises(ValueError):
+                Tool("invalid", "Invalid", schema, lambda _args: "never")
+
+    def test_numeric_enum_never_matches_boolean_alias(self):
+        server = McpRouter((Tool(
+            "exact", "Exact type",
+            {"type": "object", "additionalProperties": False,
+             "properties": {"n": {"type": "integer", "enum": [True, 2]}},
+             "required": ["n"]},
+            lambda _arguments: "ok",
+        ),), server_name="bounded", server_version="1")
+        forbidden = response(server, request("tools/call", {
+            "name": "exact", "arguments": {"n": 1},
+        }))
+        self.assertEqual(forbidden["error"]["code"], -32602)
+        allowed = response(server, request("tools/call", {
+            "name": "exact", "arguments": {"n": 2},
+        }))
+        self.assertFalse(allowed["result"]["isError"])
+
     def test_non_finite_or_oversized_schema_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "finite JSON"):
             Tool("bad", "bad schema", {"type": "object", "x": float("nan")}, str)
@@ -79,11 +157,18 @@ class McpStdioTests(unittest.TestCase):
             Tool("bad", "bad schema", {"type": "object", "x": "z" * 70000}, str)
 
     def test_tool_failure_is_a_tool_result_without_exception_details(self):
-        failed = response(self.server, request("tools/call", {
-            "name": "holding.health", "arguments": {"unexpected": True},
+        def failing(_arguments):
+            raise RuntimeError("hidden private agent credential")
+        server = McpRouter((Tool(
+            "test.failure", "Safe failing tool",
+            {"type": "object", "additionalProperties": False}, failing,
+        ),), server_name="bounded", server_version="1")
+        failed = response(server, request("tools/call", {
+            "name": "test.failure", "arguments": {},
         }))["result"]
         self.assertTrue(failed["isError"])
         self.assertEqual(failed["content"][0]["text"], "Trusted local tool failed")
+        self.assertNotIn("credential", json.dumps(failed))
 
     def test_unknown_tool_and_method_are_protocol_errors(self):
         missing = response(self.server, request("tools/call", {
@@ -103,6 +188,23 @@ class McpStdioTests(unittest.TestCase):
         self.assertEqual(duplicate["error"]["code"], -32700)
         framed = response(self.server, b'{}\n{}\n')
         self.assertEqual(framed["error"]["code"], -32700)
+
+    def test_nonfinite_json_and_nested_payloads_fail_without_killing_server(self):
+        nonfinite = request("tools/call", {
+            "name": "holding.health", "arguments": {},
+        }).replace(b'"arguments":{}', b'"arguments":{"x":NaN}')
+        self.assertEqual(
+            response(self.server, nonfinite)["error"]["code"], -32700)
+        deeply_nested = b"[" * 2500 + b"0" + b"]" * 2500 + b"\n"
+        # Python JSON decoder depth limits vary by runtime. Whether decoding
+        # fails (-32700) or succeeds with a non-object (-32600), reject safely.
+        self.assertIn(
+            response(self.server, deeply_nested)["error"]["code"],
+            (-32700, -32600))
+        self.assertEqual(
+            response(self.server, request("tools/list"))["result"]["tools"][0]["name"],
+            "holding.health",
+        )
 
     def test_notifications_never_receive_a_response(self):
         note = json.loads(request("notifications/cancelled"))

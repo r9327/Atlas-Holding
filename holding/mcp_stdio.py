@@ -10,6 +10,8 @@ import json
 import re
 from typing import BinaryIO, Callable
 
+from .mcp_schema import matches_schema, validate_schema
+
 
 PROTOCOL_VERSION = "2026-07-28"
 MAX_MESSAGE_BYTES = 1024 * 1024
@@ -56,7 +58,9 @@ class Tool:
             raise ValueError("Tool schema must be finite JSON") from exc
         if len(encoded) > 64 * 1024:
             raise ValueError("Tool schema exceeds size limit")
-        object.__setattr__(self, "input_schema", json.loads(encoded))
+        stable_schema = json.loads(encoded)
+        validate_schema(stable_schema)
+        object.__setattr__(self, "input_schema", stable_schema)
 
 
 class McpRouter:
@@ -123,8 +127,15 @@ class McpRouter:
         if not raw or b"\n" in raw or b"\r" in raw:
             return self._encode(self._error(None, -32700, "Invalid stdio framing"))
         try:
-            request = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object)
-        except (UnicodeError, ValueError, McpProtocolError):
+            def reject_nonfinite(_value: str):
+                raise McpProtocolError("Non-finite JSON value")
+            request = json.loads(
+                raw.decode("utf-8"), object_pairs_hook=_unique_object,
+                parse_constant=reject_nonfinite,
+            )
+        except (UnicodeError, ValueError, McpProtocolError, RecursionError):
+            # Deeply nested valid-looking input cannot crash the stdio hub;
+            # NaN/Infinity are not standard JSON and may bypass tool guards.
             return self._encode(self._error(None, -32700, "Parse error"))
         if type(request) is not dict:
             return self._encode(self._error(None, -32600, "Invalid Request"))
@@ -190,6 +201,10 @@ class McpRouter:
             tool = self._tools.get(name)
             if tool is None:
                 return self._encode(self._error(request_id, -32602, "Unknown tool"))
+            if not matches_schema(arguments, tool.input_schema):
+                return self._encode(
+                    self._error(request_id, -32602, "Tool arguments violate input schema")
+                )
             try:
                 text = tool.handler(arguments)
                 if type(text) is not str:

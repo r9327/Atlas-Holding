@@ -71,7 +71,7 @@ def _valid(result: ModelBenchmark) -> bool:
     )
     measures = (
         result.median_latency_ms, result.peak_ram_bytes,
-        result.peak_vram_bytes, result.context_tokens,
+        result.context_tokens,
     )
     return bool(
         type(result.model_id) is str and _ID.fullmatch(result.model_id)
@@ -90,6 +90,9 @@ def _valid(result: ModelBenchmark) -> bool:
         and result.quality_passed <= result.quality_total
         and result.tool_passed <= result.tool_total
         and all(_positive_integer(value) for value in measures)
+        # A verified CPU-only run legitimately consumes zero GPU VRAM.
+        and type(result.peak_vram_bytes) is int
+        and result.peak_vram_bytes >= 0
         and type(result.offload_verified) is bool
         and type(result.installed) is bool
         and result.source == "trusted_test_runner"
@@ -107,7 +110,7 @@ def select_model(
             or role not in _ROLES or profile not in _PROFILES
             or type(budget) is not HardwareBudget
             or not _positive_integer(budget.ram_bytes)
-            or not _positive_integer(budget.vram_bytes)
+            or type(budget.vram_bytes) is not int or budget.vram_bytes < 0
             or not _positive_integer(budget.minimum_context_tokens)
             or type(expected_suite_id) is not str
             or not _ID.fullmatch(expected_suite_id)

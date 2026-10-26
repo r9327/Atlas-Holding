@@ -123,11 +123,12 @@ class DashboardControlTests(unittest.TestCase):
 
     def test_tampering_wrong_action_old_timestamp_fail_closed(self):
         before = self.flags()
+        signed_pause = self._frame(b"P")
         cases = [
             self._frame(b"S", key=READ),
             self._frame(b"S", when=int(time.time()) - 100),
             self._frame(b"M"),
-            self._frame(b"P")[:-1] + b"x",
+            signed_pause[:-1] + bytes([signed_pause[-1] ^ 1]),
         ]
         for frame in cases:
             with self.subTest(frame=frame[:5]):
