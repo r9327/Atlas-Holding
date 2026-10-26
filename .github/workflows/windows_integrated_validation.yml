@@ -1,0 +1,218 @@
+name: Integrated Windows installer and local agent
+
+on:
+  pull_request:
+    branches: [main]
+    types: [ready_for_review, labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  integration-tests:
+    if: >-
+      github.head_ref == 'integration/windows-agent-bootstrap-20261022' &&
+      (github.event.action == 'ready_for_review' ||
+       github.event.label.name == 'ci:validate')
+    name: Integrated installer and agent on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact integration SHA
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Python 3.13
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Install Qt runtime library on Linux
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libegl1
+      - name: Install exact UI runtime used by the integrated tests
+        run: python -m pip install --disable-pip-version-check PySide6==6.12.0
+      - name: Check Python syntax without bytecode writes
+        run: python -c "import ast,pathlib; [ast.parse(p.read_text(encoding='utf-8'),filename=str(p)) for d in ('holding','tests') for p in pathlib.Path(d).rglob('*.py')]"
+      - name: Parse no-Python live acceptance launcher on native Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          $path = (Resolve-Path -LiteralPath "scripts/Run-HoldingLiveAcceptance.ps1").Path
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            $path, [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -ne 0) {
+            foreach ($problem in $errors) {
+              Write-Output ("PowerShell parser: " + $problem.Message +
+                            " at line " + $problem.Extent.StartLineNumber)
+            }
+            throw "Native Windows live acceptance PowerShell syntax is invalid"
+          }
+          Write-Output "NONRELEASE_LIVE_ACCEPTANCE_POWERSHELL_AST_PASS"
+      - name: Run complete integrated unittest collection
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -B -X utf8 -m unittest discover -s tests -p "test_*.py" -v
+      - name: Require clean checkout after tests
+        shell: bash
+        run: 'test -z "$(git status --porcelain --untracked-files=normal)"'
+      - name: Install exact nonrelease Windows bundle packager
+        if: runner.os == 'Windows'
+        run: |
+          python -m pip install --disable-pip-version-check --only-binary=:all: "pyinstaller==6.22.3"
+      - name: Build and execute frozen Control Center and engine smokes on real Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 28
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP "atlas-control-center-candidate-$env:GITHUB_RUN_ID"
+          python -B -m holding.windows_control_center_build --kind all --output-dir "$output"
+          if ($LASTEXITCODE -ne 0) { throw "Native Control Center packaging failed" }
+          $exe = Join-Path $output "AtlasHoldingControlCenter.exe"
+          if (!(Test-Path $exe) -or (Get-Item $exe).Length -lt 1000000) {
+            throw "Native viewer executable is missing or incomplete"
+          }
+          $ok = Start-Process -FilePath $exe -ArgumentList '--self-test' -PassThru -Wait
+          if ($ok.ExitCode -ne 0) { throw "Frozen Qt Control Center self-test failed: $($ok.ExitCode)" }
+          $denied = Start-Process -FilePath $exe -ArgumentList @('--self-test','--port','1234') -PassThru -Wait
+          if ($denied.ExitCode -ne 2) { throw "Bundled viewer did not reject mixed self-test arguments" }
+          $engine = Join-Path $output "AtlasHoldingEngine.exe"
+          if (!(Test-Path $engine) -or (Get-Item $engine).Length -lt 1000000) {
+            throw "Native headless daemon executable is missing or incomplete"
+          }
+          & $engine --self-test
+          if ($LASTEXITCODE -ne 0) { throw "Frozen durable engine SQLite self-test failed" }
+          & $engine --self-test --config invalid
+          if ($LASTEXITCODE -ne 2) { throw "Frozen engine accepted conflicting self-test args" }
+          Write-Output "NONRELEASE_GUI_QT_SMOKE_PASS"
+          python -B -X utf8 tests/native_windows_runtime_smoke.py --viewer "$exe" --engine "$engine"
+          if ($LASTEXITCODE -ne 0) { throw "Frozen GUI-to-engine native private-pipe smoke failed" }
+          Write-Output "NONRELEASE_ENGINE_SQLITE_SMOKE_PASS"
+          $agent = Join-Path $output "AtlasHoldingAgent.exe"
+          if (!(Test-Path $agent) -or (Get-Item $agent).Length -lt 1000000) {
+            throw "Frozen local agent executable is missing or incomplete"
+          }
+          python -B -X utf8 tests/native_windows_agent_smoke.py --agent "$agent"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Frozen local agent failed native Ollama protocol v1"
+          }
+          python -B -X utf8 tests/native_windows_installer_enrollment_smoke.py --frozen-directory "$output"
+          if ($LASTEXITCODE -ne 0) { throw "Native pinned installation ACL or engine v3 smoke failed" }
+          $acceptance = Join-Path $output "AtlasHoldingAcceptance.exe"
+          if (!(Test-Path $acceptance) -or (Get-Item $acceptance).Length -lt 1000000) {
+            throw "Standalone no-Python Windows acceptance EXE missing"
+          }
+          & $acceptance --self-test
+          if ($LASTEXITCODE -ne 0) { throw "Native acceptance self-test failed" }
+          $missionReceipt = Join-Path $env:RUNNER_TEMP "atlas-native-mission-$env:GITHUB_RUN_ID.json"
+          & $acceptance --agent "$agent" --receipt-json "$missionReceipt"
+          if ($LASTEXITCODE -ne 0) { throw "Frozen agent local coding-to-commit integration failed" }
+          if (!(Test-Path $missionReceipt)) { throw "Nonrelease mission receipt missing" }
+          $mission = Get-Content -Raw "$missionReceipt" | ConvertFrom-Json
+          if ($mission.source -ne "DETERMINISTIC_CI_STUB" -or
+              $mission.mission_state -ne "QA_PENDING_AWAITING_PRIVILEGED_DOCTOR" -or
+              $mission.doctor_status -ne "NOT_EXECUTED" -or
+              $mission.github_push_status -ne "NOT_PERMITTED" -or
+              $mission.release_ready -ne $false -or
+              $mission.ollama_ram_peak_bytes -ne $null -or
+              $mission.ollama_vram_peak_bytes -ne $null) {
+            throw "Native mission receipt falsely claimed real model, Doctor, resource or release proof"
+          }
+          Write-Output "Nonrelease mission receipt SHA256: $((Get-FileHash -Algorithm SHA256 "$missionReceipt").Hash.ToLowerInvariant())"
+          Remove-Item -Force "$missionReceipt"
+          $manifest = Join-Path $PWD "tests/fixtures/bootstrap_smoke_assets.json"
+          $manifestSha = (Get-FileHash -Algorithm SHA256 "$manifest").Hash.ToLowerInvariant()
+          $viewerSha = (Get-FileHash -Algorithm SHA256 "$exe").Hash.ToLowerInvariant()
+          $engineSha = (Get-FileHash -Algorithm SHA256 "$engine").Hash.ToLowerInvariant()
+          $agentSha = (Get-FileHash -Algorithm SHA256 "$agent").Hash.ToLowerInvariant()
+          $setupOut = Join-Path $env:RUNNER_TEMP "atlas-integrated-setup-$env:GITHUB_RUN_ID"
+          python -B -m holding.windows_build --manifest "$manifest" --manifest-sha256 "$manifestSha" --output-dir "$setupOut" --runtime-directory "$output" --viewer-sha256 "$viewerSha" --engine-sha256 "$engineSha" --adapter-executable "$agent" --adapter-sha256 "$agentSha"
+          if ($LASTEXITCODE -ne 0) { throw "Frozen integrated setup build failed" }
+          $setup = Join-Path $setupOut "AtlasHoldingSetup.exe"
+          if (!(Test-Path $setup)) { throw "Frozen setup missing" }
+          $selfTest = Start-Process -FilePath "$setup" -ArgumentList '--self-test' -Wait -PassThru
+          if ($selfTest.ExitCode -ne 0) { throw "Frozen integrated setup self-test failed" }
+          Write-Output "NONRELEASE_REAL_THREE_BINARY_SETUP_SELF_TEST_PASS"
+          Write-Output "Setup SHA256: $((Get-FileHash -Algorithm SHA256 $setup).Hash.ToLowerInvariant())"
+          Write-Output "Agent SHA256: $agentSha"
+          Write-Output "Viewer SHA256: $((Get-FileHash -Algorithm SHA256 $exe).Hash.ToLowerInvariant())"
+          Write-Output "Engine SHA256: $((Get-FileHash -Algorithm SHA256 $engine).Hash.ToLowerInvariant())"
+          # Export a NONRELEASE acceptance kit only after all native checks
+          # pass. Do not publish a release or a demo-manifest setup executable.
+          $kit = Join-Path $env:RUNNER_TEMP "atlas-live-acceptance-$env:GITHUB_RUN_ID"
+          New-Item -ItemType Directory -Path $kit -ErrorAction Stop | Out-Null
+          Copy-Item -LiteralPath "$agent" -Destination "$kit/AtlasHoldingAgent.exe"
+          Copy-Item -LiteralPath "$acceptance" -Destination "$kit/AtlasHoldingAcceptance.exe"
+          Copy-Item -LiteralPath "scripts/Run-HoldingLiveAcceptance.ps1" -Destination "$kit/Run-HoldingLiveAcceptance.ps1"
+          Copy-Item -LiteralPath "docs/WINDOWS_LIVE_ACCEPTANCE.md" -Destination "$kit/README.md"
+          $candidateSha = (git rev-parse HEAD).Trim().ToLowerInvariant()
+          if ($candidateSha -ne '${{ github.event.pull_request.head.sha }}') {
+            throw "Acceptance kit source SHA differs from checked out PR HEAD"
+          }
+          $agentKitSha = (Get-FileHash -Algorithm SHA256 "$kit/AtlasHoldingAgent.exe").Hash.ToLowerInvariant()
+          $acceptanceKitSha = (Get-FileHash -Algorithm SHA256 "$kit/AtlasHoldingAcceptance.exe").Hash.ToLowerInvariant()
+          $launcherKitSha = (Get-FileHash -Algorithm SHA256 "$kit/Run-HoldingLiveAcceptance.ps1").Hash.ToLowerInvariant()
+          $readmeKitSha = (Get-FileHash -Algorithm SHA256 "$kit/README.md").Hash.ToLowerInvariant()
+          if ($agentKitSha -ne $agentSha) { throw "Agent was modified during kit staging" }
+          $kitManifest = @{
+            schema = 1
+            git_sha = $candidateSha
+            release_ready = $false
+            files = @{
+              "AtlasHoldingAgent.exe" = $agentKitSha
+              "AtlasHoldingAcceptance.exe" = $acceptanceKitSha
+              "Run-HoldingLiveAcceptance.ps1" = $launcherKitSha
+              "README.md" = $readmeKitSha
+            }
+          } | ConvertTo-Json -Depth 4 -Compress
+          [System.IO.File]::WriteAllText(
+            (Join-Path $kit "nonrelease-manifest.json"), $kitManifest,
+            [System.Text.UTF8Encoding]::new($false))
+          python -B -X utf8 tests/native_windows_live_kit_smoke.py --kit "$kit" --shell pwsh
+          if ($LASTEXITCODE -ne 0) {
+            throw "PowerShell 7 and frozen EXEs failed native nonrelease kit acceptance"
+          }
+          python -B -X utf8 tests/native_windows_live_kit_smoke.py --kit "$kit" --shell powershell
+          if ($LASTEXITCODE -ne 0) {
+            throw "Stock Windows PowerShell 5.1 and frozen EXEs failed native kit acceptance"
+          }
+          Write-Output "NONRELEASE_NO_PYTHON_WINDOWS_LIVE_KIT_PS51_AND_PS7_PASS"
+          Write-Output "Acceptance EXE SHA256: $acceptanceKitSha"
+          Write-Output "Kit candidate SHA: $candidateSha"
+          Remove-Item -Force -Recurse "$output"
+          Remove-Item -Force -Recurse "$setupOut"
+          if (git status --porcelain --untracked-files=normal) {
+            throw "Frozen viewer build mutated checked-out sources"
+          }
+
+      - name: Upload tested no-Python Windows live-model acceptance kit (NOT RELEASE)
+        id: nonrelease_kit_upload
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: NONRELEASE-Windows-Ollama-Acceptance-${{ github.run_id }}
+          path: ${{ runner.temp }}/atlas-live-acceptance-${{ github.run_id }}/
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+
+      - name: Log independently checkable nonrelease archive SHA256
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $digest = '${{ steps.nonrelease_kit_upload.outputs.artifact-digest }}'
+          # upload-artifact@v4 emits 64 raw hex chars. The REST API
+          # displays the identical artifact digest with a sha256: prefix.
+          if ($digest -cnotmatch '^[0-9a-f]{64}$') {
+            throw 'No valid archive SHA256 emitted by GitHub upload'
+          }
+          Write-Output "NONRELEASE_ACCEPTANCE_ARTIFACT_DIGEST=sha256:$digest"
+          Write-Output "NONRELEASE_ACCEPTANCE_SOURCE_SHA=${{ github.event.pull_request.head.sha }}"

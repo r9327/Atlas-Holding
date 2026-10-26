@@ -72,7 +72,7 @@ class GitWorktrees:
         with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
             try:
                 if os.name == 'nt':
-                    from .windows_job import WindowsJob
+                    from .windows_job import WindowsJob, CREATE_SUSPENDED
                     job = WindowsJob()
                 started = time.monotonic()
                 process = subprocess.Popen(
@@ -80,10 +80,12 @@ class GitWorktrees:
                     stdout=output, stderr=errors, stdin=subprocess.DEVNULL,
                     env=environment, shell=False,
                     start_new_session=(os.name != 'nt'),
-                    creationflags=(getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
-                                   if os.name == 'nt' else 0))
+                    creationflags=((getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
+                                    | CREATE_SUSPENDED) if os.name == 'nt' else 0))
                 if job is not None:
-                    job.attach(process)
+                    # Even fast Git commands must be contained BEFORE they
+                    # execute. A running git.exe can exit before attach().
+                    job.attach_suspended(process)
                 while process.poll() is None:
                     if time.monotonic() - started >= timeout:
                         raise GitSafetyError('Git timed out')
@@ -115,6 +117,11 @@ class GitWorktrees:
                             LocalProcessAgent._stop_tree(process)
                     finally:
                         job.close()
+                        # A failed AssignProcessToJobObject leaves an unassigned
+                        # suspended Git child outside the Job. Never leak it.
+                        if process is not None and process.poll() is None:
+                            from .process_agent import LocalProcessAgent
+                            LocalProcessAgent._stop_tree(process)
                 elif process is not None:
                     if os.name != 'nt':
                         import signal

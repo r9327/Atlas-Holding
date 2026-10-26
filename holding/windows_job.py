@@ -138,6 +138,14 @@ class WindowsJob:
                 'Cannot attach stopped process to Windows Job Object',
                 code='PROCESS_EXITED_BEFORE_ATTACH',
             )
+        self._assign_process(process)
+
+    def _assign_process(self, process) -> None:
+        if self._handle is None:
+            raise WindowsJobError(
+                'Cannot attach process to a closed Windows Job Object',
+                code='ASSIGN_CLOSED_JOB',
+            )
         if not self._k32.AssignProcessToJobObject(self._handle, process._handle):
             import ctypes
             error = ctypes.get_last_error()
@@ -147,8 +155,15 @@ class WindowsJob:
             )
 
     def attach_suspended(self, process) -> None:
-        """Attach a CREATE_SUSPENDED child, then resume all of its threads."""
-        self.attach(process)
+        """Attach a CREATE_SUSPENDED child, then resume all of its threads.
+
+        Do not poll() a suspended child before assigning it. The Win32
+        process handle and AssignProcessToJobObject are authoritative: a
+        pre-assignment poll is a TOCTOU check, not a protection boundary.
+        If assignment fails, the child is never resumed and the caller's
+        cleanup terminates it (fail closed).
+        """
+        self._assign_process(process)
         import ctypes
         snapshot = self._k32.CreateToolhelp32Snapshot(0x00000004, 0)
         if snapshot == ctypes.c_void_p(-1).value:
