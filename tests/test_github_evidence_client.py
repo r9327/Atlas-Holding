@@ -92,6 +92,29 @@ class ClientSafetyTests(unittest.TestCase):
         with self.assertRaises(GitHubEvidenceError):
             GitHubEvidenceClient("r9327/Dof-Atlas", "")
 
+    def test_ambiguous_or_nonfinite_api_records_never_become_full_evidence(self):
+        payloads = (
+            b'{"head":1,"head":2}',
+            b'{"rate":NaN}',
+            b'{"rate":Infinity}',
+            b"[" * 2500 + b"0" + b"]" * 2500,
+        )
+        for raw in payloads:
+            with self.subTest(payload_prefix=raw[:20]):
+                opener = _Opener(_Response(raw))
+                with patch("holding.github_full_evidence.request.build_opener",
+                           return_value=opener):
+                    client = GitHubEvidenceClient("r9327/Dof-Atlas", "secret")
+                    with self.assertRaises(GitHubEvidenceError):
+                        client.get("pulls/3")
+                    self.assertEqual(len(opener.urls), 1)
+        # A clean API record is still accepted.
+        opener = _Opener(_Response(b'{"head":{"sha":"good"}}'))
+        with patch("holding.github_full_evidence.request.build_opener",
+                   return_value=opener):
+            client = GitHubEvidenceClient("r9327/Dof-Atlas", "secret")
+            self.assertEqual(client.get("pulls/3")["head"]["sha"], "good")
+
     def test_redirect_to_other_host_is_never_followed(self):
         handler = _NoRedirect()
         self.assertIsNone(handler.redirect_request(

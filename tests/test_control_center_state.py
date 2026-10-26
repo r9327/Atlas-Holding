@@ -88,6 +88,138 @@ class ControlCenterStateTests(unittest.TestCase):
         with self.assertRaises(ControlCenterStateError):
             consume(missing)
 
+    def test_v3_services_are_strict_and_v2_stays_compatible(self):
+        legacy = snapshot()
+        legacy.update(schema_version=2, paused=False, stop_requested=False)
+        self.assertEqual(consume(legacy).services, ())
+        updated = dict(legacy, schema_version=3, services=[
+            {"name": "github", "status": "ONLINE", "age_seconds": 18},
+            {"name": "firecrawl", "status": "STALE", "age_seconds": 399},
+        ])
+        state = consume(updated)
+        self.assertEqual(len(state.services), 2)
+        self.assertEqual(state.services[1].status, "STALE")
+        cases = [
+            [updated["services"][0]] * 2,
+            [{"name": "github", "status": "ACTIVE", "age_seconds": 1}],
+            [{"name": "github", "status": "ONLINE", "age_seconds": 301}],
+            [{"name": "github", "status": "STALE", "age_seconds": 299}],
+            [{"name": "github", "status": "UNKNOWN", "age_seconds": 0}],
+            [{"name": "github", "status": "ONLINE", "age_seconds": True}],
+            [{"name": "rogue", "status": "ONLINE", "age_seconds": 1}],
+            [{"name": "github", "status": "ONLINE", "age_seconds": 1,
+              "installed": True}],
+        ]
+        for invalid in cases:
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ControlCenterStateError):
+                    consume(dict(updated, services=invalid))
+        without_services = dict(updated)
+        del without_services["services"]
+        with self.assertRaises(ControlCenterStateError):
+            consume(without_services)
+        with self.assertRaises(ControlCenterStateError):
+            consume(dict(updated, services=[{"name": "github",
+                                              "status": "ONLINE",
+                                              "age_seconds": 1}] * 4))
+
+    def test_v4_model_history_is_exact_digest_bounded_and_scoped(self):
+        payload = snapshot()
+        payload.update(
+            schema_version=4, paused=False, stop_requested=False,
+            services=[], model_history=[{
+                "role": "CODER", "task_id": "task-1",
+                "model_name": "qwen2.5-coder:7b",
+                "model_digest": "c" * 64,
+                "benchmark_digest": "d" * 64,
+                "observed_at": NOW - 20,
+            }],
+        )
+        state = consume(payload)
+        self.assertEqual(len(state.model_history), 1)
+        self.assertEqual(state.model_history[0].model_name, "qwen2.5-coder:7b")
+        self.assertEqual(state.model_history[0].role, "CODER")
+        self.assertEqual(len(state.agents), 1)  # Source fixture only, not inferred
+
+        expected = payload["model_history"][0]
+        for change in (
+            {"role": "LEAD"}, {"role": ["CODER"]},
+            {"task_id": "other-task"}, {"model_digest": "a" * 40},
+            {"benchmark_digest": True}, {"observed_at": NOW + 10},
+            {"model_name": ""}, {"installed": True},
+        ):
+            invalid = dict(payload)
+            invalid["model_history"] = [dict(expected, **change)]
+            with self.subTest(change=change):
+                with self.assertRaises(ControlCenterStateError):
+                    consume(invalid)
+        for broken in (None, [expected] * 21):
+            with self.subTest(broken=broken is None):
+                with self.assertRaises(ControlCenterStateError):
+                    consume(dict(payload, model_history=broken))
+        missing = dict(payload)
+        del missing["model_history"]
+        with self.assertRaises(ControlCenterStateError):
+            consume(missing)
+        with self.assertRaises(ControlCenterStateError):
+            consume(dict(payload, model_history=[
+                dict(expected, observed_at=NOW - 11),
+                dict(expected, observed_at=NOW - 9),
+            ]))
+
+    def test_v5_local_hub_is_explicit_authenticated_evidence(self):
+        payload = snapshot()
+        payload.update(
+            schema_version=5, paused=False, stop_requested=False,
+            services=[], model_history=[], hub={
+                "state": "RESPONSIVE", "pid": 4242,
+                "observed_epoch": payload["generated_at"] - 12,
+                "age_seconds": 12, "source_sha256": "c" * 64,
+                "protocol_version": "2026-07-28",
+            },
+        )
+        state = consume(payload)
+        self.assertEqual(state.hub.state, "RESPONSIVE")
+        self.assertEqual(state.hub.age_seconds, 12)
+        self.assertEqual(state.hub.pid, 4242)
+        self.assertEqual(len(state.plugins), 1)  # No extra active plugins
+        payload["hub"] = None
+        self.assertIsNone(consume(payload).hub)
+        payload["hub"] = {
+            "state": "STALE", "pid": 4242,
+            "observed_epoch": payload["generated_at"] - 31,
+            "age_seconds": 31, "source_sha256": "c" * 64,
+            "protocol_version": None,
+        }
+        self.assertEqual(consume(payload).hub.state, "STALE")
+
+    def test_v5_rejects_forged_hub_provenance_and_future_age(self):
+        payload = snapshot()
+        payload.update(
+            schema_version=5, paused=False, stop_requested=False,
+            services=[], model_history=[], hub={
+                "state": "RESPONSIVE", "pid": 4242,
+                "observed_epoch": payload["generated_at"] - 12,
+                "age_seconds": 12, "source_sha256": "c" * 64,
+                "protocol_version": "2026-07-28",
+            },
+        )
+        good = payload["hub"]
+        for bad in (
+            {"state": "ACTIVE"}, {"state": []}, {"pid": True},
+            {"pid": None}, {"observed_epoch": payload["generated_at"] + 1},
+            {"age_seconds": 14}, {"age_seconds": 31},
+            {"source_sha256": "c" * 40},
+            {"protocol_version": "2099-01-01"},
+            {"installed": True},
+        ):
+            with self.subTest(bad=bad), self.assertRaises(ControlCenterStateError):
+                consume(dict(payload, hub=dict(good, **bad)))
+        without_hub = dict(payload)
+        del without_hub["hub"]
+        with self.assertRaises(ControlCenterStateError):
+            consume(without_hub)
+
     def test_done_without_evidence_is_impossible(self):
         payload = snapshot()
         payload["tasks"][0]["completion_evidence"] = None

@@ -113,6 +113,7 @@ class DashboardSession:
 def start_dashboard_session(
     service: "HoldingService", program: ViewerProgram, *,
     readonly: bool = False,
+    update_root: Path | None = None,
 ) -> DashboardSession:
     """Spawn a verified user-session viewer and deliver one-time capabilities.
 
@@ -123,7 +124,12 @@ def start_dashboard_session(
     from .service import HoldingService
     if (not isinstance(service, HoldingService) or not service._started
             or service._dashboard_ipc is not None or not isinstance(program, ViewerProgram)
-            or type(readonly) is not bool):
+            or type(readonly) is not bool
+            or (update_root is not None and (
+                not isinstance(update_root, Path)
+                or not update_root.is_absolute()
+                or ".." in update_root.parts
+                or update_root.is_symlink()))):
         raise DashboardSessionError("Invalid trusted dashboard launch context")
     command = program.verify()  # last-minute integrity check
     read_key = secrets.token_bytes(32)
@@ -139,6 +145,9 @@ def start_dashboard_session(
         ]
         if readonly:
             argv.append("--readonly")
+        if update_root is not None:
+            # Display only, never an update authority or an IPC capability.
+            argv.extend(("--update-root", str(update_root)))
         child = subprocess.Popen(
             argv, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL, cwd=str(program.executable.parent),

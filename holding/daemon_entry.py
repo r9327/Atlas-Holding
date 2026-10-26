@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import re
+import sys
 
 from .dashboard_session import DashboardSessionError, ViewerProgram
 from .git_worktree import GitWorktrees
@@ -24,6 +25,9 @@ from .github_broker_protocol import (
 from .github_full_evidence import GitHubEvidenceError
 from .process_agent import AgentProgram
 from .service import HoldingService, ServiceSettings, termination_signals
+from .mcp_local_inventory import PinnedLocalPlugin
+from .mcp_package_pin import McpPackagePin, McpPackagePinError
+from .embedded_python_stage import EmbeddedPythonRelease, verify_staged_embedded_python
 
 
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -58,6 +62,14 @@ class DashboardInstallation:
 
 
 @dataclass(frozen=True)
+class McpInstallation:
+    interpreter_pin: PinnedLocalPlugin
+    response_timeout: float
+    package_pin: McpPackagePin | None = None
+    package_root: Path | None = None
+
+
+@dataclass(frozen=True)
 class Installation:
     database: Path
     repository: str
@@ -71,6 +83,7 @@ class Installation:
     timeout_seconds: float
     github: GitHubInstallation | None = None
     dashboard: "DashboardInstallation | None" = None
+    mcp: "McpInstallation | None" = None
 
     @staticmethod
     def _github_config(info: object) -> GitHubInstallation:
@@ -186,6 +199,90 @@ class Installation:
             raise BootstrapError('Installed dashboard binary is not verified') from exc
         return DashboardInstallation(viewer, info['readonly'])
 
+    @staticmethod
+    def _mcp_config(info: object, *, require_package_pin: bool = False,
+                    installed_companion: bool = False,
+                    install_root: Path | None = None) -> McpInstallation:
+        # A PyInstaller frozen EXE is not the embeddable CPython interpreter
+        # needed by "python -B -m holding.mcp_entry". Fail during setup
+        # rather than silently advertising a usable local MCP runtime.
+        if getattr(sys, "frozen", False) and not installed_companion:
+            raise BootstrapError("MCP requires an explicitly bundled Python interpreter, not a frozen app EXE")
+        required = {"interpreter", "interpreter_sha256", "response_timeout"}
+        if require_package_pin:
+            required.add("module_sha256")
+        if installed_companion:
+            required.update({"package_root", "source_release_zip_sha256", "python_minor"})
+        if type(info) is not dict or set(info) != required:
+            raise BootstrapError("Invalid pinned MCP installation")
+        raw, digest, timeout = (
+            info["interpreter"], info["interpreter_sha256"],
+            info["response_timeout"])
+        if (type(raw) is not str or not 1 <= len(raw) <= 4096
+                or type(digest) is not str or not _DIGEST.fullmatch(digest)
+                or type(timeout) not in (int, float)
+                or not .25 <= timeout <= 10):
+            raise BootstrapError("Invalid pinned MCP interpreter settings")
+        binary = Path(raw)
+        try:
+            canonical = binary.resolve(strict=True)
+            running = Path(sys.executable).resolve(strict=True)
+        except OSError as exc:
+            raise BootstrapError("Installed MCP interpreter unavailable") from exc
+        if (not binary.is_absolute() or '..' in binary.parts or binary.is_symlink()
+                or not canonical.is_file()
+                or (not installed_companion and canonical != running)):
+            raise BootstrapError("MCP interpreter must match installed runtime")
+        try:
+            observed = _hash_file(canonical)
+        except OSError as exc:
+            raise BootstrapError("Installed MCP interpreter unavailable") from exc
+        if not hmac.compare_digest(observed, digest):
+            raise BootstrapError("MCP interpreter changed since onboarding")
+        package_root = Path(__file__).resolve().parent.parent
+        if installed_companion:
+            raw_root = info["package_root"]
+            archive_hash = info["source_release_zip_sha256"]
+            minor = info["python_minor"]
+            if (type(raw_root) is not str or not 1 <= len(raw_root) <= 4096
+                    or type(archive_hash) is not str or not _DIGEST.fullmatch(archive_hash)
+                    or type(minor) is not int or not 13 <= minor <= 19
+                    or install_root is None):
+                raise BootstrapError("Invalid installed MCP companion identity")
+            package_root = Path(raw_root)
+            expected = (
+                install_root / "mcp-python" /
+                ("python-embedded-" + archive_hash[:16]))
+            if (not package_root.is_absolute() or package_root != expected
+                    or package_root.is_symlink()
+                    or not package_root.is_dir()
+                    or canonical.parent != package_root
+                    or canonical.name.lower() != "python.exe"):
+                raise BootstrapError("Installed MCP companion outside approved root")
+        package_pin = None
+        if require_package_pin:
+            try:
+                package_pin = McpPackagePin.from_manifest(info["module_sha256"])
+                if not package_pin.verify(package_root):
+                    raise McpPackagePinError("Installed package digest mismatch")
+            except (McpPackagePinError, OSError) as exc:
+                raise BootstrapError("MCP package code changed since onboarding") from exc
+        if installed_companion:
+            try:
+                release = EmbeddedPythonRelease(
+                    python_minor=minor, zip_sha256=archive_hash,
+                    module_sha256=info["module_sha256"])
+                staged = verify_staged_embedded_python(
+                    directory=package_root, pin=release)
+                if staged.interpreter_sha256 != digest:
+                    raise BootstrapError("Installed MCP interpreter release pin changed")
+            except (OSError, ValueError) as exc:
+                raise BootstrapError("Pinned MCP companion receipt invalid") from exc
+        return McpInstallation(
+            PinnedLocalPlugin("atlas-holding-internal", "1.0", canonical, digest),
+            float(timeout), package_pin,
+            package_root if installed_companion else None)
+
     @classmethod
     def load(cls, filename: Path) -> 'Installation':
         if not filename.is_absolute() or not filename.is_file() or filename.is_symlink():
@@ -200,10 +297,11 @@ class Installation:
                 'health_directory','executable','executable_sha256','arguments',
                 'argument_sha256','timeout_seconds'}
         if (not isinstance(info, dict) or type(info.get('schema')) is not int
-                or info['schema'] not in {1, 2, 3}
+                or info['schema'] not in {1, 2, 3, 4, 5, 6}
                 or set(info) != (base if info['schema'] == 1 else
                     base | {'github'} if info['schema'] == 2 else
-                    base | {'github', 'dashboard'})):
+                    base | {'github', 'dashboard'} if info['schema'] == 3 else
+                    base | {'github', 'dashboard', 'mcp'})):
             raise BootstrapError('Unknown installer schema or keys')
         locations = {}
         for field in ('database','canonical_root','workspace','health_directory','executable'):
@@ -246,17 +344,23 @@ class Installation:
             raise BootstrapError('Agent executable changed since onboarding')
         github = (
             cls._github_config(info['github'])
-            if info['schema'] in {2, 3} and info['github'] is not None else None
+            if info['schema'] in {2, 3, 4, 5, 6} and info['github'] is not None else None
         )
         # Schema v2 is GitHub-enabled only; schema v3 permits a local-only
         # viewer when no account is configured, without inventing authority.
         if info['schema'] == 2 and github is None:
             raise BootstrapError('GitHub schema requires configured broker')
         dashboard = (cls._dashboard_config(info['dashboard'])
-                     if info['schema'] == 3 else None)
+                     if info['schema'] in {3, 4, 5, 6} else None)
+        mcp = (cls._mcp_config(
+                    info["mcp"],
+                    require_package_pin=info["schema"] in {5, 6},
+                    installed_companion=info["schema"] == 6,
+                    install_root=locations["database"].parent.parent)
+               if info["schema"] in {4, 5, 6} and info["mcp"] is not None else None)
         return cls(locations['database'],info['repository'],locations['canonical_root'],
                    locations['workspace'],locations['health_directory'],exe,checksum,
-                   tuple(args),pins,float(info['timeout_seconds']),github,dashboard)
+                   tuple(args),pins,float(info['timeout_seconds']),github,dashboard,mcp)
 
     def build_service(self) -> HoldingService:
         git = GitWorktrees(self.canonical_root,self.workspace,self.repository)
@@ -276,6 +380,13 @@ class Installation:
                 control_factory=lambda source_id: BrokerGitPushControl(
                     control, source_id),
                 health_probe=control)
+        if self.mcp is not None:
+            service.enable_local_mcp(
+                interpreter_pin=self.mcp.interpreter_pin,
+                package_root=(self.mcp.package_root
+                              or Path(__file__).resolve().parent.parent),
+                response_timeout=self.mcp.response_timeout,
+                package_pin=self.mcp.package_pin)
         return service
 
 
@@ -352,57 +463,57 @@ def _native_ipc_smoke(input_stream=None, *, output_stream=None) -> int:
 
 
 def _verify_installed_config(filename: Path) -> int:
-    """Validate the actual pinned installation without starting a daemon.
-
-    This checks the same engine.json loader and canonical Git safety gate as
-    normal startup, but never starts a GUI, adapter, Ollama inference, broker,
-    database or mission. It is *not* a runtime health/certification proof.
-    """
+    """Validate pinned config and canonical Git without starting the service."""
     from .git_worktree import GitSafetyError
     try:
         installation = Installation.load(filename)
-        GitWorktrees(installation.canonical_root, installation.workspace,
-                     installation.repository).inspect_canonical()
+        GitWorktrees(
+            installation.canonical_root,
+            installation.workspace,
+            installation.repository,
+        ).inspect_canonical()
     except (BootstrapError, GitSafetyError, OSError, ValueError):
-        print(json.dumps({'installation': 'REJECTED'}))
+        print(json.dumps({"installation": "REJECTED"}, sort_keys=True))
         return 2
-    print(json.dumps({'installation': 'CONFIG_AND_GIT_VERIFIED',
-                      'ollama_inference': 'NOT_TESTED',
-                      'doctor_qa': 'NOT_EXECUTED',
-                      'github_push': 'NOT_PERMITTED'},
-                     sort_keys=True))
+    print(json.dumps({
+        "installation": "CONFIG_AND_GIT_VERIFIED",
+        "ollama_inference": "NOT_TESTED",
+        "doctor_qa": "NOT_EXECUTED",
+        "github_push": "NOT_PERMITTED",
+    }, sort_keys=True))
     return 0
 
 
 def _verify_installed_model_health(filename: Path) -> int:
-    """Health-check the REAL pinned frozen adapter and exact local model.
-
-    Runs with installed ACL/config/Git checks, a bounded read-only agent
-    `health` request and zero mission/database/GUI/push/Doctor operations.
-    This is NOT an inference or model-quality benchmark. The native adapter
-    verifies the digest currently offered by loopback Ollama /api/tags.
-    """
+    """Probe the exact pinned adapter/model without creating a mission."""
     from .git_worktree import GitSafetyError
-    from .process_agent import AgentProcessError, AgentProgram, LocalProcessAgent
+    from .process_agent import AgentProcessError, LocalProcessAgent
     try:
         installation = Installation.load(filename)
-        git = GitWorktrees(installation.canonical_root, installation.workspace,
-                           installation.repository)
-        git.inspect_canonical()
+        GitWorktrees(
+            installation.canonical_root,
+            installation.workspace,
+            installation.repository,
+        ).inspect_canonical()
         if len(installation.arguments) != 1:
             raise BootstrapError("Exactly one pinned local model config required")
         agent = AgentProgram(
-            installation.executable, installation.arguments,
+            installation.executable,
+            installation.arguments,
             timeout_seconds=installation.timeout_seconds,
             pinned_executable_sha256=installation.executable_sha256,
             pinned_arguments=tuple(
                 (arg, installation.argument_sha256[arg])
-                for arg in installation.arguments),
+                for arg in installation.arguments
+            ),
         )
         response = LocalProcessAgent(agent).request(
-            "health", {}, cwd=installation.canonical_root)
+            "health", {}, cwd=installation.canonical_root,
+        )
         if response != {
-            "protocol": 1, "action": "health", "status": "ok",
+            "protocol": 1,
+            "action": "health",
+            "status": "ok",
             "agent_ready": True,
         }:
             raise BootstrapError("Pinned model agent did not report exact health")
@@ -420,16 +531,63 @@ def _verify_installed_model_health(filename: Path) -> int:
     return 0
 
 
+def _enable_update_health_ipc(
+    service, input_stream=None, *, output_stream=None,
+) -> tuple[int, str]:
+    """Enroll one read-only updater health capability from a private pipe.
+
+    Unlike ``_native_ipc_smoke`` this exposes the installed engine's real
+    durable SQLite projection. The parent must close stdin after exactly 32
+    random bytes. No control capability or filesystem authority is returned.
+    """
+    import secrets
+    import sys
+
+    if os.name != "nt":
+        raise BootstrapError("Installed update health requires native Windows")
+    incoming = sys.stdin.buffer if input_stream is None else input_stream
+    outgoing = sys.stdout if output_stream is None else output_stream
+    if incoming is None or outgoing is None:
+        raise BootstrapError("Private update health pipe unavailable")
+    try:
+        if incoming.isatty():
+            raise BootstrapError("Interactive input cannot enroll update health")
+        key = incoming.read(33)
+    except BootstrapError:
+        raise
+    except (OSError, ValueError, TypeError, AttributeError) as exc:
+        raise BootstrapError("Private update health pipe unavailable") from exc
+    if type(key) is not bytes or len(key) != 32:
+        raise BootstrapError("Invalid update health capability frame")
+    engine_id = "update-engine-" + secrets.token_hex(16)
+    try:
+        port = service.enable_dashboard_ipc(
+            secret=key, control_secret=None, engine_id=engine_id,
+        )
+        outgoing.write(json.dumps({
+            "engine_id": engine_id,
+            "port": port,
+            "schema": 1,
+        }, sort_keys=True) + "\n")
+        outgoing.flush()
+    except BaseException:
+        service.disable_dashboard_ipc()
+        raise
+    return port, engine_id
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog='atlas-holding-daemon')
     parser.add_argument('--config',type=Path)
     parser.add_argument('--self-test',action='store_true')
     parser.add_argument('--native-ipc-smoke',action='store_true')
+    parser.add_argument('--update-health-handshake',action='store_true')
     parser.add_argument('--verify-installation', action='store_true')
     parser.add_argument('--check-model-health', action='store_true')
     args=parser.parse_args(argv)
     if sum((args.self_test, args.native_ipc_smoke,
-            args.verify_installation, args.check_model_health)) > 1:
+            args.update_health_handshake, args.verify_installation,
+            args.check_model_health)) > 1:
         return 2
     if args.verify_installation:
         if args.config is None:
@@ -447,19 +605,27 @@ def main(argv: list[str] | None = None) -> int:
         if args.config is not None:
             return 2
         return _self_test()
+    if args.update_health_handshake and os.name != "nt":
+        return 2
     if args.config is None:
         parser.error('--config required outside self-test')
     config=Installation.load(args.config)
     with config.build_service() as service:
         with termination_signals(service):
             service.start()
-            if config.dashboard is not None:
+            if args.update_health_handshake:
+                _enable_update_health_ipc(service)
+            elif config.dashboard is not None:
                 # Windows Session 0 cannot host an interactive Qt desktop.
                 # Installer must invoke this under the selected signed-in user.
                 if os.name == 'nt' and not _is_interactive_windows_session():
                     raise BootstrapError('Dashboard needs a trusted interactive Windows session')
                 service.launch_dashboard(
                     config.dashboard.program, readonly=config.dashboard.readonly,
+                    # The installed configuration already pins this root for
+                    # local companion enrollment. Qt receives it for observation
+                    # only, never as permission to update a running EXE.
+                    update_root=config.database.parent.parent,
                 )
             result=service.run()
             return 0 if result.action == 'STOPPED' else 2

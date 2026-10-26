@@ -43,6 +43,24 @@ class WindowsSetupTests(unittest.TestCase):
                         online=online,
                     )
 
+    def test_setup_cli_refuses_partial_mcp_companion_before_showing_gui(self):
+        from holding.windows_setup import main
+        args = [
+            "--manifest", str(self.manifest),
+            "--manifest-sha256", "a" * 64,
+        ]
+        with patch("tkinter.Tk") as tk:
+            for extra in (
+                ["--mcp-archive", str(self.manifest)],
+                ["--mcp-archive-sha256", "a" * 64],
+                ["--mcp-python-minor", "13"],
+            ):
+                with self.subTest(extra=extra):
+                    with self.assertRaises(SystemExit) as error:
+                        main(args + extra)
+                    self.assertEqual(error.exception.code, 2)
+            tk.assert_not_called()
+
     def test_setup_stages_agent_only_after_healthy_toolchain_and_consent(self):
         import hashlib
         from unittest.mock import Mock
@@ -124,22 +142,24 @@ class WindowsSetupTests(unittest.TestCase):
             plan.assert_not_called()
 
     def test_checkout_guard_requires_exact_clean_canonical_git_origin(self):
-        from holding.windows_setup import verify_canonical_atlas_checkout
+        from holding.git_worktree import GitSafetyError
         from holding.windows_engine_enrollment import EngineEnrollmentError
+        from holding.windows_setup import verify_canonical_atlas_checkout
+
         atlas = self.install_root.parent / "atlas"
         atlas.mkdir()
+        workspace = self.install_root / "workspaces"
         with patch("holding.git_worktree.GitWorktrees") as controller:
-            verify_canonical_atlas_checkout(
-                atlas, self.install_root / "workspaces")
+            verify_canonical_atlas_checkout(atlas, workspace)
             controller.assert_called_once_with(
-                atlas, self.install_root / "workspaces", "r9327/Dof-Atlas")
-            controller.return_value.inspect_canonical.assert_called_once()
-            from holding.git_worktree import GitSafetyError
+                atlas, workspace, "r9327/Dof-Atlas",
+            )
+            controller.return_value.inspect_canonical.assert_called_once_with()
             controller.return_value.inspect_canonical.side_effect = GitSafetyError(
-                "Remote points to an unrelated repository")
+                "Remote points to an unrelated repository",
+            )
             with self.assertRaisesRegex(EngineEnrollmentError, "clean"):
-                verify_canonical_atlas_checkout(
-                    atlas, self.install_root / "workspaces")
+                verify_canonical_atlas_checkout(atlas, workspace)
 
     def test_engine_activation_does_not_run_without_consent_or_release_pin(self):
         from holding.windows_setup import configure_and_launch_engine
@@ -261,7 +281,7 @@ class WindowsSetupTests(unittest.TestCase):
                 return_value=(("atlas-test:Q4", "e" * 64),),
         ), patch(
                 "holding.windows_setup.verify_canonical_atlas_checkout"
-        ) as checkout, patch(
+        ), patch(
                 "holding.windows_setup.enroll_local_model",
                 return_value=PinnedModel(
                     self.install_root / "agents" / "AtlasHoldingModel.json",

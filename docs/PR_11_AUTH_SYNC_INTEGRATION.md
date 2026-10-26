@@ -192,34 +192,314 @@ le même SHA intégré, inscrire un modèle local présent par son digest,
 sécuriser/épingler `model.json`, puis certifier la chaîne Windows complète
 avant toute release.
 
-## Vérification offline du moteur Windows installé (22 octobre 2026)
 
-Le binaire réel `AtlasHoldingEngine.exe` accepte maintenant un mode
-**lecture seule** distinct : `--verify-installation --config <chemin absolu engine.json>`.
-Cette commande réutilise `Installation.load` et `GitWorktrees.inspect_canonical` ;
-elle refuse toute modification SHA-256 de l'agent, du modèle local et de la
-GUI ainsi qu'un clone non canonique, sale ou avec remote différent. Les modes
-`--self-test`, `--native-ipc-smoke` et `--verify-installation` sont
-mutuellement exclus. Elle ne démarre pas SQLite, le GUI, le broker GitHub,
-Ollama ni un agent et n'écrit aucun état de mission.
+## Control Center unifié — intégration UI #8 dans #11 (23 octobre 2026)
 
-En succès, le rapport déclare uniquement :
-`CONFIG_AND_GIT_VERIFIED`, `ollama_inference=NOT_TESTED`,
-`doctor_qa=NOT_EXECUTED`, `github_push=NOT_PERMITTED`.
-Il ne faut pas interpréter cette preuve comme un benchmark du modèle ni
-comme une release certifiée. En échec, la commande retourne le code 2
-et `{"installation":"REJECTED"}`, sans divulguer la configuration.
+Les modifications sont maintenant présentes sur la branche de la PR #11.
+La PR #8 reste Draft et ne doit pas être fusionnée en parallèle sans
+réconciliation pour éviter de réintroduire un ancien affichage.
 
-`tests/native_windows_installer_enrollment_smoke.py` exécute le **vrai**
-moteur PyInstaller de la même compilation contre un `engine.json` protégé
-par ACL native après staging, puis exige son refus après altération du JSON
-de modèle. Les tests `tests/test_daemon_entry.py` prouvent également
-l'absence d'écriture de base SQLite ou d'installation de worktree pendant
-la vérification.
+- holding/control_center_ui.py reprend le rendu incrémental, les filtres
+  du journal, le statut Git du projet et la vue des preuves par tâche.
+  Une preuve SYNC SCOPED constate une mutation Git, jamais une CI FULL.
+- holding/control_center_live.py conserve le seul IPC existant et les
+  commandes authentifiées. Les instantanés authentifiés à séquence égale
+  maintiennent la fraîcheur sans inventer d'activité SQLite. Un simple
+  render_state rejoué ne renouvelle pas la connexion.
+- holding/control_center_project.py vérifie l'identité du dépôt et
+  l'ascendance Git sans capacité d'écriture.
+- Les tests ciblent le filtrage, le rendu incrémental, les statuts exact-SHA,
+  les preuves CI/SYNC séparées, la perte de connexion, la reconnexion
+  authentifiée et le refus d'un statut Git appartenant à un autre dépôt.
 
-**Déploiement restant** : tant que l'utilisateur n'a pas effectué la
-campagne `--model-json` de `tests/native_windows_code_mission_smoke.py`
-avec un modèle Ollama réellement installé et des mesures indépendantes,
-le résultat reste limité à un protocole simulé. La résolution d'un Git
-portable vérifié sans dépendance au PATH machine et les benchmarks qualité
-sont des critères distincts à fermer avant mise en distribution.
+**État de validation** : code et tests poussés, mais pas de certification
+Windows/Qt, de benchmark RAM ou de CI exact-SHA déclarée PASS. La PR reste
+Draft jusqu'à l'intégration et à l'exécution de la certification finale.
+
+
+## Durcissement Control Center — commandes fraîches et honnêteté UI (23 octobre 2026)
+
+- Les slots Pause/Reprendre/Stop refusent maintenant tout état authentifié
+  âgé de 30 s ou plus, même en cas d'appel direct à la méthode Qt.
+  Le timer périodique désactive les boutons alors qu'une lecture IPC reste
+  en cours ; aucun read-back ancien ne vaut autorisation de nouvelle commande.
+- Le rapport Agents/Plugins affiche explicitement « disponibilité non
+  déterminable » si la projection ne fournit aucun état. Actuellement
+  la projection de SQLite retourne des listes vides pour ces catégories :
+  ceci ne signifie pas que les composants sont absents ou arrêtés.
+- Tests ajoutés : fraîcheur des commandes, interdiction Pause/Stop sur
+  snapshot ancien, restauration seulement après nouveau snapshot signé,
+  rendu incrémental de 350 missions + page bornée de 200 événements,
+  affichage des listes Agents/Plugins inconnues.
+- Les améliorations sont sur cette branche intégrée. Les tests doivent
+  encore être exécutés sur les runners Ubuntu et Windows et suivis d'une
+  certification exact-SHA ; aucun PASS n'est déclaré sans ces résultats.
+
+
+## Télémétrie des services externes (23 octobre 2026)
+
+- Le schéma réseau Control Center v3 expose une liste bornée de **services
+  externes observés**, depuis external_service_health dans la même transaction
+  SQLite que les tâches, les preuves et l'état Pause/Stop. Les consommateurs v1/v2
+  restent compatibles ; aucun nouveau droit n'est accordé au viewer.
+- Services reconnus : github, context7, firecrawl. Les valeurs affichées
+  proviennent uniquement de leur statut et de l'âge de l'observation persistée,
+  sans les motifs libres qui peuvent contenir des secrets. Une observation
+  de plus de 300 secondes devient STALE et ne peut produire ONLINE_STABLE.
+- Ce tableau est indépendant des Plugins : une sonde réseau positive
+  **ne prouve ni installation, ni chargement, ni autorisation de l'outil MCP**.
+  Les agents restent non déterminables faute de registre de sessions fiable.
+- Contrats de tests ajoutés : cas ONLINE récent, service périmé, redaction
+  des raisons, compatibilité schéma v2, refus du contenu v3 forgé et affichage Qt.
+- La validation définitive attend une CI exacte SHA sur Ubuntu/Windows et
+  la qualification native ; les tests committés ne sont pas des preuves PASS.
+
+
+## Historique des modèles réellement utilisés — protocole IPC v4 (23 octobre 2026)
+
+La projection du Control Center relit désormais la table persistée
+mission_model_usage, jointe aux model_profiles enregistrés depuis le bootstrap
+authentifié. Elle n'affiche que les dernières affectations documentées (au
+maximum 20 après une lecture SQLite bornée à 1 000 lignes récentes) dont la
+mission appartient à la page projetée. Le rôle, le nom enregistré du modèle,
+l'horodatage et les deux digests SHA-256 (modèle/benchmark) sont consultables
+dans un onglet « Historique IA » avec recherche et filtre de rôle.
+
+L'absence de ligne n'est **pas une preuve qu'aucun agent n'est installé** et
+un usage antérieur n'est **pas la preuve d'un agent actuellement actif**.
+Les tableaux Agents/Plugins continuent à n'affirmer aucun état non attesté.
+Les modèles ne sont pas exécutés par le viewer et les secrets du moteur ne
+traversent pas l'IPC. Les schémas de lecture v1/v2/v3 sont conservés ;
+les nouveaux champs sont requis et strictement validés en v4.
+
+Contrats ajoutés : jointure avec les empreintes persistées, bornes de taille,
+refus de rôles, missions, digests ou dates falsifiés, maintien des filtres
+locaux et affichage du temps dans le fuseau de la session Windows. Les tests
+pour la version v4 devront réussir sur le nouveau SHA de certification.
+
+### Référence verte précédente
+
+La validation [GitHub Actions #39914235599](https://github.com/r9327/Atlas-Holding/actions/runs/39914235599)
+sur le SHA f092462f6959e27991a1e5d4236a191b56264833 est **PASS sur
+Ubuntu et Windows**, y compris les tests natifs Windows. Cette référence
+n'atteste **pas** la nouvelle télémétrie v4 ajoutée après ce SHA.
+
+
+## États MCP du hub interne via IPC authentifié v5 (23 octobre 2026)
+
+- Le moteur peut désormais relire la table `mcp_hub_observations` de la
+  PR #5 **si elle a été provisionnée dans la même base SQLite** que le
+  moteur Holding. Sans cette table ou sans observation, le champ `hub`
+  de la projection vaut strictement `null` : pas de faux plugin actif.
+- Schéma de snapshot v5 : observation du hub interne seule, PID, date,
+  ancienneté, empreinte SHA-256 de l'interpréteur local et version de
+  protocole **uniquement** pour un état `RESPONSIVE` de moins de
+  31 secondes. Plus de 30 secondes : `STALE`, sans version valide.
+  Les valeurs falsifiées, l'âge incohérent, le digest incorrect, les
+  dates futures et les champs supplémentaires sont rejetés.
+- Le canal HMAC existant du moteur est conservé. Les versions de lecture
+  antérieures v1/v2/v3/v4 restent acceptées. Les observations MCP ne
+  deviennent pas des droits de commande, des états d'agents ni une preuve
+  que Firecrawl/Context7/Doctor/Graphify sont installés ou actifs.
+- L'onglet « Services externes » affiche le hub interne à part et
+  le rafraîchit même sur **heartbeat authentifié sans nouvelle séquence
+  de mission**. Les commandes Pause/Stop restent sous les verrous
+  de fraîcheur et de confirmation indépendants.
+- Contrats de tests : projection depuis le journal réel, absence sans
+  journal, expiration, corruption, validation stricte IPC et rendu Qt
+  du heartbeat. Le démarrage de la session et la configuration du
+  journal dans le processus moteur nécessitent encore l'intégration
+  physique des PR #5 et #11 ; ce lot ne fusionne aucune branche.
+
+Référence PR #5 : `9252098ac8878046090eace4ba13a327574913c0`,
+[GitHub Actions Ubuntu/Windows PASS](https://github.com/r9327/Atlas-Holding/actions/runs/39943399313).
+La certification v5 de la PR #11 est distincte et reste requise.
+
+
+### Perte de connexion moteur : révocation immédiate de la télémétrie
+
+La fenêtre invalide maintenant explicitement le libellé `RESPONSIVE`
+du hub MCP quand les échanges IPC échouent ou que 30 secondes passent
+sans heartbeat. Un précédent résultat demeure consultable dans SQLite,
+mais n'est plus présenté comme une preuve de service **actuellement**
+disponible. Seule une nouvelle réponse du moteur authentifiée peut
+restaurer le libellé de protocole. Les verrous des commandes opérateur
+restent indépendants et inchangés. Un test Qt simule expiration et retour
+d'un heartbeat signé à séquence identique.
+
+
+## Intégration physique PR #5 → PR #11 : démarrage MCP réel (23 octobre 2026)
+
+Le commit d'intégration `21101b88616369a4681f91480722e12e0dcae71a`
+comporte deux parents Git (PR #11 et la PR #5 certifiée
+`d77be5c9f05b940fcfaca2f0c180cde15d0dee44`). Il incorpore
+sur la **branche Draft PR #11 seulement** les modules MCP, leur policy,
+les Job Objects, les vérificateurs ACL, la session, le journal et les tests.
+Il ne fusionne **aucune PR dans main**.
+
+`Installation` accepte désormais le schéma d'installation **v4**,
+strictement opt-in, qui exige les clés précédentes et :
+- `mcp: null` : aucun démarrage de hub ; l'ancien comportement est conservé.
+- `mcp: { "interpreter": "CHEMIN_ABSOLU", "interpreter_sha256":
+  "64_HEXA_MINUSCULES", "response_timeout": 3 }` : interpréteur
+  explicitement choisi à l'installation, identique au binaire Python
+  en cours d'exécution et contrôlé SHA-256. Aucun agent ni roadmap ne
+  peut modifier cette sélection. Les schémas v1–v3 restent acceptés.
+- `HoldingService.enable_local_mcp` est réservé à la phase de bootstrap
+  **avant** `start`. La connexion physique utilise la même base SQLite
+  que les tâches et le canal IPC authentifié v5, sans lecture de secrets
+  par les modèles.
+
+Pendant `run`, la session est sondée au plus une fois toutes les
+15 secondes en fonctionnement normal ; un STOP, une Pause ou une
+pression ressources ferme immédiatement le processus MCP et enregistre
+`CLOSED`. Resume autorisé réinitialise la temporisation. À la fermeture,
+les descripteurs et l'arbre de processus sont libérés avant le moteur.
+
+Tests : installation v4 validée, démarrage du vrai hub sous protection
+Windows Job Object, preuve SQLite `RESPONSIVE`, pause et reprise
+(avec nouveau PID), intégrité des missions, tamper SHA et refus de
+chemins/paramètres malformés. Le flux MPC ne lance toujours **aucun plugin
+tiers** et ne remplace pas le futur packaging EXE final.
+
+**Important** : pour une installation Windows finale, le programme
+d'installation doit fournir un interpréteur Python local compatible,
+prévoir les ACL NTFS privées de son exécutable et de la base de données,
+puis épingler sa véritable empreinte ; un EXE PyInstaller non compatible
+avec `python -m` n'est pas automatiquement un interpréteur valide.
+L'état `hub` affiché ne devient donc actuel que si ce processus a
+été réellement provisionné et exécuté.
+
+
+## Installer v5 — empreintes de l'ensemble du code Python MCP (23 octobre 2026)
+
+Le nouveau schéma **v5** conserve strictement toutes les propriétés de
+l'installation v4 et demande, quand `mcp` n'est pas `null`,
+`mcp.module_sha256` : une map des **fichiers Python du package
+`holding/*.py`**, nom simple → SHA-256 hexadécimal minuscule exact.
+Le helper d'installation `build_installation_module_pins(root)` construit
+cette map à partir du répertoire réellement distribué, hors de toute
+capacité donnée au modèle.
+
+Le contrat impose :
+- Une liste strictement identique aux fichiers `.py` installés, sans
+  modules ajoutés, manquants ni alias symboliques ; limite de 192 fichiers,
+  de 2 Mio par fichier et 32 Mio au total. Les extensions racine non épinglées
+  `.pyd`, `.so`, `.dll` et les bytecodes `.pyc` hors `__pycache__`
+  sont également refusés pour empêcher l'import d'un module natif concurrent.
+- Vérification de l'empreinte des sources à la lecture lors du
+  provisionnement, **avant le lancement du hub**, puis **après** chaque
+  découverte du protocole. Si un fichier a changé, la session est refusée
+  ou détruite et le statut `RESPONSIVE` est révoqué.
+- Sous Windows, vérification des ACL NTFS privées du dossier `holding` et
+  de chaque fichier `.py`, en plus de la base et de l'interpréteur, pour
+  réduire la possibilité de modification concurrente.
+- Compatibilité des schémas v1–v4 existants. Le v4 reste une installation
+  transitoire sans empreinte des modules ; **la protection complète
+  ajoutée ici exige le nouveau v5**, et l'installateur doit la provisionner.
+
+Les tests refusent un fichier source falsifié, un module injecté ou retiré,
+un lien symbolique, un manifeste invalide, un nouveau résultat protocolaire
+après corruption et les permissions de fichier Windows non sûres.
+Les ACL et empreintes **ne remplacent pas** une image Windows immuable,
+une signature du distributeur ou la gestion des mises à jour atomiques.
+Les vrais plugins tiers et leur approbation n'en sont pas déduits.
+
+Le bootstrap de ce schéma vérifie explicitement qu'il ne tourne pas dans
+un exécutable PyInstaller « frozen » : un EXE assemblé n'est pas un interpréteur
+CPython acceptant `-m`. La future distribution autonome doit livrer un
+interpréteur embeddable fiable, verrouiller les droits de ses modules et
+satisfaire ces mêmes preuves avant d'activer MCP. Le v5 ne prétend donc pas
+que l'installateur EXE complet est déjà certifié.
+
+
+## Préparation de configuration MCP v5 par l'installateur (23 octobre 2026)
+
+Le module `holding/mcp_enrollment.py` fournit maintenant une interface
+d'installation **appelable par un installateur de confiance**, sans accès
+réseau ni exécution de processus supplémentaires :
+
+- `prepare_v5_mcp_enrollment` transforme une configuration GUI valide
+  des schémas v3, v4 ou v5 non encore activée en document v5 **complet**.
+  L'installateur doit fournir séparément les SHA-256 du binaire CPython
+  et de **chaque module installé** issus de sa livraison vérifiée ;
+  il n'est pas permis de « certifier » les fichiers en calculant simplement
+  leur empreinte puis en les déclarant approuvés.
+- La préparation ne modifie aucun fichier et refuse les doublons de clés
+  JSON, les schémas inconnus, les données sources modifiées entre deux
+  lectures, tout ancien MCP déjà enrôlé et les dépassements de 32 Kio.
+  `McpPackagePin.verify` vérifie les octets locaux contre les empreintes
+  fournies par le processus d'installation approuvé.
+- `create_new_v5_config` crée exclusivement une **nouvelle** configuration
+  dans le même répertoire que l'ancienne, avec `O_EXCL`, écriture
+  synchronisée sur disque, contrôles ACL sous Windows, vérification de
+  relecture par `Installation.load`, et suppression du fichier incomplet
+  en cas d'échec. Jamais d'écrasement implicite de l'ancienne config.
+- Le lancement réel du hub utilise désormais CPython
+  `-E -S -B -m holding.mcp_entry`, en ignorant les variables
+  d'environnement Python et en désactivant le mécanisme `site` pouvant
+  importer des packages tiers ; lancement limité au répertoire signé
+  et au binaire épinglé.
+
+Des tests couvrent les vrais manifests, la non-modification de l'ancienne
+installation, la création exclusive, les empreintes frauduleuses, le
+changement de configuration, le refus d'un EXE PyInstaller et la forme exacte
+du lancement sur Windows et POSIX.
+
+**Limite réelle :** ce lot implémente une API de provisionnement, **pas
+encore l'interface graphique de Setup ni un interpréteur Python embeddable
+livré dans une release**. Le binaire et les empreintes doivent venir d'une
+chaîne de distribution autorisée avant toute activation. Aucun nouvel EXE
+installable n'est déclaré prêt.
+
+
+## Installateur Windows unifié : Python compagnon et schéma v6 (23 octobre 2026)
+
+La PR #2 (`e9c6acd48929c9e4672bfb7aa0d3e2ec35007d2a`,
+CI Ubuntu/Windows PASS #39996826618) a été importée dans la
+branche Draft PR #11 par un commit Git à deux parents
+`529d1ba06d686d81e49d2e34a257b9e60b6792b4`, sans toucher
+à `main`.
+
+Le chemin d'installation Windows est désormais relié aux composants
+d'exécution MCP, plutôt que de promettre une distribution tout-en-un
+sans runtime compatible :
+
+- Le builder `AtlasHoldingSetup.exe` sait embarquer un CPython Windows
+  embeddable officiel, un manifeste source `holding/*.py` et tous
+  leurs SHA attendus. Le wizard pose les fichiers sur le disque choisi,
+  sous répertoire NTFS protégé ; il refuse la modification d'un binaire,
+  d'un module ou de `python3XX._pth`. La relance sans modification
+  réutilise l'installation précédente.
+- Le moteur accepte **schema=6** avec un package Python compagnon installé :
+  `mcp.package_root`, `mcp.interpreter`, `mcp.interpreter_sha256`,
+  `mcp.source_release_zip_sha256`, `mcp.python_minor`,
+  `mcp.module_sha256` et `mcp.response_timeout`. Le chemin du
+  compagnon doit correspondre à la version sous
+  `<install_root>/mcp-python/python-embedded-<sha16>`, et non à un
+  binaire choisi par une roadmap.
+- L'inscription initiale `EngineEnrollmentRequest` publie atomiquement
+  **directement** la configuration `engine.json` en schéma v6 lorsqu'un
+  compagnon est vérifié. Aucun remplacement implicite d'un JSON v3 déjà
+  en place ; il faut le flux de réparation explicite pour une migration
+  d'installation existante.
+- `InstalledEngineSpec` valide le schéma v6, les hashes natifs/sources
+  et les ACL du compagnon avant de lancer l'exécutable Engine.
+  `Installation.load` répète les contrôles au sein du moteur.
+  L'enregistrement d'une machine sans MCP reste en schéma v3.
+- `LocalMcpHubSession` et le Job Object autorisent uniquement le Python
+  natif actuel **ou** un compagnon CPython `python.exe` versionné,
+  effectivement apparié à un manifeste de sources épinglé. Ce n'est
+  pas une autorisation de lancer n'importe quel plugin ou interpréteur.
+  Le supervisor conserve Pause/Stop, limites CPU/processus/mémoire et
+  arrêts sans enfants orphelins.
+
+Une étape CI Windows distincte télécharge l'archive officielle CPython
+3.13.16 x64 sous le SHA-256 publié par Python.org
+`97dae5274cc54867065e8d5a3226e48c35017ed332a0fdb0e27d5b5821961297`,
+puis exécute le **véritable** `holding.mcp_entry` depuis cet
+interpréteur installé. La suite vérifie discovery MCP, PID conservé,
+Job Object réel, limite mémoire/processus et arrêt en cas de
+falsification d'un module. Cela ne prouve pas encore les plugins tiers,
+la signature Authenticode ou une installation manuelle complète avec
+réparation et mise à jour de tous les composants.

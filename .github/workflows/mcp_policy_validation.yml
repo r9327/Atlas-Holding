@@ -4,6 +4,10 @@ on:
   pull_request:
     branches: [main]
     types: [ready_for_review, labeled]
+  push:
+    branches: [feat/05-mcp-plugin-hub]
+    paths:
+      - .ci/mcp-validation.trigger
 
 permissions:
   contents: read
@@ -11,9 +15,12 @@ permissions:
 jobs:
   mcp-policy-tests:
     if: >-
-      github.head_ref == 'feat/05-mcp-plugin-hub' &&
-      (github.event.action == 'ready_for_review' ||
-       github.event.label.name == 'ci:validate')
+      (github.event_name == 'push' &&
+       github.ref == 'refs/heads/feat/05-mcp-plugin-hub') ||
+      (github.event_name == 'pull_request' &&
+       github.head_ref == 'feat/05-mcp-plugin-hub' &&
+       (github.event.action == 'ready_for_review' ||
+        github.event.label.name == 'ci:validate'))
     name: MCP policy unittest on ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -25,7 +32,7 @@ jobs:
       - name: Checkout exact candidate SHA
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Python 3.13
         uses: actions/setup-python@v7
