@@ -1,9 +1,10 @@
-"""Cross-PR Windows assembly smoke: real frozen binary bytes, never a release.
+"""Exact-main Windows assembly and installed-runtime smoke, never a release.
 
-Run only under a Windows runner with a trusted checkout of this PR and two
-additional exact commit-SHA checkouts: #2 (installer) and #11 (engine/GUI).
-The manifest below is an explicitly fake *build-only* fixture. No installation
-health, Windows ACL, production model or release-readiness is inferred.
+Run only under a Windows runner with a trusted checkout of this PR and exact
+certified-main setup/runtime checkouts.  The manifest below is an explicitly
+fake *build-only* fixture.  The smoke exercises native ACL application and
+installed engine enrollment, but does not infer clean-machine, production
+model, autonomous-roadmap or release readiness.
 """
 from __future__ import annotations
 
@@ -100,11 +101,12 @@ def assemble(
         _run([
             sys.executable, "-B", "-m",
             "holding.windows_control_center_build",
-            "--kind", "both", "--output-dir", str(viewer_dir),
+            "--kind", "all", "--output-dir", str(viewer_dir),
         ], cwd=runtime_root)
         engine = viewer_dir / "AtlasHoldingEngine.exe"
         viewer = viewer_dir / "AtlasHoldingControlCenter.exe"
-        for executable in (engine, viewer):
+        agent = viewer_dir / "AtlasHoldingAgent.exe"
+        for executable in (engine, viewer, agent):
             if not executable.is_file() or executable.stat().st_size < 1_000_000:
                 raise RuntimeError("Real frozen runtime missing")
         _run([str(engine), "--self-test"], cwd=runtime_root, timeout=90)
@@ -114,6 +116,17 @@ def assemble(
             str(runtime_root / "tests" / "native_windows_runtime_smoke.py"),
             "--viewer", str(viewer), "--engine", str(engine),
         ], cwd=runtime_root, timeout=140)
+        _run([
+            sys.executable, "-B",
+            str(runtime_root / "tests" / "native_windows_agent_smoke.py"),
+            "--agent", str(agent),
+        ], cwd=runtime_root, timeout=140)
+        _run([
+            sys.executable, "-B",
+            str(runtime_root / "tests" /
+                "native_windows_installer_enrollment_smoke.py"),
+            "--frozen-directory", str(viewer_dir),
+        ], cwd=runtime_root, timeout=240)
         pins = {
             "AtlasHoldingControlCenter.exe": _sha(viewer),
             "AtlasHoldingEngine.exe": _sha(engine),
@@ -126,6 +139,8 @@ def assemble(
             "--runtime-directory", str(viewer_dir),
             "--viewer-sha256", pins["AtlasHoldingControlCenter.exe"],
             "--engine-sha256", pins["AtlasHoldingEngine.exe"],
+            "--adapter-executable", str(agent),
+            "--adapter-sha256", _sha(agent),
         ], cwd=setup_root)
         installer = setup_dir / "AtlasHoldingSetup.exe"
         if not installer.is_file() or installer.stat().st_size < 1_000_000:
@@ -149,8 +164,8 @@ def assemble(
             report = {
                 "schema_version": 1,
                 "source_shas": {
-                    "bootstrap_pr2": setup_sha,
-                    "integration_pr11": runtime_sha,
+                    "certified_main_setup": setup_sha,
+                    "certified_main_runtime": runtime_sha,
                 },
                 "manifest_kind": "EXPLICITLY_FAKE_NONRELEASE_BUILD_FIXTURE",
                 "artifacts": [
@@ -158,7 +173,12 @@ def assemble(
                      "size_bytes": info.size_bytes}
                     for name, info in sorted(observed.items())
                 ],
-                "proof": "TWO_FROZEN_EXES_IPC_AND_EMBEDDED_SETUP_SELFTEST",
+                "proof": (
+                    "THREE_FROZEN_EXES_IPC_ACL_ENROLLMENT_"
+                    "AND_EMBEDDED_SETUP_SELFTEST"
+                ),
+                "native_acl_enrollment_smoke": "PASS",
+                "installed_agent_health_smoke": "PASS",
                 "release_ready": False,
                 "windows_clean_install_certified": False,
                 "acl_isolation_certified": False,

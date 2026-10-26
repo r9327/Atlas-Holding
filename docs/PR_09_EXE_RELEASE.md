@@ -135,15 +135,21 @@ l'utilisateur.
 
 L'assemblage relève de nouveau les trois empreintes depuis les fichiers
 réellement copiés, et écrit `cross-pr-nonrelease-evidence.json` comprenant
-les SHA des deux dépôts sources, tailles/empreintes observées et
+les SHA des deux checkouts du `main` certifié, tailles/empreintes observées et
 `release_ready: false`. L'entrée de test du manifeste des dépendances est
 **explicitement non téléchargeable et fictive** : ce workflow ne simule
 pas une machine Windows vierge, une IA productive, un démarrage depuis
 l'installateur ou la sécurité ACL de l'app installée. Il ne publie rien
 dans GitHub Releases et nettoie les fichiers temporaires.
 
-Ce test est volontairement séparé de la certification finale : intégrer
-réellement les autres PR, écrire la configuration du service, réaliser
-l'installation Windows choisie, prouver les ACL et exécuter une roadmap
-complète restent des gates bloquants.
+Le même runner compile aussi l'agent natif, l'embarque dans le setup, applique
+de vraies ACL Windows à une installation jetable sur un chemin avec espaces et
+accents, inscrit la configuration moteur v3, vérifie les pins Git/modèle et
+exécute les sondes de santé du moteur installé. Le reçu conserve séparément
+`native_acl_enrollment_smoke: PASS` et `installed_agent_health_smoke: PASS`,
+sans convertir ces smokes jetables en certification de machine vierge.
+
+Ce test est volontairement séparé de la certification finale : réaliser
+l'installation interactive depuis l'artefact publié sur une machine Windows
+vierge et exécuter une roadmap complète restent des gates bloquants.
 
