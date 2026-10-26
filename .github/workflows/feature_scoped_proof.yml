@@ -35,7 +35,10 @@ jobs:
               "test_project_profile_cli.py", "test_project_profile_examples.py",
               "test_project_registry.py", "test_project_registry_cli.py",
               "test_project_plan_binding.py", "test_project_mission_gate.py",
-              "test_update_plan.py",
+              "test_update_plan.py", "test_update_download.py",
+              "test_update_manifest_client.py", "test_update_probe.py",
+              "test_update_probe_cli.py", "test_update_stage.py",
+              "test_update_switch.py",
           )
           present = [name for name in candidates if (Path("tests") / name).is_file()]
           if not present:
