@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import replace
 import hashlib
 import json
+import io
 from pathlib import Path
 import tempfile
 import unittest
@@ -11,7 +12,8 @@ from unittest.mock import Mock, patch
 
 from holding.windows_runtime_launch import (
     EngineLaunch, InstalledEngineSpec, RuntimeLaunchError,
-    launch_installed_engine, verify_installed_engine,
+    launch_installed_engine, launch_installed_engine_health_session,
+    verify_installed_engine,
 )
 
 
@@ -174,6 +176,77 @@ class WindowsInstalledEngineLaunchTests(unittest.TestCase):
             spawn.return_value = dead
             with self.assertRaisesRegex(RuntimeLaunchError, "exited"):
                 launch_installed_engine(self.spec, approved=True)
+
+    def test_private_health_launch_returns_live_authenticated_session(self):
+        from holding.dashboard_ipc import DashboardIpcServer
+        from holding.state_store import StateStore
+
+        database = self.root / "health.sqlite"
+        with StateStore(database):
+            pass
+        key = b"h" * 32
+        engine_id = "installed-update-engine"
+        with DashboardIpcServer.for_database(
+                database, engine_id=engine_id, secret=key) as server, \
+             self.native(), self.acl(), \
+             patch("holding.windows_runtime_launch._interactive_user_session",
+                   return_value=True), \
+             patch("holding.windows_runtime_launch.secrets.token_bytes",
+                   return_value=key), \
+             patch("holding.windows_runtime_launch.subprocess.Popen") as spawn:
+            process = Mock()
+            process.stdin = io.BytesIO()
+            process.stdout = io.BytesIO((json.dumps({
+                "schema": 1, "port": server.port, "engine_id": engine_id,
+            }) + "\n").encode())
+            process.poll.return_value = None
+            process.pid = 4321
+            spawn.return_value = process
+            session = launch_installed_engine_health_session(
+                self.spec, approved=True,
+            )
+            state = session.client.fetch()
+            self.assertEqual(state.engine_id, engine_id)
+            session.close()
+            session.close()
+        process.terminate.assert_called_once_with()
+        process.wait.assert_called_once_with(timeout=5)
+        args, kwargs = spawn.call_args
+        self.assertEqual(args[0], [
+            str(self.engine), "--config", str(self.config),
+            "--update-health-handshake",
+        ])
+        self.assertFalse(kwargs["shell"])
+        self.assertNotIn("GITHUB_TOKEN", kwargs["env"])
+
+    def test_invalid_health_handshake_stops_candidate(self):
+        with self.native(), self.acl(), \
+             patch("holding.windows_runtime_launch._interactive_user_session",
+                   return_value=True), \
+             patch("holding.windows_runtime_launch.subprocess.Popen") as spawn:
+            process = Mock()
+            process.stdin = io.BytesIO()
+            process.stdout = io.BytesIO(b'{"schema":1,"port":0}\n')
+            process.poll.return_value = None
+            spawn.return_value = process
+            with self.assertRaisesRegex(RuntimeLaunchError, "Invalid"):
+                launch_installed_engine_health_session(
+                    self.spec, approved=True,
+                )
+        process.terminate.assert_called_once_with()
+        process.wait.assert_called_once_with(timeout=5)
+
+    def test_health_launch_requires_approval_and_bounded_timeout(self):
+        with patch("holding.windows_runtime_launch.subprocess.Popen") as spawn:
+            with self.assertRaisesRegex(RuntimeLaunchError, "not authorized"):
+                launch_installed_engine_health_session(
+                    self.spec, approved=False,
+                )
+            with self.assertRaisesRegex(RuntimeLaunchError, "timeout"):
+                launch_installed_engine_health_session(
+                    self.spec, approved=True, handshake_timeout=True,
+                )
+            spawn.assert_not_called()
 
 
 if __name__ == "__main__":

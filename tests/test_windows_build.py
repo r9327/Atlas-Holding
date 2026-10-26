@@ -8,9 +8,11 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+import zipfile
 from unittest.mock import patch
 
 from holding.windows_build import build_windows_installer
+from holding.embedded_python_stage import EmbeddedPythonRelease
 
 
 class WindowsBuildTests(unittest.TestCase):
@@ -39,6 +41,28 @@ class WindowsBuildTests(unittest.TestCase):
             manifest=self.manifest, expected_manifest_sha256=self.digest,
             output_dir=self.output, project_root=self.project,
         )
+
+    def test_cli_rejects_unpinned_or_partial_embedded_python(self):
+        from holding.windows_build import main
+        base = [
+            "--manifest", str(self.manifest),
+            "--manifest-sha256", self.digest,
+            "--output-dir", str(self.output),
+        ]
+        for extras in (
+            ["--mcp-archive", str(self.manifest)],
+            ["--mcp-archive-sha256", "a" * 64],
+            ["--mcp-archive", str(self.manifest),
+             "--mcp-archive-sha256", "0" * 64,
+             "--mcp-module-pins", str(self.manifest),
+             "--mcp-module-pins-sha256", "1" * 64,
+             "--mcp-python-minor", "13"],
+        ):
+            with self.subTest(extras=extras):
+                with self.assertRaises(SystemExit) as err:
+                    main(base + extras)
+                self.assertEqual(err.exception.code, 2)
+        self.assertFalse(self.output.exists())
 
     def test_non_windows_refused_before_outputs_created(self):
         with patch("holding.windows_build.sys.platform", "linux"):
@@ -92,6 +116,108 @@ class WindowsBuildTests(unittest.TestCase):
         self.assertEqual(result.sha256, hashlib.sha256(
             Path(result.artifact).read_bytes()).hexdigest())
         self.assertTrue(Path(result.artifact).is_file())
+
+    def test_single_exe_embeds_verified_cpython_zip_and_exact_holding_sources(self):
+        runtime = (self.project.parent / "approved-runtime").resolve()
+        runtime.mkdir()
+        names = ("AtlasHoldingControlCenter.exe", "AtlasHoldingEngine.exe")
+        for idx, name in enumerate(names):
+            (runtime / name).write_bytes(bytes([66 + idx]) * 1_100_000)
+        pins = {
+            name: hashlib.sha256((runtime / name).read_bytes()).hexdigest()
+            for name in names
+        }
+        required = (
+            "__init__.py", "mcp_entry.py", "mcp_stdio.py",
+            "mcp_hub_session.py", "mcp_hub_probe.py",
+            "mcp_windows_job.py", "mcp_local_inventory.py",
+        )
+        hashes = {}
+        for name in required:
+            file = self.project / "holding" / name
+            file.write_bytes(("module " + name + "\n").encode())
+            hashes[name] = hashlib.sha256(file.read_bytes()).hexdigest()
+        # The existing windows_setup.py is itself a trusted installed module.
+        hashes["windows_setup.py"] = hashlib.sha256(
+            (self.project / "holding" / "windows_setup.py").read_bytes()).hexdigest()
+        archive = (self.project.parent / "python-3.13-embed-amd64.zip").resolve()
+        with zipfile.ZipFile(archive, "w") as z:
+            for name in (
+                "python.exe", "python3.dll", "python313.dll",
+                "python313.zip", "python313._pth",
+            ):
+                z.writestr(name, ("native " + name).encode())
+        release = EmbeddedPythonRelease(
+            python_minor=13,
+            zip_sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),
+            module_sha256=hashes,
+        )
+        def build(command, *, cwd, check, timeout, shell):
+            self.assertFalse(shell)
+            additions = [
+                command[i + 1] for i, word in enumerate(command[:-1])
+                if word == "--add-data"
+            ]
+            self.assertEqual(len(additions), 6)
+            embedded = next(x for x in additions if "mcp-embedded-python.zip" in x)
+            bundle_zip = Path(embedded.rsplit(os.pathsep, 1)[0])
+            self.assertEqual(hashlib.sha256(bundle_zip.read_bytes()).hexdigest(),
+                             release.zip_sha256)
+            pin_item = next(x for x in additions if "mcp-source-pins.json" in x)
+            pin_file = Path(pin_item.rsplit(os.pathsep, 1)[0])
+            self.assertEqual(json.loads(pin_file.read_text()), hashes)
+            source_item = next(x for x in additions if "mcp-source/holding" in x)
+            copied = Path(source_item.rsplit(os.pathsep, 1)[0])
+            for name, digest in hashes.items():
+                self.assertEqual(
+                    hashlib.sha256((copied / name).read_bytes()).hexdigest(),
+                    digest)
+            shim = Path(command[-1]).read_text(encoding="utf-8")
+            self.assertIn(release.zip_sha256, shim)
+            self.assertIn("--mcp-source-pins-sha256", shim)
+            self.assertIn("--mcp-archive-sha256", shim)
+            ast.parse(shim)
+            stage = Path(command[command.index("--distpath") + 1])
+            stage.mkdir(parents=True)
+            (stage / "AtlasHoldingSetup.exe").write_bytes(b"MZ" + b"0" * 1600)
+        with patch("holding.windows_build.sys.platform", "win32"), patch(
+                "holding.windows_build.subprocess.run", side_effect=build):
+            result = build_windows_installer(
+                manifest=self.manifest, expected_manifest_sha256=self.digest,
+                output_dir=self.output, project_root=self.project,
+                runtime_directory=runtime, runtime_pins=pins,
+                embedded_python_archive=archive, embedded_python_pin=release,
+            )
+        self.assertTrue(Path(result.artifact).is_file())
+
+    def test_builder_refuses_untrusted_python_zip_before_packaging(self):
+        runtime = (self.project.parent / "approved-runtime").resolve()
+        runtime.mkdir()
+        names = ("AtlasHoldingControlCenter.exe", "AtlasHoldingEngine.exe")
+        for name in names:
+            (runtime / name).write_bytes(b"valid pinned runtime")
+        pins = {name: hashlib.sha256((runtime / name).read_bytes()).hexdigest()
+                for name in names}
+        archive = self.project.parent / "fake-python-embed.zip"
+        archive.write_bytes(b"not a real Python release")
+        release = EmbeddedPythonRelease(
+            python_minor=13, zip_sha256="a" * 64,
+            module_sha256={name: "b" * 64 for name in (
+                "__init__.py", "mcp_entry.py", "mcp_stdio.py",
+                "mcp_hub_session.py", "mcp_hub_probe.py",
+                "mcp_windows_job.py", "mcp_local_inventory.py")},
+        )
+        with patch("holding.windows_build.sys.platform", "win32"), patch(
+                "holding.windows_build.subprocess.run") as builder:
+            with self.assertRaises(ValueError):
+                build_windows_installer(
+                    manifest=self.manifest,
+                    expected_manifest_sha256=self.digest,
+                    output_dir=self.output, project_root=self.project,
+                    runtime_directory=runtime, runtime_pins=pins,
+                    embedded_python_archive=archive, embedded_python_pin=release,
+                )
+            builder.assert_not_called()
 
     def test_embeds_two_pinned_runtime_binaries_inside_single_setup(self):
         runtime = (self.project.parent / "approved-runtime").resolve()

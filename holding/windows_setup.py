@@ -7,9 +7,12 @@ The trusted packaged host pins the release manifest before launching this UI.
 from __future__ import annotations
 
 import argparse
+import hashlib
 from dataclasses import asdict, dataclass
 import json
 import os
+import re
+import shutil
 from pathlib import Path
 from queue import Empty, Queue
 import threading
@@ -42,6 +45,9 @@ from .windows_engine_enrollment import (
     enroll_pinned_engine, launch_enrolled_engine,
 )
 from .windows_runtime_acl import validate_runtime_acl, secure_runtime_acl
+from .embedded_python_stage import EmbeddedPythonRelease, EmbeddedRuntimeStage, stage_pinned_embedded_python, verify_staged_embedded_python
+_HEX64 = re.compile(r"^[0-9a-f]{64}$")
+
 from .windows_model_enrollment import (
     discover_local_models, enroll_local_model, LocalModelEnrollmentError,
 )
@@ -215,6 +221,76 @@ def assess_post_install(
     )
 
 
+def stage_embedded_mcp_companion(
+    *, install_root: Path, archive: Path, trusted_source_root: Path,
+    pin: EmbeddedPythonRelease, approved: bool,
+) -> EmbeddedRuntimeStage:
+    """Install an opt-in, byte-verified CPython under the approved install root.
+
+    Does not activate MCP or treat a fabricated local receipt as a release
+    signature; upstream archive and source hashes must be independently pinned.
+    """
+    from .windows_engine_enrollment import _require_native_windows
+    if approved is not True or type(pin) is not EmbeddedPythonRelease:
+        raise RuntimePayloadError("Explicit release-pinned MCP approval required")
+    _require_native_windows()
+    if (not isinstance(install_root, Path) or not install_root.is_absolute()
+            or install_root.is_symlink()
+            or install_root.resolve(strict=True) != install_root):
+        raise RuntimePayloadError("Canonical chosen installation root required")
+    _no_linked_ancestors(install_root)
+    validate_runtime_acl(install_root)
+    destination = install_root / "mcp-python"
+    created = False
+    if destination.exists() or destination.is_symlink():
+        if destination.is_symlink() or not destination.is_dir():
+            raise RuntimePayloadError("Unsafe installed CPython companion directory")
+        validate_runtime_acl(destination)
+    else:
+        destination.mkdir()
+        created = True
+    staged = None
+    try:
+        if created:
+            secure_runtime_acl(destination)
+        existing = destination / ("python-embedded-" + pin.zip_sha256[:16])
+        if existing.exists() or existing.is_symlink():
+            if existing.is_symlink():
+                raise RuntimePayloadError("Installed CPython runtime is linked")
+            verified = verify_staged_embedded_python(directory=existing, pin=pin)
+            validate_runtime_acl(verified.directory)
+            validate_runtime_acl(verified.python_exe)
+            validate_runtime_acl(verified.directory / "holding")
+            for name, _digest in verified.source_sha256:
+                validate_runtime_acl(verified.directory / "holding" / name)
+            return EmbeddedRuntimeStage(
+                directory=verified.directory, python_exe=verified.python_exe,
+                interpreter_sha256=verified.interpreter_sha256,
+                source_sha256=verified.source_sha256,
+                status="REUSED_VERIFIED_NOT_EXECUTED")
+        staged = stage_pinned_embedded_python(
+            archive=archive, approved_package_root=trusted_source_root,
+            target_parent=destination, pin=pin)
+        secure_runtime_acl(staged.directory)
+        validate_runtime_acl(staged.directory)
+        validate_runtime_acl(staged.python_exe)
+        validate_runtime_acl(staged.directory / "holding")
+        for filename, _digest in staged.source_sha256:
+            validate_runtime_acl(staged.directory / "holding" / filename)
+        result = verify_staged_embedded_python(
+            directory=staged.directory, pin=pin)
+        if result.interpreter_sha256 != staged.interpreter_sha256:
+            raise RuntimePayloadError("Embedded Python executable changed")
+        return result
+    except BaseException:
+        # Roll back only directories created by this call.
+        if staged is not None and staged.directory.exists():
+            shutil.rmtree(staged.directory)
+        if created and destination.exists() and not any(destination.iterdir()):
+            destination.rmdir()
+        raise
+
+
 def execute_setup(
     *, manifest: Path, manifest_sha256: str, install_root: Path,
     cache_root: Path, online: bool, approved: bool,
@@ -225,10 +301,17 @@ def execute_setup(
     runtime_pins: dict[str, str] | None = None,
     adapter_source: Path | None = None,
     adapter_sha256: str | None = None,
+    embedded_python_archive: Path | None = None,
+    embedded_source_root: Path | None = None,
+    embedded_python_pin: EmbeddedPythonRelease | None = None,
 ) -> tuple[SetupSummary, ProvisionExecution | None]:
     """Recheck every premise before any authorized staging operation."""
     if (runtime_root is None) != (runtime_pins is None):
         raise ValueError("Complete pinned runtime pair required")
+    companion = (embedded_python_archive, embedded_source_root, embedded_python_pin)
+    if any(item is not None for item in companion) and (
+            any(item is None for item in companion) or runtime_root is None):
+        raise ValueError("Complete embedded MCP Python and Holding release pins required")
     if (adapter_source is None) != (adapter_sha256 is None):
         raise ValueError("Complete bundled agent source and hash required")
     if adapter_source is not None and runtime_root is None:
@@ -352,16 +435,33 @@ def execute_setup(
                 ),
                 result.blockers + ("Pinned runtime staging failed",),
             )
+    if (embedded_python_pin is not None and result is not None
+            and result.state == "RUNTIME_STAGED_ENGINE_CONFIG_PENDING"):
+        try:
+            staged = stage_embedded_mcp_companion(
+                install_root=install_root, archive=embedded_python_archive,
+                trusted_source_root=embedded_source_root,
+                pin=embedded_python_pin, approved=True)
+            result = ProvisionExecution(
+                result.state,
+                result.steps + (ProvisionStep(
+                    "mcp-python", "STAGE_VERIFIED_EMBEDDED",
+                    staged.status),), result.blockers,
+            )
+        except (OSError, ValueError, RuntimePayloadError):
+            result = ProvisionExecution(
+                "PARTIAL_OR_BLOCKED",
+                result.steps + (ProvisionStep(
+                    "mcp-python", "STAGE_VERIFIED_EMBEDDED",
+                    "MCP_COMPANION_STAGE_FAILED"),),
+                result.blockers + ("MCP companion staging failed",),
+            )
     return report, result
 
 
 
 def verify_canonical_atlas_checkout(atlas_root: Path, workspace: Path) -> None:
-    """Reject a different or dirty repository before installing any state.
-
-    A .git filename by itself is insufficient. The engine's own Git safety
-    contract proves the checkout root, exact GitHub origin and clean status.
-    """
+    """Require the exact clean canonical repository before changing ACL/state."""
     from .git_worktree import GitSafetyError, GitWorktrees
     try:
         worker = GitWorktrees(atlas_root, workspace, "r9327/Dof-Atlas")
@@ -376,6 +476,7 @@ def configure_and_launch_engine(
     *, install_root: Path, atlas_root: Path, runtime_pins: dict[str, str],
     adapter_sha256: str, approved: bool, launch_approved: bool,
     model_name: str | None = None,
+    embedded_python_pin: EmbeddedPythonRelease | None = None,
 ):
     """Explicit first-run GUI handoff. No model/adapter is silently invented.
 
@@ -449,6 +550,18 @@ def configure_and_launch_engine(
             secure_runtime_acl(folder)
     selected = enroll_local_model(
         install_root, selected_model=model_name, approved=True)
+    embedded = None
+    if embedded_python_pin is not None:
+        if type(embedded_python_pin) is not EmbeddedPythonRelease:
+            raise EngineEnrollmentError("Untrusted bundled MCP release identity")
+        companion = (install_root / "mcp-python" /
+                     ("python-embedded-" + embedded_python_pin.zip_sha256[:16]))
+        try:
+            embedded = verify_staged_embedded_python(
+                directory=companion, pin=embedded_python_pin)
+        except (OSError, ValueError) as exc:
+            raise EngineEnrollmentError(
+                "MCP companion must be verified before engine enrollment") from exc
     request = EngineEnrollmentRequest(
         install_root=install_root,
         runtime_directory=runtime,
@@ -462,6 +575,8 @@ def configure_and_launch_engine(
         agent_sha256=adapter_sha256,
         agent_arguments=(selected.path,),
         agent_argument_pins={str(selected.path): selected.sha256},
+        mcp_runtime=embedded,
+        mcp_release=embedded_python_pin,
     )
     receipt = enroll_pinned_engine(request, approved=True)
     if not launch_approved:
@@ -491,6 +606,12 @@ def main(argv: list[str] | None = None) -> int:
     # AtlasHoldingAgent.exe; OpenCode/Ollama must not be passed as the adapter.
     parser.add_argument("--adapter-sha256")
     parser.add_argument("--adapter-root", type=Path)
+    parser.add_argument("--mcp-archive", type=Path)
+    parser.add_argument("--mcp-archive-sha256")
+    parser.add_argument("--mcp-source-root", type=Path)
+    parser.add_argument("--mcp-source-pins", type=Path)
+    parser.add_argument("--mcp-source-pins-sha256")
+    parser.add_argument("--mcp-python-minor", type=int)
     args = parser.parse_args(argv)
     if (args.adapter_root is None) != (args.adapter_sha256 is None):
         parser.error("Both bundled adapter path and its release pin are required")
@@ -513,6 +634,52 @@ def main(argv: list[str] | None = None) -> int:
             "AtlasHoldingEngine.exe": args.runtime_engine_sha256,
         }
         verify_runtime_payload(args.runtime_root, bundled_runtime_pins)
+
+    mcp_values = (
+        args.mcp_archive, args.mcp_archive_sha256,
+        args.mcp_source_root, args.mcp_source_pins,
+        args.mcp_source_pins_sha256, args.mcp_python_minor,
+    )
+    mcp_pin = None
+    if any(v is not None for v in mcp_values):
+        if (not all(v is not None for v in mcp_values)
+                or args.runtime_root is None):
+            parser.error("MCP companion needs all release pins and bundled runtime")
+        if (not isinstance(args.mcp_archive_sha256, str)
+                or not isinstance(args.mcp_source_pins_sha256, str)
+                or not _HEX64.fullmatch(args.mcp_archive_sha256)
+                or not _HEX64.fullmatch(args.mcp_source_pins_sha256)
+                or not args.mcp_archive.is_absolute()
+                or not args.mcp_source_pins.is_absolute()
+                or not args.mcp_source_root.is_absolute()
+                or args.mcp_archive.is_symlink()
+                or args.mcp_source_pins.is_symlink()
+                or args.mcp_source_root.is_symlink()):
+            parser.error("Invalid pinned MCP companion paths or digests")
+        if (hashlib.sha256(args.mcp_archive.read_bytes()).hexdigest()
+                != args.mcp_archive_sha256):
+            parser.error("Bundled CPython ZIP does not match release")
+        source_bytes = args.mcp_source_pins.read_bytes()
+        if (not 1 <= len(source_bytes) <= 32768
+                or hashlib.sha256(source_bytes).hexdigest()
+                != args.mcp_source_pins_sha256):
+            parser.error("Bundled MCP source pins do not match release")
+        def unique(pairs):
+            record = {}
+            for key, value in pairs:
+                if key in record:
+                    raise ValueError("Duplicate module release pin")
+                record[key] = value
+            return record
+        try:
+            module_hashes = json.loads(source_bytes, object_pairs_hook=unique)
+            mcp_pin = EmbeddedPythonRelease(
+                python_minor=args.mcp_python_minor,
+                zip_sha256=args.mcp_archive_sha256,
+                module_sha256=module_hashes,
+            )
+        except (ValueError, UnicodeError) as exc:
+            parser.error("Invalid verified MCP module manifest")
 
     # Do not import Tk/initialize a display during CLI parsing and unit tests.
     import tkinter as tk
@@ -658,6 +825,9 @@ def main(argv: list[str] | None = None) -> int:
                             if args.adapter_root is not None else None
                         ),
                         adapter_sha256=args.adapter_sha256,
+                        embedded_python_archive=args.mcp_archive,
+                        embedded_source_root=args.mcp_source_root,
+                        embedded_python_pin=mcp_pin,
                     )
                 else:
                     summary, pins = preflight_setup(
@@ -914,6 +1084,7 @@ def main(argv: list[str] | None = None) -> int:
                     adapter_sha256=args.adapter_sha256,
                     approved=True, launch_approved=run_it,
                     model_name=chosen_model,
+                    embedded_python_pin=mcp_pin,
                 )
                 events.put(("engine_activation", status, pid))
             except (OSError, ValueError, TypeError,

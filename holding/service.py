@@ -79,6 +79,10 @@ class HoldingService:
         self._github_health = None
         self._dashboard_ipc = None
         self._dashboard_session = None
+        self._mcp_supervisor = None
+        self._mcp_last_refresh = 0.0
+        self._mcp_blocked = False
+        self.last_mcp_error: str | None = None
 
     @classmethod
     def from_local_agent(cls, settings: ServiceSettings, *, program,
@@ -135,6 +139,56 @@ class HoldingService:
         service._qa_repair = QaRepairCoordinator(
             service.engine.store, git, service.engine.lease)
         return service
+
+    def enable_local_mcp(self, *, interpreter_pin, package_root: Path,
+                         response_timeout: float = 3.0,
+                         package_pin=None) -> None:
+        """Explicit trusted installer hook. Never accepted from a roadmap."""
+        if self._started or self._mcp_supervisor is not None:
+            raise RuntimeError("MCP supervisor must be enrolled before daemon start")
+        from .mcp_local_inventory import PinnedLocalPlugin
+        from .mcp_supervisor import InternalMcpSupervisor
+        if type(interpreter_pin) is not PinnedLocalPlugin:
+            raise ValueError("MCP interpreter requires an enrolled immutable binary pin")
+        self._mcp_supervisor = InternalMcpSupervisor(
+            database=self.settings.database,
+            interpreter_pin=interpreter_pin, package_root=package_root,
+            response_timeout=response_timeout, package_pin=package_pin,
+        )
+
+    def _refresh_local_mcp(self, *, allowed: bool, resources_safe: bool) -> None:
+        """Bounded optional observation, never a work authorization grant."""
+        supervisor = self._mcp_supervisor
+        if supervisor is None:
+            return
+        when = time.monotonic()
+        if not allowed or not resources_safe:
+            # A paused daemon must not write SQLite 20 times/sec. Record one
+            # durable CLOSED transition; STOP and pressure remain fail-closed.
+            if self._mcp_blocked:
+                return
+            self._mcp_blocked = True
+            self._mcp_last_refresh = 0.0
+        else:
+            self._mcp_blocked = False
+            if 0 < self._mcp_last_refresh and when - self._mcp_last_refresh < 15:
+                return  # Hub observation refreshed before 30s expiry.
+            self._mcp_last_refresh = when
+        try:
+            supervisor.step(
+                background_allowed=allowed, resources_safe=resources_safe,
+                now_epoch=int(time.time()),
+            )
+            self.last_mcp_error = None
+        except Exception:
+            self.last_mcp_error = "Local MCP supervisor unavailable"
+            # A failed optional MCP recorder cannot run in parallel to an
+            # unverified daemon state. Stop the child, retain code worker.
+            try:
+                supervisor.close(now_epoch=int(time.time()))
+            except Exception:
+                pass
+            self._mcp_supervisor = None
 
     def enable_git_push(
         self, *, expected_account_id: str, expected_policy_sha: str,
@@ -260,7 +314,8 @@ class HoldingService:
             self._dashboard_ipc.close()
             self._dashboard_ipc = None
 
-    def launch_dashboard(self, program, *, readonly: bool = False) -> int:
+    def launch_dashboard(self, program, *, readonly: bool = False,
+                         update_root: Path | None = None) -> int:
         """Trusted UI host startup, independent of daemon work loop."""
         if self._dashboard_session is not None:
             if self._dashboard_session.is_running():
@@ -273,7 +328,9 @@ class HoldingService:
                 self._dashboard_session = None
                 self.disable_dashboard_ipc()
         from .dashboard_session import start_dashboard_session
-        session = start_dashboard_session(self, program, readonly=readonly)
+        session = start_dashboard_session(
+            self, program, readonly=readonly, update_root=update_root,
+        )
         self._dashboard_session = session
         return session.pid
 
@@ -288,6 +345,8 @@ class HoldingService:
             raise ValueError("max_ticks must be >= 1")
         iterations = 0
         while not self._stop.is_set():
+            mcp_allowed = False
+            mcp_resources_safe = False
             # Do not claim new work without a healthy agent. The daemon keeps its
             # lease and may resume once the adapter passes its real health check.
             # Persistent STOP is never delayed by resource pressure or a dead model.
@@ -304,10 +363,13 @@ class HoldingService:
                         if (isinstance(failure, StoreError)
                                 and str(failure) != 'DAEMON_LEASE_LOST'):
                             raise
+                        self._refresh_local_mcp(
+                            allowed=False, resources_safe=False)
                         return Tick(
                             'LEASE_LOST', None,
                             'Lease lost during GitHub health probe')
                 resources = self.resource_guard.check()
+                mcp_resources_safe = resources.safe
                 if not resources.safe:
                     result = Tick("RESOURCE_PRESSURE", None, resources.reason)
                 else:
@@ -320,6 +382,8 @@ class HoldingService:
                             try:
                                 self._recover_new_interruptions()
                             except LeaseError:
+                                self._refresh_local_mcp(
+                                    allowed=False, resources_safe=False)
                                 return Tick('LEASE_LOST', None, 'Lease lost during recovery')
                         # Signed QA FAIL may safely requeue the SAME mission on
                         # a clean exact-SHA branch. Independent missions continue.
@@ -329,11 +393,23 @@ class HoldingService:
                             except (LeaseError, StoreError) as failure:
                                 if isinstance(failure, StoreError) and str(failure) != 'DAEMON_LEASE_LOST':
                                     raise
+                                self._refresh_local_mcp(
+                                    allowed=False, resources_safe=False)
                                 return Tick('LEASE_LOST', None, 'Lease lost during QA repair')
                         result = self.engine.tick()
                     else:
                         result = Tick("AGENT_UNAVAILABLE", None,
                                       "No trusted role adapter is ready")
+            mcp_allowed = (
+                mcp_resources_safe
+                and not self.engine.store.background_suspended()
+                and result.action not in {
+                    "STOPPED", "LEASE_LOST", "RESOURCE_PRESSURE", "AGENT_UNAVAILABLE"
+                }
+            )
+            self._refresh_local_mcp(
+                allowed=mcp_allowed, resources_safe=mcp_resources_safe,
+            )
             iterations += 1
             if result.action in {"STOPPED", "LEASE_LOST"}:
                 return result
@@ -345,6 +421,7 @@ class HoldingService:
                 self._stop.wait(self.settings.idle_seconds)
         # Shutdown persists a STOP command for a deterministic next boot.
         self.engine.stop()
+        self._refresh_local_mcp(allowed=False, resources_safe=False)
         return Tick("STOPPED", None, "Shutdown requested")
 
     def close(self) -> None:
@@ -360,9 +437,16 @@ class HoldingService:
                 self.disable_dashboard_ipc()
             finally:
                 try:
-                    self.engine.close()
+                    if self._mcp_supervisor is not None:
+                        try:
+                            self._mcp_supervisor.close(now_epoch=int(time.time()))
+                        finally:
+                            self._mcp_supervisor = None
                 finally:
-                    self._started = False
+                    try:
+                        self.engine.close()
+                    finally:
+                        self._started = False
 
     def __enter__(self) -> "HoldingService":
         return self
