@@ -113,7 +113,7 @@ def assemble(
         _run([str(viewer), "--self-test"], cwd=runtime_root, timeout=90)
         _run([
             sys.executable, "-B",
-            str(runtime_root / "tests" / "native_windows_runtime_smoke.py"),
+            str(Path(__file__).with_name("native_windows_runtime_smoke.py")),
             "--viewer", str(viewer), "--engine", str(engine),
         ], cwd=runtime_root, timeout=140)
         _run([

@@ -13,15 +13,13 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
 
 # This standalone CI script is invoked as tests/<file>.py; unlike the unit
 # discovery runner, direct execution doesn't include the checkout in sys.path.
 # Resolve ONLY the tested checkout, never import from a user-controlled path.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from holding.dashboard_ipc import DashboardIpcServer
-from holding.state_store import StateStore
+from holding.dashboard_ipc import DashboardIpcClient, DashboardIpcError
 
 
 def run(viewer: Path, engine: Path) -> None:
@@ -61,14 +59,21 @@ def run(viewer: Path, engine: Path) -> None:
         argv = [str(viewer), "--probe", "--readonly",
                 "--port", str(response["port"]),
                 "--engine-id", response["engine_id"]]
-        # Probe the bad key FIRST, otherwise a genuine success is allowed to
-        # end the engine's ephemeral server before the negative test runs.
-        denied = subprocess.run(
-            argv, input=os.urandom(32),
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            timeout=45, shell=False, check=False,
+        # Reject a bad capability with the protocol client before launching
+        # the cold frozen Qt process. Starting two one-file Qt executables in
+        # sequence can exhaust the engine diagnostic's bounded 18-second
+        # lifetime on a fresh runner and turn a valid second request into a
+        # timing failure. The positive path below still crosses the real
+        # frozen GUI and engine boundary.
+        denied = DashboardIpcClient(
+            port=response["port"], secret=os.urandom(32),
+            engine_id=response["engine_id"],
         )
-        if denied.returncode != 2:
+        try:
+            denied.fetch()
+        except DashboardIpcError:
+            pass
+        else:
             raise RuntimeError("Frozen engine accepted untrusted GUI credentials")
         valid = subprocess.run(
             argv, input=read_key,
