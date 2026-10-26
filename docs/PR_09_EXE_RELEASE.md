@@ -161,3 +161,10 @@ Ce test est volontairement séparé de la certification finale : réaliser
 l'installation interactive depuis l'artefact publié sur une machine Windows
 vierge et exécuter une roadmap complète restent des gates bloquants.
 
+Le label `ci:live-ollama` déclenche aussi, sur le HEAD exact de cette PR, trois
+inférences successives avec un vrai Ollama Windows épinglé et trois commits Git
+jetables distincts. Cette preuve lie modèle, digest, agent EXE et reçus, mais
+conserve `Doctor: NOT_EXECUTED`, `GitHub push: NOT_PERMITTED` et
+`release_ready: false` : elle valide la chaîne d'inférence native, pas la
+roadmap Atlas autonome.
+

@@ -2,7 +2,7 @@ name: Nonrelease real Ollama Windows inference
 
 on:
   pull_request:
-    branches: [integration/windows-agent-bootstrap-20261022]
+    branches: [integration/windows-agent-bootstrap-20261022, main]
     types: [labeled]
 
 permissions:
@@ -12,12 +12,13 @@ jobs:
   opt-in-real-ollama:
     if: >-
       github.event.label.name == 'ci:live-ollama' &&
-      github.head_ref == 'experiment/native-real-ollama-20261022' &&
+      (github.head_ref == 'experiment/native-real-ollama-20261022' ||
+       github.head_ref == 'feat/09-exe-packaging-release') &&
       github.event.pull_request.head.repo.full_name == 'r9327/Atlas-Holding'
     runs-on: windows-2025
     timeout-minutes: 35
     steps:
-      - name: Checkout exact experimental SHA without credentials
+      - name: Checkout exact candidate SHA without credentials
         uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.sha }}
