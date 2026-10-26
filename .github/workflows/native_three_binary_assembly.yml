@@ -44,6 +44,37 @@ jobs:
         run: |
           python -m pip install --disable-pip-version-check PySide6==6.12.0
           python -m pip install --disable-pip-version-check --only-binary=:all: "pyinstaller==6.22.3"
+      - name: Derive exact runtime manifest from official publisher bytes
+        shell: pwsh
+        timeout-minutes: 12
+        run: |
+          $gitUrl = "https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.2/MinGit-2.56.0.2-64-bit.zip"
+          $gitSha = "da35e72aa21c005a5a0d298cfbae110bc1609a815730ea0dde84b01a1b3cd3be"
+          $codeUrl = "https://github.com/anomalyco/opencode/releases/download/v1.18.29/opencode-windows-x64.zip"
+          $codeSha = "b32618aa3d1415f6e4f473aec248edef25759203fb707d7d968359d86d4a35ee"
+          $gitZip = Join-Path $env:RUNNER_TEMP "Atlas-MinGit-$gitSha.zip"
+          $codeZip = Join-Path $env:RUNNER_TEMP "Atlas-OpenCode-$codeSha.zip"
+          $manifest = Join-Path $env:RUNNER_TEMP "Atlas-Holding-official-runtime-manifest.json"
+          Invoke-WebRequest -Uri $gitUrl -OutFile $gitZip -MaximumRedirection 5 -TimeoutSec 180
+          if ((Get-FileHash -Algorithm SHA256 $gitZip).Hash.ToLowerInvariant() -ne $gitSha) {
+            throw "Publisher MinGit SHA256 mismatch"
+          }
+          Invoke-WebRequest -Uri $codeUrl -OutFile $codeZip -MaximumRedirection 5 -TimeoutSec 180
+          if ((Get-FileHash -Algorithm SHA256 $codeZip).Hash.ToLowerInvariant() -ne $codeSha) {
+            throw "Publisher OpenCode SHA256 mismatch"
+          }
+          Push-Location (Join-Path $PWD "upstream/integration")
+          try {
+            python -B -X utf8 -m holding.portable_runtime --git-archive "$gitZip" --opencode-archive "$codeZip" --output "$manifest"
+            if ($LASTEXITCODE -ne 0) { throw "Official runtime manifest derivation failed" }
+          } finally {
+            Pop-Location
+            Remove-Item -Force -ErrorAction SilentlyContinue $gitZip, $codeZip
+          }
+          $winget = Get-Command winget.exe -ErrorAction Stop
+          & $winget.Source show --id Ollama.Ollama --exact --version 0.32.8 --source winget --scope user --architecture x64 --disable-interactivity --accept-source-agreements
+          if ($LASTEXITCODE -ne 0) { throw "Pinned Ollama installer unavailable" }
+          Write-Output "Official runtime manifest SHA256: $((Get-FileHash -Algorithm SHA256 $manifest).Hash.ToLowerInvariant())"
       - name: Native Windows build and real two-frozen-process IPC
         shell: pwsh
         timeout-minutes: 22
@@ -53,12 +84,17 @@ jobs:
           $setup = Join-Path $PWD "upstream/bootstrap"
           $runtime = Join-Path $PWD "upstream/integration"
           $dest = Join-Path $env:RUNNER_TEMP "atlas-nonrelease-cross-pr-${{ github.run_id }}"
-          python -B -X utf8 tests/native_windows_three_binary_assembly.py --setup-root "$setup" --runtime-root "$runtime" --setup-sha 3e89b8b12ab7bb4e099622844eb7a37cea7d0066 --runtime-sha 3e89b8b12ab7bb4e099622844eb7a37cea7d0066 --output-dir "$dest"
+          $manifest = Join-Path $env:RUNNER_TEMP "Atlas-Holding-official-runtime-manifest.json"
+          python -B -X utf8 tests/native_windows_three_binary_assembly.py --setup-root "$setup" --runtime-root "$runtime" --setup-sha 3e89b8b12ab7bb4e099622844eb7a37cea7d0066 --runtime-sha 3e89b8b12ab7bb4e099622844eb7a37cea7d0066 --manifest "$manifest" --candidate-sha "${{ github.event.pull_request.head.sha }}" --output-dir "$dest"
           if ($LASTEXITCODE -ne 0) { throw "Native cross-PR frozen assembly failed" }
           $evidence = Join-Path $dest "cross-pr-nonrelease-evidence.json"
           if (!(Test-Path $evidence)) { throw "Native build evidence is missing" }
           $record = Get-Content $evidence -Raw | ConvertFrom-Json
-          if ($record.release_ready -ne $false -or $record.windows_clean_install_certified -ne $false) {
+          if ($record.release_ready -ne $false -or
+              $record.windows_clean_install_certified -ne $false -or
+              $record.manifest_kind -ne "OFFICIAL_PINNED_PORTABLE_AND_WINGET_CANDIDATE" -or
+              $record.native_acl_enrollment_smoke -ne "PASS" -or
+              $record.installed_agent_health_smoke -ne "PASS") {
             throw "Native nonrelease candidate falsely claims release certification"
           }
           foreach ($binary in @("AtlasHoldingSetup.exe", "AtlasHoldingEngine.exe", "AtlasHoldingControlCenter.exe")) {
@@ -67,7 +103,24 @@ jobs:
             Write-Output "$binary SHA256: $((Get-FileHash -Algorithm SHA256 $exe).Hash.ToLowerInvariant())"
           }
           Write-Output "CROSS_PR_WINDOWS_NONRELEASE_ASSEMBLY_PASS"
-          Remove-Item -Recurse -Force $dest
           if (git status --porcelain --untracked-files=normal -- . ':!upstream') {
             throw "Release checkout mutated during native packaging"
           }
+      - name: Upload tested Windows candidate (NOT RELEASE)
+        id: candidate_upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: NONRELEASE-AtlasHolding-Windows-Candidate-${{ github.run_id }}
+          path: ${{ runner.temp }}/atlas-nonrelease-cross-pr-${{ github.run_id }}/
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+      - name: Log independently checkable candidate archive SHA256
+        shell: pwsh
+        run: |
+          $digest = '${{ steps.candidate_upload.outputs.artifact-digest }}'
+          if ($digest -cnotmatch '^[0-9a-f]{64}$') {
+            throw 'No valid candidate archive SHA256 emitted by GitHub'
+          }
+          Write-Output "NONRELEASE_WINDOWS_CANDIDATE_DIGEST=sha256:$digest"
+          Write-Output "NONRELEASE_WINDOWS_CANDIDATE_SOURCE_SHA=${{ github.event.pull_request.head.sha }}"

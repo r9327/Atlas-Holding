@@ -149,6 +149,14 @@ exécute les sondes de santé du moteur installé. Le reçu conserve séparémen
 `native_acl_enrollment_smoke: PASS` et `installed_agent_health_smoke: PASS`,
 sans convertir ces smokes jetables en certification de machine vierge.
 
+Le manifeste embarqué n'est plus une fixture : le runner télécharge les ZIP
+officiels MinGit et OpenCode, vérifie leurs SHA-256 éditeurs, dérive le
+manifeste portable v3 depuis ces octets et confirme la disponibilité exacte
+d'`Ollama.Ollama@0.32.8` dans WinGet. Le bundle testé est conservé trois jours
+comme artefact GitHub `NONRELEASE-AtlasHolding-Windows-Candidate-*`, avec le
+SHA-256 de l'archive émis par GitHub Actions. Il reste explicitement distinct
+d'une GitHub Release et sert à obtenir la future preuve sur machine vierge.
+
 Ce test est volontairement séparé de la certification finale : réaliser
 l'installation interactive depuis l'artefact publié sur une machine Windows
 vierge et exécuter une roadmap complète restent des gates bloquants.

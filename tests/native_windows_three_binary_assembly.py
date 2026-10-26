@@ -72,12 +72,25 @@ def _checkout(root: Path, expected: str) -> None:
 
 def assemble(
     *, setup_root: Path, runtime_root: Path, output_dir: Path,
-    setup_sha: str, runtime_sha: str,
+    manifest: Path, candidate_sha: str, setup_sha: str, runtime_sha: str,
 ) -> dict:
     if os.name != "nt":
         raise RuntimeError("Actual three-binary assembly requires native Windows")
     _checkout(setup_root, setup_sha)
     _checkout(runtime_root, runtime_sha)
+    candidate_root = Path(__file__).resolve().parent.parent
+    actual_candidate = subprocess.check_output(
+        ["git", "-C", str(candidate_root), "rev-parse", "HEAD"],
+        text=True, timeout=15,
+    ).strip()
+    if (actual_candidate != candidate_sha or len(candidate_sha) != 40
+            or any(ch not in "0123456789abcdef" for ch in candidate_sha)):
+        raise RuntimeError("Release candidate source SHA changed")
+    if (not manifest.is_absolute() or manifest.is_symlink()
+            or not manifest.is_file()
+            or manifest.resolve(strict=True) != manifest
+            or not 1 <= manifest.stat().st_size <= 1024 * 1024):
+        raise ValueError("Exact official runtime manifest required")
     if (not output_dir.is_absolute() or output_dir.exists()
             or output_dir.is_symlink()
             or output_dir.parent.resolve(strict=True) != output_dir.parent):
@@ -86,18 +99,6 @@ def assemble(
         temp = Path(workspace).resolve()
         viewer_dir = temp / "frozen"
         setup_dir = temp / "installer"
-        fixture = temp / "NONRELEASE_BUILD_ONLY_ASSETS.json"
-        fixture.write_text(json.dumps({
-            "version": 1,
-            "assets": [{
-                "component": "git",
-                "version": "2.47",
-                "url": "https://example.invalid/fixture-not-downloadable.zip",
-                "sha256": "a" * 64,
-                "download_bytes": 300,
-                "unpacked_bytes": 500,
-            }],
-        }, sort_keys=True), encoding="utf-8")
         _run([
             sys.executable, "-B", "-m",
             "holding.windows_control_center_build",
@@ -133,8 +134,8 @@ def assemble(
         }
         _run([
             sys.executable, "-B", "-m", "holding.windows_build",
-            "--manifest", str(fixture),
-            "--manifest-sha256", _sha(fixture),
+            "--manifest", str(manifest),
+            "--manifest-sha256", _sha(manifest),
             "--output-dir", str(setup_dir),
             "--runtime-directory", str(viewer_dir),
             "--viewer-sha256", pins["AtlasHoldingControlCenter.exe"],
@@ -164,10 +165,14 @@ def assemble(
             report = {
                 "schema_version": 1,
                 "source_shas": {
+                    "release_candidate": candidate_sha,
                     "certified_main_setup": setup_sha,
                     "certified_main_runtime": runtime_sha,
                 },
-                "manifest_kind": "EXPLICITLY_FAKE_NONRELEASE_BUILD_FIXTURE",
+                "manifest_kind": (
+                    "OFFICIAL_PINNED_PORTABLE_AND_WINGET_CANDIDATE"
+                ),
+                "manifest_sha256": _sha(manifest),
                 "artifacts": [
                     {"name": name, "sha256": info.sha256,
                      "size_bytes": info.size_bytes}
@@ -200,6 +205,8 @@ def main() -> None:
     parser.add_argument("--setup-root", type=Path, required=True)
     parser.add_argument("--runtime-root", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--candidate-sha", required=True)
     parser.add_argument("--setup-sha", required=True)
     parser.add_argument("--runtime-sha", required=True)
     args = parser.parse_args()
@@ -207,6 +214,8 @@ def main() -> None:
         setup_root=args.setup_root.resolve(),
         runtime_root=args.runtime_root.resolve(),
         output_dir=args.output_dir.resolve(strict=False),
+        manifest=args.manifest.resolve(strict=True),
+        candidate_sha=args.candidate_sha,
         setup_sha=args.setup_sha, runtime_sha=args.runtime_sha,
     )
 
