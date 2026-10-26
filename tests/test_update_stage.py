@@ -53,7 +53,8 @@ class ReleaseStageTests(unittest.TestCase):
         self.assertEqual(active.read_text(), '{"release":"v1.0"}')
         receipt = json.loads((result.directory / ".atlas-stage.json").read_text())
         self.assertEqual(receipt["archive_sha256"], digest)
-        self.assertEqual(receipt["schema"], "atlas-staged-release/v1")
+        self.assertEqual(receipt["schema"], "atlas-staged-release/v2")
+        self.assertEqual(len(receipt["tree_sha256"]), 64)
         self.assertFalse(list((self.install / "versions").glob(".atlas-stage-*")))
 
     def test_invalid_checksum_cannot_create_install_directory(self):

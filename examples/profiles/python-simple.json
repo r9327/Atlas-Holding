@@ -1,0 +1,18 @@
+{
+  "schema": "project-profile/v1",
+  "name": "python-simple",
+  "repository": "example/python-project",
+  "branch": "feat/candidate",
+  "checkout_dir": "python-worktree",
+  "commands": {
+    "test": [
+      "python",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "tests"
+    ]
+  },
+  "adapters": []
+}

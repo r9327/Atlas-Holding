@@ -14,7 +14,11 @@ from pathlib import Path
 import tempfile
 from typing import Callable
 
-from .update_stage import _MARKER, _RELEASE, _RESERVED, _SHA
+from .update_lock import UpdateLockError, exclusive_update_lock
+from .update_stage import (
+    _MARKER, _RELEASE, _RESERVED, _SHA, _STAGE_SCHEMA,
+    ReleaseStagingError, _slot_inventory,
+)
 
 _ACTIVE = "active-release.json"
 _PENDING = ".atlas-switch.pending.json"
@@ -137,14 +141,29 @@ def _verified_slot(root: Path, target: ReleasePointer) -> Path:
     saved = _read_json(folder / _MARKER)
     if (
         not isinstance(saved, dict)
-        or set(saved) != {"schema", "release", "archive_sha256", "files", "unpacked_bytes"}
-        or saved["schema"] != "atlas-staged-release/v1"
+        or set(saved) != {
+            "schema", "release", "archive_sha256", "files",
+            "unpacked_bytes", "tree_sha256",
+        }
+        or saved["schema"] != _STAGE_SCHEMA
         or saved["release"] != target.release
         or saved["archive_sha256"] != target.archive_sha256
         or type(saved["files"]) is not int or saved["files"] < 1
         or type(saved["unpacked_bytes"]) is not int or saved["unpacked_bytes"] < 0
+        or not isinstance(saved["tree_sha256"], str)
+        or _SHA.fullmatch(saved["tree_sha256"]) is None
     ):
         raise ReleaseSwitchError("staged receipt does not match authorized archive")
+    try:
+        inventory = _slot_inventory(folder)
+    except ReleaseStagingError as exc:
+        raise ReleaseSwitchError("staged slot integrity verification failed") from exc
+    if (
+        inventory.files != saved["files"]
+        or inventory.unpacked_bytes != saved["unpacked_bytes"]
+        or inventory.tree_sha256 != saved["tree_sha256"]
+    ):
+        raise ReleaseSwitchError("staged slot content does not match receipt")
     return folder
 
 
@@ -177,11 +196,12 @@ def _new_pending(root: Path, previous: ReleasePointer | None, target: ReleasePoi
         os.fsync(file.fileno())
 
 
-def recover_interrupted_switch(root: Path) -> bool:
+def _recover_interrupted_switch_locked(root: Path) -> bool:
     """Revert any pending switch without executing or deleting version files.
 
     Intended for the trusted launcher at startup BEFORE launching the engine.
-    Unknown/modified pointers are refused rather than blindly overwritten.
+    The caller holds the update lock. Unknown/modified pointers are refused
+    rather than blindly overwritten.
     """
     _check_root(root)
     pending = _pending_record(root)
@@ -197,18 +217,27 @@ def recover_interrupted_switch(root: Path) -> bool:
     return True
 
 
-def activate_staged_release(
+def recover_interrupted_switch(root: Path) -> bool:
+    """Serialize and revert a pending switch before engine launch."""
+    try:
+        with exclusive_update_lock(root):
+            return _recover_interrupted_switch_locked(root)
+    except UpdateLockError as exc:
+        raise ReleaseSwitchError(str(exc)) from exc
+
+
+def _activate_staged_release_locked(
     root: Path,
     *,
     release: str,
     approved_archive_sha256: str,
     health_probe: Callable[[Path], bool],
 ) -> ReleaseSwitchResult:
-    """Atomically select a staged slot, reverting if a trusted probe fails.
+    """Atomically select a staged slot while holding the update lock.
 
     The external caller must provide a separately AUTHENTICATED SHA, enforce
-    single-writer privileges and ensure the running app is stopped as needed.
-    The probe itself is supplied by trusted launcher code, never from the ZIP.
+    trusted privileges and ensure the running app is stopped as needed. The
+    probe itself is supplied by trusted launcher code, never from the ZIP.
     """
     _check_root(root)
     if (
@@ -243,3 +272,23 @@ def activate_staged_release(
     return ReleaseSwitchResult(
         "ACTIVATED", release, previous.release if previous else None,
     )
+
+
+def activate_staged_release(
+    root: Path,
+    *,
+    release: str,
+    approved_archive_sha256: str,
+    health_probe: Callable[[Path], bool],
+) -> ReleaseSwitchResult:
+    """Serialize and atomically activate a staged release."""
+    try:
+        with exclusive_update_lock(root):
+            return _activate_staged_release_locked(
+                root,
+                release=release,
+                approved_archive_sha256=approved_archive_sha256,
+                health_probe=health_probe,
+            )
+    except UpdateLockError as exc:
+        raise ReleaseSwitchError(str(exc)) from exc

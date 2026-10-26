@@ -16,6 +16,7 @@ import re
 import shutil
 import stat
 import tempfile
+from typing import Callable
 import zipfile
 
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
@@ -27,6 +28,8 @@ _RESERVED = frozenset(
     + tuple("LPT" + str(i) for i in range(1, 10))
 )
 _MARKER = ".atlas-stage.json"
+_STAGE_SCHEMA = "atlas-staged-release/v2"
+_TREE_SCHEMA = b"atlas-slot-tree/v1\0"
 _MAX_FILES = 10000
 _MAX_UNPACKED_BYTES = 2 * 1024 * 1024 * 1024
 
@@ -42,6 +45,13 @@ class StagedRelease:
     archive_sha256: str
     files: int
     unpacked_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
+class _SlotInventory:
+    files: int
+    unpacked_bytes: int
+    tree_sha256: str
 
 
 def _parts(name: str, *, directory: bool) -> tuple[str, ...]:
@@ -100,6 +110,8 @@ def _index_entries(archive: zipfile.ZipFile, *, max_files: int,
             if key in nodes and nodes[key] != value:
                 raise ReleaseStagingError("conflicting or case-colliding archive paths")
             nodes[key] = value
+            if len(nodes) > max_files + 4096:
+                raise ReleaseStagingError("too many archive paths")
         full_key = "/".join(parts).casefold()
         if full_key in explicit:
             raise ReleaseStagingError("duplicate archive path")
@@ -117,6 +129,89 @@ def _index_entries(archive: zipfile.ZipFile, *, max_files: int,
     return entries, total
 
 
+def _slot_inventory(
+    root: Path,
+    *,
+    max_files: int = _MAX_FILES,
+    max_unpacked_bytes: int = _MAX_UNPACKED_BYTES,
+) -> _SlotInventory:
+    """Hash the exact regular-file/directory tree without following links."""
+    pending = [root]
+    entries: list[tuple[str, Path, bool]] = []
+    nodes: dict[str, tuple[str, str]] = {}
+    while pending:
+        folder = pending.pop()
+        try:
+            children = list(folder.iterdir())
+        except OSError as exc:
+            raise ReleaseStagingError("staged tree cannot be inspected") from exc
+        for child in children:
+            if child.parent == root and child.name == _MARKER:
+                continue
+            try:
+                metadata = child.lstat()
+            except OSError as exc:
+                raise ReleaseStagingError("staged tree cannot be inspected") from exc
+            reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+            attributes = getattr(metadata, "st_file_attributes", 0)
+            if stat.S_ISLNK(metadata.st_mode) or attributes & reparse:
+                raise ReleaseStagingError("staged tree contains a link or reparse point")
+            is_directory = stat.S_ISDIR(metadata.st_mode)
+            if not is_directory and not stat.S_ISREG(metadata.st_mode):
+                raise ReleaseStagingError("staged tree contains a special file")
+            if not is_directory and metadata.st_nlink != 1:
+                raise ReleaseStagingError("staged tree contains a hard-linked file")
+            relative = child.relative_to(root).as_posix()
+            parts = _parts(relative + ("/" if is_directory else ""), directory=is_directory)
+            canonical = "/".join(parts)
+            key = canonical.casefold()
+            kind = "directory" if is_directory else "file"
+            value = (canonical, kind)
+            if key in nodes and nodes[key] != value:
+                raise ReleaseStagingError("staged tree contains conflicting paths")
+            nodes[key] = value
+            entries.append((canonical, child, is_directory))
+            if len(entries) > max_files + 4096:
+                raise ReleaseStagingError("staged tree has too many entries")
+            if is_directory:
+                pending.append(child)
+
+    digest = sha256(_TREE_SCHEMA)
+    files = 0
+    total = 0
+    try:
+        ordered = sorted(entries, key=lambda item: item[0].encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise ReleaseStagingError("staged tree contains an invalid path") from exc
+    for relative, path, is_directory in ordered:
+        encoded = relative.encode("utf-8")
+        digest.update(b"D" if is_directory else b"F")
+        digest.update(len(encoded).to_bytes(4, "big"))
+        digest.update(encoded)
+        if is_directory:
+            continue
+        files += 1
+        if files > max_files:
+            raise ReleaseStagingError("staged tree has too many files")
+        file_digest = sha256()
+        size = 0
+        try:
+            with path.open("rb") as source:
+                for block in iter(lambda: source.read(1024 * 1024), b""):
+                    size += len(block)
+                    if size > max_unpacked_bytes - total:
+                        raise ReleaseStagingError("staged tree exceeds size budget")
+                    file_digest.update(block)
+        except OSError as exc:
+            raise ReleaseStagingError("staged tree cannot be read") from exc
+        total += size
+        digest.update(size.to_bytes(8, "big"))
+        digest.update(file_digest.digest())
+    if files == 0:
+        raise ReleaseStagingError("staged tree contains no files")
+    return _SlotInventory(files, total, digest.hexdigest())
+
+
 def stage_release_archive(
     archive_file: Path,
     install_root: Path,
@@ -125,6 +220,7 @@ def stage_release_archive(
     expected_sha256: str,
     max_files: int = _MAX_FILES,
     max_unpacked_bytes: int = _MAX_UNPACKED_BYTES,
+    _materialize: Callable[[Path], None] | None = None,
 ) -> StagedRelease:
     """Extract a SHA-pinned ZIP only into a NEW version directory.
 
@@ -143,7 +239,8 @@ def stage_release_archive(
         raise ReleaseStagingError("invalid expected archive hash")
     if (type(max_files) is not int or not 1 <= max_files <= _MAX_FILES
             or type(max_unpacked_bytes) is not int
-            or not 1 <= max_unpacked_bytes <= _MAX_UNPACKED_BYTES):
+            or not 1 <= max_unpacked_bytes <= _MAX_UNPACKED_BYTES
+            or (_materialize is not None and not callable(_materialize))):
         raise ReleaseStagingError("invalid extraction quota")
     if archive_file.is_symlink() or not archive_file.is_file():
         raise ReleaseStagingError("archive must be a regular, non-symlink file")
@@ -195,12 +292,23 @@ def stage_release_archive(
                 count += 1
         if actual_total != declared_total:
             raise ReleaseStagingError("archive totals mismatch")
+        if _materialize is not None:
+            _materialize(temporary)
+        inventory = _slot_inventory(
+            temporary, max_files=max_files,
+            max_unpacked_bytes=max_unpacked_bytes,
+        )
+        if (_materialize is None and (
+                inventory.files != count
+                or inventory.unpacked_bytes != actual_total)):
+            raise ReleaseStagingError("staged tree differs from extracted archive")
         receipt = {
-            "schema": "atlas-staged-release/v1",
+            "schema": _STAGE_SCHEMA,
             "release": release,
             "archive_sha256": expected_sha256,
-            "files": count,
-            "unpacked_bytes": actual_total,
+            "files": inventory.files,
+            "unpacked_bytes": inventory.unpacked_bytes,
+            "tree_sha256": inventory.tree_sha256,
         }
         with (temporary / _MARKER).open("x", encoding="utf-8") as marker:
             json.dump(receipt, marker, sort_keys=True, separators=(",", ":"))
@@ -210,7 +318,10 @@ def stage_release_archive(
             raise ReleaseStagingError("release appeared while staging")
         os.rename(temporary, target)
         published = True
-        return StagedRelease(release, target, expected_sha256, count, actual_total)
+        return StagedRelease(
+            release, target, expected_sha256,
+            inventory.files, inventory.unpacked_bytes,
+        )
     except (OSError, EOFError, RuntimeError, zipfile.BadZipFile) as exc:
         raise ReleaseStagingError("release archive could not be safely staged") from exc
     finally:
