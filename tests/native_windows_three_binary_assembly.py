@@ -1,8 +1,8 @@
 """Exact-main Windows assembly and installed-runtime smoke, never a release.
 
-Run only under a Windows runner with a trusted checkout of this PR and exact
-certified-main setup/runtime checkouts.  The manifest below is an explicitly
-fake *build-only* fixture.  The smoke exercises native ACL application and
+Run only under a Windows runner with a trusted checkout of this PR and an exact
+certified-main runtime checkout.  The manifest is built from publisher bytes.
+The smoke exercises native ACL application and
 installed engine enrollment, but does not infer clean-machine, production
 model, autonomous-roadmap or release readiness.
 """
@@ -49,7 +49,7 @@ def _sha(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _checkout(root: Path, expected: str) -> None:
+def _checkout(root: Path, expected: str, *, ignore_upstream: bool = False) -> None:
     if (not root.is_absolute() or not root.is_dir()
             or len(expected) != 40
             or any(ch not in "0123456789abcdef" for ch in expected)
@@ -62,9 +62,12 @@ def _checkout(root: Path, expected: str) -> None:
     ).strip()
     if actual != expected:
         raise RuntimeError("Cross-PR integration source SHA changed")
+    status_args = ["git", "-C", str(root), "status", "--porcelain",
+                   "--untracked-files=normal"]
+    if ignore_upstream:
+        status_args.extend(["--", ".", ":!upstream"])
     dirty = subprocess.check_output(
-        ["git", "-C", str(root), "status", "--porcelain",
-         "--untracked-files=normal"], text=True, timeout=15,
+        status_args, text=True, timeout=15,
     ).strip()
     if dirty:
         raise RuntimeError("Cross-PR integration source tree is dirty")
@@ -76,9 +79,10 @@ def assemble(
 ) -> dict:
     if os.name != "nt":
         raise RuntimeError("Actual three-binary assembly requires native Windows")
-    _checkout(setup_root, setup_sha)
-    _checkout(runtime_root, runtime_sha)
     candidate_root = Path(__file__).resolve().parent.parent
+    _checkout(setup_root, setup_sha,
+              ignore_upstream=(setup_root == candidate_root))
+    _checkout(runtime_root, runtime_sha)
     actual_candidate = subprocess.check_output(
         ["git", "-C", str(candidate_root), "rev-parse", "HEAD"],
         text=True, timeout=15,
@@ -166,7 +170,7 @@ def assemble(
                 "schema_version": 1,
                 "source_shas": {
                     "release_candidate": candidate_sha,
-                    "certified_main_setup": setup_sha,
+                    "release_candidate_setup": setup_sha,
                     "certified_main_runtime": runtime_sha,
                 },
                 "manifest_kind": (

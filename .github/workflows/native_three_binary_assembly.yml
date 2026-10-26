@@ -24,13 +24,6 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
-      - name: Checkout exact certified main setup source
-        uses: actions/checkout@v7
-        with:
-          repository: r9327/Atlas-Holding
-          ref: 3e89b8b12ab7bb4e099622844eb7a37cea7d0066
-          path: upstream/bootstrap
-          persist-credentials: false
       - name: Checkout exact certified main engine and GUI source
         uses: actions/checkout@v7
         with:
@@ -83,11 +76,11 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
-          $setup = Join-Path $PWD "upstream/bootstrap"
+          $setup = $PWD.Path
           $runtime = Join-Path $PWD "upstream/integration"
           $dest = Join-Path $env:RUNNER_TEMP "atlas-nonrelease-cross-pr-${{ github.run_id }}"
           $manifest = Join-Path $env:RUNNER_TEMP "Atlas-Holding-official-runtime-manifest.json"
-          python -B -X utf8 tests/native_windows_three_binary_assembly.py --setup-root "$setup" --runtime-root "$runtime" --setup-sha 3e89b8b12ab7bb4e099622844eb7a37cea7d0066 --runtime-sha 3e89b8b12ab7bb4e099622844eb7a37cea7d0066 --manifest "$manifest" --candidate-sha "${{ github.event.pull_request.head.sha }}" --output-dir "$dest"
+          python -B -X utf8 tests/native_windows_three_binary_assembly.py --setup-root "$setup" --runtime-root "$runtime" --setup-sha "${{ github.event.pull_request.head.sha }}" --runtime-sha 3e89b8b12ab7bb4e099622844eb7a37cea7d0066 --manifest "$manifest" --candidate-sha "${{ github.event.pull_request.head.sha }}" --output-dir "$dest"
           if ($LASTEXITCODE -ne 0) { throw "Native cross-PR frozen assembly failed" }
           $evidence = Join-Path $dest "cross-pr-nonrelease-evidence.json"
           if (!(Test-Path $evidence)) { throw "Native build evidence is missing" }
@@ -131,7 +124,7 @@ jobs:
     needs: native_assembly
     name: Downloaded setup self-test on fresh Windows runner
     runs-on: windows-2025
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - name: Download exact tested candidate from preceding job
         uses: actions/download-artifact@v4
@@ -177,12 +170,56 @@ jobs:
           if ($process.ExitCode -ne 0) {
             throw "Downloaded standalone setup self-test failed: $($process.ExitCode)"
           }
+          $installRoot = Join-Path $env:RUNNER_TEMP "Atlas Holding Fresh Install é"
+          $cacheRoot = Join-Path $env:RUNNER_TEMP "Atlas Holding Cache é"
+          $modelsRoot = Join-Path $env:RUNNER_TEMP "Atlas Holding Models é"
+          foreach ($folder in @($installRoot, $cacheRoot, $modelsRoot)) {
+            New-Item -ItemType Directory -Path $folder -ErrorAction Stop | Out-Null
+          }
+          $installReceipt = Join-Path $env:RUNNER_TEMP "fresh-runner-install-receipt.json"
+          $install = [System.Diagnostics.ProcessStartInfo]::new()
+          $install.FileName = $setup
+          foreach ($argument in @(
+            "--noninteractive-acceptance",
+            "--install-root", $installRoot,
+            "--cache-root", $cacheRoot,
+            "--models-root", $modelsRoot,
+            "--receipt-json", $installReceipt
+          )) { [void]$install.ArgumentList.Add($argument) }
+          $install.UseShellExecute = $false
+          $install.WorkingDirectory = $candidate
+          $installerProcess = [System.Diagnostics.Process]::Start($install)
+          if (!$installerProcess.WaitForExit(1200000)) {
+            $installerProcess.Kill($true)
+            throw "Downloaded setup provisioning timed out"
+          }
+          if ($installerProcess.ExitCode -ne 0 -or !(Test-Path -LiteralPath $installReceipt)) {
+            throw "Downloaded setup provisioning failed: $($installerProcess.ExitCode)"
+          }
+          $installed = Get-Content -Raw -LiteralPath $installReceipt | ConvertFrom-Json
+          if ($installed.kind -ne "NONRELEASE_FRESH_WINDOWS_PROVISIONING" -or
+              $installed.execution_state -ne "RUNTIME_STAGED_ENGINE_CONFIG_PENDING" -or
+              $installed.windows_clean_install_certified -ne $false -or
+              $installed.interactive_wizard_certified -ne $false -or
+              $installed.reboot_certified -ne $false -or
+              $installed.release_ready -ne $false) {
+            throw "Fresh setup receipt has invalid provisioning evidence or claims"
+          }
+          foreach ($name in @("AtlasHoldingControlCenter.exe", "AtlasHoldingEngine.exe")) {
+            $observed = $installed.runtime_artifacts.$name
+            if ($null -eq $observed -or $observed.sha256 -cnotmatch '^[0-9a-f]{64}$' -or
+                [int64]$observed.size_bytes -lt 1000000) {
+              throw "Installed runtime receipt is incomplete for $name"
+            }
+          }
           $receipt = @{
             schema = 1
             candidate_sha = "${{ github.event.pull_request.head.sha }}"
             candidate_archive_sha256 = "${{ needs.native_assembly.outputs.candidate_digest }}"
             setup_sha256 = ($record.artifacts | Where-Object name -eq "AtlasHoldingSetup.exe").sha256
             downloaded_candidate_self_test = "PASS"
+            downloaded_candidate_real_provisioning = "PASS"
+            provisioning_receipt_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $installReceipt).Hash.ToLowerInvariant()
             inherited_python_environment = $false
             windows_clean_install_certified = $false
             release_ready = $false
@@ -190,12 +227,15 @@ jobs:
           $receiptPath = Join-Path $env:RUNNER_TEMP "fresh-runner-nonrelease-receipt.json"
           [System.IO.File]::WriteAllText($receiptPath, $receipt, [System.Text.UTF8Encoding]::new($false))
           Write-Output "NONRELEASE_DOWNLOADED_SETUP_FRESH_RUNNER_SELFTEST_PASS"
+          Write-Output "NONRELEASE_DOWNLOADED_SETUP_REAL_PROVISIONING_PASS"
           Write-Output "Fresh-runner receipt SHA256: $((Get-FileHash -Algorithm SHA256 $receiptPath).Hash.ToLowerInvariant())"
       - name: Upload fresh-runner receipt (NOT RELEASE)
         uses: actions/upload-artifact@v4
         with:
           name: NONRELEASE-AtlasHolding-Fresh-Runner-Receipt-${{ github.run_id }}
-          path: ${{ runner.temp }}/fresh-runner-nonrelease-receipt.json
+          path: |
+            ${{ runner.temp }}/fresh-runner-nonrelease-receipt.json
+            ${{ runner.temp }}/fresh-runner-install-receipt.json
           if-no-files-found: error
           retention-days: 3
           compression-level: 0

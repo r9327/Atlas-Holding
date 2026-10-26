@@ -158,9 +158,16 @@ SHA-256 de l'archive émis par GitHub Actions. Il reste explicitement distinct
 d'une GitHub Release et sert à obtenir la future preuve sur machine vierge.
 Un second job, sur une nouvelle VM Windows 2025, retélécharge cet artefact,
 revérifie les trois empreintes et tailles, supprime l'environnement Python du
-processus puis exécute `AtlasHoldingSetup.exe --self-test`. Son reçu séparé
-conserve `windows_clean_install_certified: false` : cette contre-épreuve prouve
-l'autonomie binaire du téléchargement, pas les clics du wizard ni un reboot.
+processus puis exécute `AtlasHoldingSetup.exe --self-test`. Il lance ensuite le
+même moteur de provisionnement que le bouton d'autorisation du wizard, avec
+des chemins neufs contenant espaces et accents : téléchargement des dépendances
+officielles épinglées, contrôles natifs, ACL, copie rehachée du Control Center,
+du moteur et de l'agent. Le mode d'acceptation exige une ligne de commande
+fermée et produit par création exclusive un reçu `NONRELEASE_FRESH_WINDOWS_PROVISIONING`.
+Les deux reçus conservent `windows_clean_install_certified: false` : cette
+contre-épreuve prouve une installation réelle automatisée depuis le binaire
+téléchargé, pas les clics du wizard, le redémarrage Windows, le modèle final ni
+la roadmap complète.
 
 Ce test est volontairement séparé de la certification finale : réaliser
 l'installation interactive depuis l'artefact publié sur une machine Windows

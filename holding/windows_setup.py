@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shutil
+import sys
 from pathlib import Path
 from queue import Empty, Queue
 import threading
@@ -592,6 +593,72 @@ def _local_default() -> Path:
     return Path.home() / "Atlas Holding"
 
 
+def _publish_nonrelease_install_receipt(
+    target: Path, *, install_root: Path, summary: SetupSummary,
+    execution: ProvisionExecution | None,
+    runtime_pins: dict[str, str] | None,
+) -> str:
+    """Seal one unattended setup observation without certifying a release.
+
+    This path exists for a fresh Windows acceptance runner.  It invokes the
+    same provisioning boundary as the graphical consent button, but it is not
+    evidence of a human clicking the wizard, an OS reboot, model quality, or a
+    production Atlas roadmap.
+    """
+    if (not target.is_absolute() or target.suffix.lower() != ".json"
+            or target.exists() or target.is_symlink()
+            or not target.parent.is_dir() or target.parent.is_symlink()
+            or target.parent.resolve(strict=True) != target.parent):
+        raise ValueError("New canonical absolute receipt path required")
+    if (not install_root.is_absolute() or not install_root.is_dir()
+            or install_root.is_symlink()
+            or install_root.resolve(strict=True) != install_root):
+        raise ValueError("Canonical installed root required")
+    state = execution.state if execution is not None else "NOT_EXECUTED"
+    runtime_observations: dict[str, dict[str, int | str]] = {}
+    if runtime_pins is not None:
+        version = (runtime_pins["AtlasHoldingControlCenter.exe"][:16] + "-"
+                   + runtime_pins["AtlasHoldingEngine.exe"][:16])
+        runtime = install_root / "runtime" / version
+        if state == "RUNTIME_STAGED_ENGINE_CONFIG_PENDING":
+            verify_runtime_payload(runtime, runtime_pins)
+            for name, expected in sorted(runtime_pins.items()):
+                path = runtime / name
+                runtime_observations[name] = {
+                    "sha256": expected,
+                    "size_bytes": path.stat().st_size,
+                }
+    payload = {
+        "schema": 1,
+        "kind": "NONRELEASE_FRESH_WINDOWS_PROVISIONING",
+        "setup_phase": summary.phase,
+        "setup_status": summary.status,
+        "execution_state": state,
+        "runtime_artifacts": runtime_observations,
+        "windows_clean_install_certified": False,
+        "interactive_wizard_certified": False,
+        "reboot_certified": False,
+        "offline_after_provisioning_certified": False,
+        "e2e_roadmap_certified": False,
+        "release_ready": False,
+    }
+    encoded = (json.dumps(payload, sort_keys=True, separators=(",", ":"))
+               + "\n").encode("utf-8")
+    if len(encoded) > 16 * 1024:
+        raise ValueError("Install receipt exceeds size budget")
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0)
+    descriptor = os.open(target, flags, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(encoded)
+            output.flush()
+            os.fsync(output.fileno())
+    except BaseException:
+        target.unlink(missing_ok=True)
+        raise
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="atlas-holding-windows-setup")
     parser.add_argument("--manifest", type=Path, required=True)
@@ -612,6 +679,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mcp-source-pins", type=Path)
     parser.add_argument("--mcp-source-pins-sha256")
     parser.add_argument("--mcp-python-minor", type=int)
+    parser.add_argument("--noninteractive-acceptance", action="store_true",
+                        help=argparse.SUPPRESS)
+    parser.add_argument("--receipt-json", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if (args.adapter_root is None) != (args.adapter_sha256 is None):
         parser.error("Both bundled adapter path and its release pin are required")
@@ -680,6 +750,44 @@ def main(argv: list[str] | None = None) -> int:
             )
         except (ValueError, UnicodeError) as exc:
             parser.error("Invalid verified MCP module manifest")
+
+    if args.noninteractive_acceptance:
+        if (args.receipt_json is None or args.cache_root is None
+                or args.models_root is None or args.runtime_root is None
+                or bundled_runtime_pins is None):
+            parser.error("Fresh-runner acceptance requires explicit roots, receipt and runtime")
+        try:
+            summary, execution = execute_setup(
+                manifest=args.manifest,
+                manifest_sha256=args.manifest_sha256,
+                install_root=args.install_root.resolve(),
+                cache_root=args.cache_root.resolve(),
+                model_root=args.models_root.resolve(),
+                online=detect_online(), approved=True,
+                runtime_root=args.runtime_root,
+                runtime_pins=bundled_runtime_pins,
+                adapter_source=(args.adapter_root / "AtlasHoldingAgent.exe"
+                                if args.adapter_root is not None else None),
+                adapter_sha256=args.adapter_sha256,
+                embedded_python_archive=args.mcp_archive,
+                embedded_source_root=args.mcp_source_root,
+                embedded_python_pin=mcp_pin,
+            )
+            _publish_nonrelease_install_receipt(
+                args.receipt_json.resolve(),
+                install_root=args.install_root.resolve(), summary=summary,
+                execution=execution, runtime_pins=bundled_runtime_pins,
+            )
+        except (OSError, ValueError, TypeError, RuntimePayloadError) as exc:
+            # Do not print remote URLs, tokens or package-manager diagnostics
+            # from a privileged installation boundary.
+            print(type(exc).__name__, file=sys.stderr)
+            return 2
+        return (0 if execution is not None and
+                execution.state == "RUNTIME_STAGED_ENGINE_CONFIG_PENDING"
+                else 2)
+    if args.receipt_json is not None:
+        parser.error("A receipt is available only for noninteractive acceptance")
 
     # Do not import Tk/initialize a display during CLI parsing and unit tests.
     import tkinter as tk

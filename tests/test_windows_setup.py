@@ -11,7 +11,9 @@ from holding.inventory import Component
 from holding.provision_runtime import ProvisionExecution, ProvisionStep
 from holding.staged_install import InstallInspection, PinnedZip
 from holding.windows_setup import (assess_post_install, detect_online,
-                                  preflight_setup, execute_setup)
+                                  preflight_setup, execute_setup,
+                                  _publish_nonrelease_install_receipt,
+                                  SetupSummary)
 from test_provision_plan import sample
 
 
@@ -28,6 +30,48 @@ class WindowsSetupTests(unittest.TestCase):
             "a" * 64, 8123, 12345,
         )
         self.snapshot = sample(opencode=Component("NOT_FOUND"))
+
+    def test_fresh_runner_receipt_records_real_runtime_but_never_certifies_release(self):
+        import hashlib
+        import json
+        self.install_root.mkdir()
+        pins = {
+            "AtlasHoldingControlCenter.exe": hashlib.sha256(b"viewer").hexdigest(),
+            "AtlasHoldingEngine.exe": hashlib.sha256(b"engine").hexdigest(),
+        }
+        version = pins["AtlasHoldingControlCenter.exe"][:16] + "-" + pins[
+            "AtlasHoldingEngine.exe"][:16]
+        runtime = self.install_root / "runtime" / version
+        runtime.mkdir(parents=True)
+        (runtime / "AtlasHoldingControlCenter.exe").write_bytes(b"viewer")
+        (runtime / "AtlasHoldingEngine.exe").write_bytes(b"engine")
+        receipt = self.install_root.parent / "fresh-install.json"
+        summary = SetupSummary(
+            "PREFLIGHT", "CONSENT_REQUIRED", "Windows", "AMD64", "", None,
+            0, 0, (), 0, (),
+        )
+        execution = ProvisionExecution(
+            "RUNTIME_STAGED_ENGINE_CONFIG_PENDING", (), ())
+        with patch("holding.windows_setup.verify_runtime_payload") as verify:
+            digest = _publish_nonrelease_install_receipt(
+                receipt, install_root=self.install_root, summary=summary,
+                execution=execution, runtime_pins=pins)
+        document = json.loads(receipt.read_text(encoding="utf-8"))
+        self.assertEqual(digest, hashlib.sha256(receipt.read_bytes()).hexdigest())
+        self.assertEqual(document["execution_state"],
+                         "RUNTIME_STAGED_ENGINE_CONFIG_PENDING")
+        self.assertEqual(set(document["runtime_artifacts"]), set(pins))
+        for claim in (
+                "windows_clean_install_certified",
+                "interactive_wizard_certified", "reboot_certified",
+                "offline_after_provisioning_certified",
+                "e2e_roadmap_certified", "release_ready"):
+            self.assertIs(document[claim], False)
+        verify.assert_called_once_with(runtime, pins)
+        with self.assertRaisesRegex(ValueError, "New canonical"):
+            _publish_nonrelease_install_receipt(
+                receipt, install_root=self.install_root, summary=summary,
+                execution=execution, runtime_pins=pins)
 
     def call_preflight(self, *, snapshot=None, observed="NOT_INSTALLED",
                        pins=None, online=True):
