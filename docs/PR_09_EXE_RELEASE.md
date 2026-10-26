@@ -180,3 +180,14 @@ conserve `Doctor: NOT_EXECUTED`, `GitHub push: NOT_PERMITTED` et
 `release_ready: false` : elle valide la chaîne d'inférence native, pas la
 roadmap Atlas autonome.
 
+L'assemblage exécute également le véritable `AtlasHoldingAgent.exe` sur une
+roadmap locale jetable de trois lots dépendants. Une autorité QA séparée de
+fixture signe un FAIL exact-SHA sur le deuxième lot ; le moteur reprend le même
+worktree, produit un nouveau commit corrigé, consomme ensuite trois PASS signés
+et ne clôt la couverture que lorsque chaque critère est lié à son SHA. Le reçu
+`native-three-lot-roadmap.json` est conservé dans l'artefact candidat. Il porte
+explicitement `target: DISPOSABLE_LOCAL_GIT_NOT_REAL_ATLAS`,
+`canonical_doctor_status: NOT_EXECUTED`, `github_push_status: NOT_PERMITTED` et
+`release_ready: false` : cette épreuve valide l'ordonnancement, la réparation et
+la clôture persistante, mais pas trois PR GitHub ni le Doctor canonique Atlas.
+

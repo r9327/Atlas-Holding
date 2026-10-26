@@ -89,7 +89,8 @@ jobs:
               $record.windows_clean_install_certified -ne $false -or
               $record.manifest_kind -ne "OFFICIAL_PINNED_PORTABLE_AND_WINGET_CANDIDATE" -or
               $record.native_acl_enrollment_smoke -ne "PASS" -or
-              $record.installed_agent_health_smoke -ne "PASS") {
+              $record.installed_agent_health_smoke -ne "PASS" -or
+              $record.local_three_lot_signed_qa_smoke -ne "PASS") {
             throw "Native nonrelease candidate falsely claims release certification"
           }
           foreach ($binary in @("AtlasHoldingSetup.exe", "AtlasHoldingEngine.exe", "AtlasHoldingControlCenter.exe")) {

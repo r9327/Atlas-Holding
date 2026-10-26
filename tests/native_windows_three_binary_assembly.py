@@ -132,6 +132,16 @@ def assemble(
                 "native_windows_installer_enrollment_smoke.py"),
             "--frozen-directory", str(viewer_dir),
         ], cwd=runtime_root, timeout=240)
+        multi_lot_receipt = temp / "native-three-lot-roadmap.json"
+        _run([
+            sys.executable, "-B",
+            str(Path(__file__).with_name(
+                "native_windows_multi_lot_roadmap_smoke.py")),
+            "--agent", str(agent),
+            "--receipt-json", str(multi_lot_receipt),
+        ], cwd=candidate_root, timeout=300)
+        if not multi_lot_receipt.is_file():
+            raise RuntimeError("Native multi-lot roadmap receipt is missing")
         pins = {
             "AtlasHoldingControlCenter.exe": _sha(viewer),
             "AtlasHoldingEngine.exe": _sha(engine),
@@ -158,6 +168,9 @@ def assemble(
             for item in (engine, viewer, installer):
                 with item.open("rb") as src, (output_dir / item.name).open("xb") as dst:
                     shutil.copyfileobj(src, dst, 1024 * 1024)
+            with multi_lot_receipt.open("rb") as src, (
+                    output_dir / multi_lot_receipt.name).open("xb") as dst:
+                shutil.copyfileobj(src, dst, 1024 * 1024)
             observed = observe_native_release_files(output_dir)
             originals = {
                 item.name: (_sha(item), item.stat().st_size)
@@ -188,6 +201,9 @@ def assemble(
                 ),
                 "native_acl_enrollment_smoke": "PASS",
                 "installed_agent_health_smoke": "PASS",
+                "local_three_lot_signed_qa_smoke": "PASS",
+                "local_three_lot_receipt_sha256": _sha(
+                    output_dir / multi_lot_receipt.name),
                 "release_ready": False,
                 "windows_clean_install_certified": False,
                 "acl_isolation_certified": False,
