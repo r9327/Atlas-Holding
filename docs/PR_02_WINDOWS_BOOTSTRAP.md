@@ -484,3 +484,121 @@ ni modèle chargé en VRAM, ni preuve d'agent sain. Le couple de vrais
 binaires GUI/moteur/agent doit encore provenir du même SHA intégré
 (PR #2 + PR #11), puis passer les tests Windows et une mission réelle
 avant toute publication.
+
+
+## Runtime MCP CPython embeddable vérifié — 23 octobre 2026
+
+`holding/embedded_python_stage.py` prépare désormais **hors ligne** un
+interpréteur CPython embeddable x64 pour le futur hub MCP interne, distinct
+des trois exécutables PyInstaller de Holding. L'installateur doit fournir
+un ZIP d'un éditeur authentifié, le SHA-256 **attendu depuis la release
+vérifiée** (jamais auto-approuvé à partir des octets téléchargés) et le
+manifeste attendu des modules du paquet `holding` provenant de la build.
+
+L'étape prépare un répertoire versionné `python-embedded-<SHA16>` dans
+le dossier d'installation approuvé. Le code impose un ZIP plat (pas de
+chemin absolu, traversal, ADS Windows, doublons sensibles à la casse,
+symlinks, ZIP chiffré, dépassement des limites), extrait les fichiers
+au sein d'un répertoire temporaire sur le même disque, puis publie par
+renommage uniquement après validation. Le fichier `python3XX._pth` est
+recréé avec uniquement le ZIP standard et le répertoire courant ;
+aucun `import site` implicite et pas d'installation dans le PATH. Les
+modules Python du hub sont recopiés seulement s'ils correspondent tous
+aux SHA du manifeste éditeur, sans injection de `.pyd/.so/.dll/.pyc`.
+
+La sortie inclut le chemin de `python.exe`, l'empreinte du binaire,
+les empreintes des modules importables et un reçu explicite
+`native_probe: NOT_EXECUTED`. Cette étape **ne certifie pas à elle
+seule que le runtime s'exécute sur Windows**, ne répare aucune ACL et
+n'affirme ni qu'un modèle est installé ni que les plugins tiers
+fonctionnent. L'intégration au Setup GUI, la préparation des permissions
+NTFS et l'exécution d'un vrai `server/discover` sur Windows restent
+des gates avant release. L'installateur ne doit pas activer MCP sans eux.
+
+Tests Linux/Windows : staging réel de fichiers factices, rejet SHA
+archive/source, modules injectés/retirés, `.pyd` non épinglé, chemin
+symbolique, archives hostiles et refus d'écrasement.
+
+
+### Réinspection locale et vrai smoke natif du compagnon
+
+`verify_staged_embedded_python` vérifie désormais les octets de
+`python.exe`, des DLL/fichiers natifs présents au stage, du `._pth` isolé,
+de chaque module Holding et de l'inventaire exact du répertoire. Un reçu
+de staging avec valeurs divergentes ou des fichiers ajoutés/modifiés
+interdit la validation ; les hashes du reçu sont une preuve d'intégrité
+**locale**, jamais une signature de l'éditeur.
+
+La CI Windows dispose d'un smoke distinct utilisant réellement le ZIP
+officiel **CPython 3.13.16 Windows embeddable x64**, téléchargé depuis
+`python.org` et vérifié contre le SHA-256 publié sur la page de la
+release : `97dae5274cc54867065e8d5a3226e48c35017ed332a0fdb0e27d5b5821961297`.
+Après staging, ce smoke lance le vrai `python.exe` sans installation
+système, vérifie un import de package synthétique `holding`, les drapeaux
+d'isolation et le fait que PYTHONHOME/PYTHONPATH ne soient pas hérités
+grâce à `-E -S -B`. Le paquet synthétique n'est **pas** une certification
+du vrai hub MCP ni des agents tiers. Le garde de release doit ensuite
+tester `holding.mcp_entry` complet avec les modules signés réellement
+installés, les ACL NTFS, l'interface graphique et la reprise après
+coupure réseau.
+
+
+### Intégration dans le flux autorisé de Setup Windows
+
+`windows_setup.stage_embedded_mcp_companion` installe désormais les
+octets de l'interpréteur vérifié sous
+`<disque choisi>/mcp-python/python-embedded-<sha>`, uniquement après
+autorisation initiale, validation du dossier d'installation et de ses
+ACL, puis contrôle des ACL du binaire, du dossier de modules et de
+chaque source `.py`. Un échec de droit effectue un rollback des seuls
+fichiers fraîchement créés, sans modifier une installation précédente.
+
+En relançant l'installateur sur un répertoire qui contient déjà une
+version embeddable du **même SHA**, l'étape relit tous les fichiers natifs
+et sources puis rend `REUSED_VERIFIED_NOT_EXECUTED` sans retélécharger
+ni recopier. Une installation précédente corrompue est refusée **sans
+suppression silencieuse** de ses données.
+
+`execute_setup` peut recevoir optionnellement l'archive CPython et
+les empreintes de sources authentifiées avec le bundle moteur. Une
+activation partielle est refusée ; l'étape n'est lancée qu'après le
+staging de la paire Engine/Control Center déjà vérifiée et produit un
+état explicite `STAGED_NOT_EXECUTED` ou un blocage. Aucun état
+`READY` n'est déduit d'une archive extraite.
+
+**À ne pas confondre avec un Setup final :** le constructeur PyInstaller
+ne livre pas encore ce ZIP et le wizard ne transmet pas encore ces pins
+dans son formulaire. L'installation autonome n'est complète qu'après
+liaison du ZIP à un manifeste release audité, intégration de l'API v5
+de la PR #11, vraie découverte du hub sous Job Object sur une machine
+Windows propre, et tests de mise à jour/réparation.
+
+
+### Inclusion du compagnon dans AtlasHoldingSetup.exe
+
+Le constructeur `windows_build.build_windows_installer` peut maintenant
+intégrer dans **le même EXE** le ZIP CPython embeddable épinglé, un arbre
+de sources `holding/*.py` recopié exclusivement si chaque digest correspond
+aux empreintes externes attendues, et un manifeste de SHA-256 du code. Le
+launcher PyInstaller vérifie le ZIP et le manifeste avant `--self-test`
+ou l'ouverture du wizard, puis transmet le dossier de sources, l'archive
+et les empreintes validées au formulaire. L'installation autorisée
+se poursuit par `execute_setup` et la validation d'ACL NTFS avant
+publication du runtime sur le disque choisi.
+
+Ce bundle est **strictement optionnel** pour conserver la compatibilité
+des anciens installateurs sans MCP. Le programme de build exige
+`--mcp-archive`, `--mcp-archive-sha256`, `--mcp-module-pins`,
+`--mcp-module-pins-sha256` et `--mcp-python-minor` en bloc complet,
+avec les chemins du moteur/Control Center. Les fichiers ne peuvent
+être auto-certifiés à partir de leur installation locale : le build
+d'une release doit fournir les empreintes du pipeline de distribution
+approuvé.
+
+L'installateur doit encore appeler l'API d'enrollment v5 du moteur
+(PR #11) après la publication du runtime et vérifier le véritable hub
+sur une machine Windows propre ; ce lot de construction ne garantit
+pas encore la release finale ni une distribution utilisable sans autre
+configuration. Les tests du builder examinent les fichiers et hashes
+effectivement fournis au processus PyInstaller et rejettent toute
+entrée incomplète ou ZIP falsifié.

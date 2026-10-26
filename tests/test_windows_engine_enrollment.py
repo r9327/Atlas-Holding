@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+import zipfile
 from unittest.mock import patch
 
 from holding.windows_engine_enrollment import (
@@ -77,6 +78,89 @@ class EngineEnrollmentTests(unittest.TestCase):
                 self.request if request is None else request,
                 approved=approved,
             )
+
+    def _stage_mcp_companion_for_test(self):
+        from holding.embedded_python_stage import (
+            EmbeddedPythonRelease, stage_pinned_embedded_python)
+        source = self.root / "release-source"
+        package = source / "holding"
+        package.mkdir(parents=True)
+        required = (
+            "__init__.py", "mcp_entry.py", "mcp_stdio.py",
+            "mcp_hub_session.py", "mcp_hub_probe.py",
+            "mcp_windows_job.py", "mcp_local_inventory.py",
+        )
+        hashes = {}
+        for name in required:
+            data = ("# signed " + name + "\n").encode()
+            (package / name).write_bytes(data)
+            hashes[name] = hashlib.sha256(data).hexdigest()
+        archive = self.root / "publisher-python.zip"
+        with zipfile.ZipFile(archive, "w") as output:
+            for name in (
+                "python.exe", "python3.dll", "python313.dll",
+                "python313.zip", "python313._pth",
+            ):
+                output.writestr(name, ("publisher " + name).encode())
+        release = EmbeddedPythonRelease(
+            python_minor=13, zip_sha256=self.sha(archive),
+            module_sha256=hashes)
+        companion = self.root / "mcp-python"
+        companion.mkdir()
+        stage = stage_pinned_embedded_python(
+            archive=archive, approved_package_root=source,
+            target_parent=companion, pin=release)
+        return stage, release
+
+    def test_schema_six_pins_real_installed_companion_and_native_handoff(self):
+        from holding.daemon_entry import Installation, BootstrapError
+        from holding.windows_runtime_launch import (
+            InstalledEngineSpec, RuntimeLaunchError, verify_installed_engine)
+        self.create_roots()
+        stage, release = self._stage_mcp_companion_for_test()
+        enrolled = self.enroll(request=replace(
+            self.request, mcp_runtime=stage, mcp_release=release))
+        payload = json.loads(enrolled.config_path.read_bytes())
+        self.assertEqual(payload["schema"], 6)
+        self.assertEqual(payload["mcp"]["package_root"], str(stage.directory))
+        self.assertEqual(payload["mcp"]["interpreter"], str(stage.python_exe))
+        self.assertEqual(payload["mcp"]["source_release_zip_sha256"], release.zip_sha256)
+        loaded = Installation.load(enrolled.config_path)
+        self.assertEqual(loaded.mcp.package_root, stage.directory)
+        self.assertEqual(loaded.mcp.interpreter_pin.expected_sha256,
+                         stage.interpreter_sha256)
+        spec = InstalledEngineSpec(
+            self.root, self.runtime, enrolled.config_path,
+            self.request.viewer_sha256, self.request.engine_sha256,
+            enrolled.config_sha256)
+        with (
+            patch("holding.windows_runtime_launch.sys.platform", "win32"),
+            patch("holding.windows_runtime_acl.validate_runtime_acl"),
+        ):
+            self.assertEqual(verify_installed_engine(spec),
+                             (str(self.engine), str(enrolled.config_path)))
+        stage.python_exe.write_bytes(b"malicious replacement")
+        with self.assertRaises(BootstrapError):
+            Installation.load(enrolled.config_path)
+        with (
+            patch("holding.windows_runtime_launch.sys.platform", "win32"),
+            patch("holding.windows_runtime_acl.validate_runtime_acl"),
+        ):
+            with self.assertRaises(RuntimeLaunchError):
+                verify_installed_engine(spec)
+
+    def test_incomplete_schema_six_mcp_companion_never_enrolls(self):
+        self.create_roots()
+        stage, release = self._stage_mcp_companion_for_test()
+        wrong = replace(stage, source_sha256=())
+        with self.assertRaises(EngineEnrollmentError):
+            self.enroll(request=replace(
+                self.request, mcp_runtime=wrong, mcp_release=release))
+        self.assertFalse((self.root / "config" / "engine.json").exists())
+        with self.assertRaises(EngineEnrollmentError):
+            self.enroll(request=replace(
+                self.request, mcp_runtime=stage, mcp_release=None))
+        self.assertFalse((self.root / "config" / "engine.json").exists())
 
     def test_version_three_config_binds_exact_installed_viewer_and_agent(self):
         self.create_roots()
