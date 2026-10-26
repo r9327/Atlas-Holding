@@ -116,17 +116,17 @@ Se référer à `ROADMAP.md` de la PR #1 ; le test porte sur un vrai exécutable
 
 ## Répétition native multi-PR des vrais EXE (21 octobre 2026)
 
-Le workflow `.github/workflows/native_packaging_rehearsal.yml` assemble, sur un runner Windows et **sans fusionner les branches**, les commits exacts de la PR #2 (setup) et de la PR #11 (moteur et Control Center). Il compile les deux vrais exécutables, mesure leurs SHA-256, les embarque dans `AtlasHoldingSetup.exe` puis lance le self-test natif du setup et celui des deux composants. Les branches d'entrée sont épinglées à des SHA immuables, leurs checkouts vérifiés et aucun artefact n'est publié comme release.
+Le workflow `.github/workflows/native_packaging_rehearsal.yml` assemble, sur un runner Windows, les sources setup, moteur et Control Center du `main` certifié au SHA `3e89b8b12ab7bb4e099622844eb7a37cea7d0066`. Il compile les deux vrais exécutables, mesure leurs SHA-256, les embarque dans `AtlasHoldingSetup.exe` puis lance le self-test natif du setup et celui des deux composants. Les entrées sont épinglées à ce SHA immuable, leurs checkouts vérifiés et aucun artefact n'est publié comme release.
 
 Le label `ci:package-native` déclenche ce test séparé. Cette épreuve vérifie le **câblage d'emballage et l'extraction réelle**, mais **pas** l'installation complète sur un PC vierge, l'ACL native, le lancement des agents ou une roadmap autonome. La PR reste Draft et les gates de sortie demeurent obligatoires.
 
-**Extension de la répétition :** après avoir produit le setup avec les vrais EXE, le runner exécute la fonction de staging **réelle de la PR #2** sur un chemin Windows contenant des espaces et des accents, puis lance les deux vrais EXE depuis leur dossier de version. Il teste l'absence de copie avant autorisation, la réutilisation de fichiers conformes et le refus d'écraser un moteur corrompu. Ce contrôle teste le lancement *depuis le disque choisi*, sans faire croire à une inscription de service, un raccourci, une ACL validée ou un parcours IA autonome.
+**Extension de la répétition :** après avoir produit le setup avec les vrais EXE, le runner exécute la fonction de staging du `main` certifié sur un chemin Windows contenant des espaces et des accents, puis lance les deux vrais EXE depuis leur dossier de version. Il teste l'absence de copie avant autorisation, la réutilisation de fichiers conformes et le refus d'écraser un moteur corrompu. Ce contrôle teste le lancement *depuis le disque choisi*, sans faire croire à une inscription de service, un raccourci, une ACL validée ou un parcours IA autonome.
 
 ## Assemblage Windows trois EXE sur SHAs distincts (non-release)
 
-Le workflow `.github/workflows/native_three_binary_assembly.yml` réunit
-sans merge les commits exacts et préalablement testés des PR #2 et #11 sur
-un même **runner Windows natif**. Il compile la paire Qt/moteur autonome,
+Le workflow `.github/workflows/native_three_binary_assembly.yml` réunit les
+composants exacts et préalablement testés du `main` certifié sur un même
+**runner Windows natif**. Il compile la paire Qt/moteur autonome,
 vérifie l'autotest de chacun, exige un vrai échange IPC signé **entre les
 deux exécutables compilés**, puis construit `AtlasHoldingSetup.exe` avec
 leurs octets et leurs SHA-256 embarqués. Le `--self-test` du setup doit
