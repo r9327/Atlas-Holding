@@ -19,7 +19,7 @@ import tempfile
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 
 class DownloadError(Exception):
@@ -315,7 +315,12 @@ def download_pinned(
         if partial.exists() and partial.stat().st_nlink != 1:
             raise DownloadError("Partial destination must not have hard links")
 
-        opener = build_opener(_SafeRedirect())
+        # Keep the transfer path consistent with the direct HTTPS preflight.
+        # A freshly installed Windows profile can advertise an automatic proxy
+        # before it is usable; urllib then raises URLError even though direct
+        # HTTPS is healthy.  Pinned publisher bytes are fetched directly and
+        # still receive the normal TLS certificate validation.
+        opener = build_opener(ProxyHandler({}), _SafeRedirect())
         last_error: Exception | None = None
         for attempt in range(max_attempts):
             if cancelled is not None and cancelled():

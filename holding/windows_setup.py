@@ -21,6 +21,7 @@ from typing import Callable
 from urllib.request import Request, build_opener, ProxyHandler
 
 from .bootstrap_assets_cli import read_pinned_manifest
+from .downloads import DownloadError
 from .inventory import Component, Inventory, scan
 from .provision_plan import make_plan
 from .provision_runtime import (ProvisionExecution, ProvisionStep,
@@ -955,7 +956,8 @@ def main(argv: list[str] | None = None) -> int:
                 except LocalModelEnrollmentError:
                     models = ()
                 events.put(("models", models))
-            except (OSError, ValueError, TypeError, EngineEnrollmentError) as exc:
+            except (OSError, ValueError, TypeError, EngineEnrollmentError,
+                    DownloadError) as exc:
                 # Never dump exception text: a URL or credential may occur in it.
                 events.put(("error", type(exc).__name__))
 
