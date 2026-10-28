@@ -54,6 +54,12 @@ class ProjectChatError(ValueError):
     pass
 
 
+def validate_chat_text(value: Any, *, answer: bool = False) -> str:
+    """Shared UTF-8 limits for the operator UI and durable intake."""
+    return _bounded(value, maximum=600 if answer else 1400,
+                    label="clarification answer" if answer else "project goal")
+
+
 def _bounded(value: Any, *, maximum: int, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ProjectChatError("Invalid " + label)
@@ -192,7 +198,7 @@ class ProjectChatCoordinator:
 
     def start(self, goal: str) -> ChatView:
         self._check_run()
-        goal = _bounded(goal, maximum=1400, label="project goal")
+        goal = validate_chat_text(goal)
         self._ensure()
         session_id = uuid4().hex
         mission_id = "chat-" + session_id[:24]
@@ -257,7 +263,7 @@ class ProjectChatCoordinator:
                 else self.view(row["session_id"]))
 
     def answer(self, session_id: str, answer: str) -> ChatView:
-        answer = _bounded(answer, maximum=600, label="clarification answer")
+        answer = validate_chat_text(answer, answer=True)
         self._ensure()
         with self.store._transaction():
             self._check_run()

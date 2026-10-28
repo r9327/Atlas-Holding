@@ -25,6 +25,17 @@ et le dossier sont idempotents. Un seul chat de projet par dépôt est
 recommandé dans cette première version (les roadmaps de ce repo ont un
 objectif global immuable).
 
+La saisie est limitée en **octets UTF-8**, comme le service : 1 400 pour
+l'objectif et 600 pour chaque réponse. Un texte trop long reste modifiable
+et n'est pas envoyé au modèle. Après une erreur, le texte reste dans le champ
+et le bouton **Reprendre** recharge la session persistée sans fermer la fenêtre.
+Le champ n'est effacé qu'après constat de l'enregistrement de l'objectif ou
+de la réponse ; une réponse déjà enregistrée n'est pas renvoyée au modèle.
+
+La consultation et l'export complet des dossiers sont également accessibles
+par la commande locale de [#26](LOCAL_RESEARCH_BRIEF.md#consulter-et-exporter-les-dossiers-enregistrés),
+avec distinction entre le contrat courant et les contrats historiques.
+
 Démarrage (PySide6 installé, Windows ou Linux) :
 
 ```shell
