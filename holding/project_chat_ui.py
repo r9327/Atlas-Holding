@@ -17,7 +17,9 @@ from PySide6.QtWidgets import (
     QTextEdit, QVBoxLayout, QHBoxLayout, QWidget,
 )
 
-from .project_chat import ChatView, ProjectChatCoordinator, ProjectChatError
+from .project_chat import (
+    ChatView, ProjectChatCoordinator, ProjectChatError, validate_chat_text,
+)
 from .state_store import StateStore
 
 
@@ -38,6 +40,7 @@ class ProjectChatWindow(QMainWindow):
         self._busy = False
         self._closing = False
         self._current: ChatView | None = None
+        self._pending_submission: tuple[str, str, str | None, int] | None = None
 
         self.setObjectName("atlasProjectChat")
         self.setWindowTitle("Atlas Holding — Projet R&D")
@@ -69,6 +72,11 @@ class ProjectChatWindow(QMainWindow):
         row.addWidget(self.entry)
         row.addWidget(self.send)
         col.addLayout(row)
+        self.retry = QPushButton("Reprendre")
+        self.retry.setObjectName("projectChatResume")
+        self.retry.setVisible(False)
+        self.retry.clicked.connect(lambda: self._schedule("resume", None))
+        col.addWidget(self.retry)
         self.disclaimer = QLabel(
             "Dossier R&D proposé, non vérifié. Aucune fabrication, "
             "expérience ou permission Git n'est déclenchée par ce chat.")
@@ -96,15 +104,21 @@ class ProjectChatWindow(QMainWindow):
                     raise ProjectChatError("No active project")
                 return coordinator.answer(self._current.session_id, value or "")
             if action == "resume":
-                if self._current is None:
-                    raise ProjectChatError("No project to resume")
-                return coordinator.resume(self._current.session_id)
+                # Reload durable intake: a failed model call may have committed
+                # the answer or initial session before the UI received a view.
+                view = coordinator.latest()
+                return coordinator.resume(view.session_id) if view else None
             raise ProjectChatError("Unknown chat action")
 
     def _schedule(self, action: str, value: str | None) -> None:
         if self._closing or self._busy:
             return
         self._busy = True
+        if action in ("start", "answer") and value is not None:
+            self._pending_submission = (
+                action, value, self._current.session_id if self._current else None,
+                len(self._current.answers) if self._current else 0)
+        self.retry.setVisible(False)
         self.send.setEnabled(False)
         self.entry.setEnabled(False)
         self.status.setText("La Holding prépare la prochaine étape R&D…")
@@ -118,7 +132,15 @@ class ProjectChatWindow(QMainWindow):
         text = self.entry.text().strip()
         if not text:
             return
-        self.entry.clear()
+        try:
+            text = validate_chat_text(
+                text, answer=bool(self._current and self._current.status == "ASKING"))
+        except ProjectChatError:
+            limit = 600 if self._current and self._current.status == "ASKING" else 1400
+            self.status.setText(
+                f"Texte trop long ou invalide : maximum {limit} octets UTF-8. "
+                "Raccourcis le texte ; les caractères accentués comptent plusieurs octets.")
+            return
         self._schedule(
             "answer" if self._current and self._current.status == "ASKING"
             else "start", text)
@@ -135,8 +157,22 @@ class ProjectChatWindow(QMainWindow):
         except Exception:
             self.status.setText(
                 "Génération interrompue ou modèle indisponible. "
-                "Ferme et rouvre le chat pour reprendre la session.")
+                "Ta saisie est conservée. Utilise Reprendre pour recharger la session.")
+            self.retry.setVisible(True)
+            self.send.setEnabled(False)
+            self.entry.setEnabled(False)
+            return
         else:
+            if self._pending_submission and self._current:
+                action, value, sid, index = self._pending_submission
+                accepted = (
+                    self._current.initial_goal == value if action == "start" else
+                    self._current.session_id == sid
+                    and len(self._current.answers) > index
+                    and self._current.answers[index] == value)
+                if accepted:
+                    self.entry.clear()
+                    self._pending_submission = None
             self._render()
             if self._current and self._current.status in ("ASSESSING", "GENERATING"):
                 self._schedule("resume", None)

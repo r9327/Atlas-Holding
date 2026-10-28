@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from contextlib import redirect_stderr, redirect_stdout
 import io
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -11,6 +12,7 @@ from unittest.mock import patch
 
 from holding import ollama_protocol
 from holding.daemon_cli import main as daemon_main
+from holding.research_brief_cli import main as research_main
 from holding.research_brief import (
     ResearchBriefError, ResearchBriefService, STATUS, _validate_proposal,
 )
@@ -238,6 +240,144 @@ class ResearchBriefTests(unittest.TestCase):
         self.assertEqual(self.store.db.execute(
             "SELECT COUNT(*) FROM research_briefs").fetchone()[0], 2)
         self.assertEqual(self.store.missions()[0].state, "READY")
+
+    def test_export_preserves_all_fields_provenance_and_never_calls_model(self):
+        receipt, _, _ = self.run_draft()
+        before = self.store.db.total_changes
+        with patch.object(ollama_protocol, "_http", side_effect=AssertionError("read only")):
+            exported = json.loads(self.service.export(
+                "research-1", repository=REPO, spec_sha256=receipt.spec_sha256,
+                model_digest=receipt.model_digest))
+        self.assertEqual(self.store.db.total_changes, before)
+        self.assertEqual(exported["brief"], PROPOSAL)
+        self.assertEqual(exported["proposal_sha256"], receipt.proposal_sha256)
+        self.assertEqual(exported["spec_sha256"], receipt.spec_sha256)
+        self.assertEqual(exported["model_digest"], receipt.model_digest)
+        self.assertEqual(exported["status"], STATUS)
+        self.assertTrue(exported["current"])
+        self.assertTrue(exported["source_context_available"])
+        self.assertEqual(hashlib.sha256(exported["source_contract_json"].encode("utf-8")).hexdigest(),
+                         exported["spec_sha256"])
+        self.assertIn("exploration créative", exported["source_context"]["project_goal"])
+        self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM grants").fetchone()[0], 0)
+
+    def test_historical_export_uses_archived_goal_and_never_claims_current(self):
+        old, _, _ = self.run_draft()
+        SafeRoadmapReplanner(self.store).apply(
+            roadmap(goal="Nouvel objectif de conception."), source="revised-goal")
+        new, _, _ = self.run_draft()
+        with StateStore(self.path) as reopened:
+            service = ResearchBriefService(reopened)
+            current = service.history("research-1", repository=REPO, limit=1)
+            self.assertTrue(current[0][1].current)
+            self.assertEqual(current[0][1].receipt.spec_sha256, new.spec_sha256)
+            older = service.history("research-1", repository=REPO,
+                                    before_record=current[0][0])
+            self.assertEqual(len(older), 1)
+            self.assertFalse(older[0][1].current)
+            export = json.loads(service.export(
+                "research-1", repository=REPO, spec_sha256=old.spec_sha256,
+                model_digest=old.model_digest))
+        self.assertFalse(export["current"])
+        self.assertIn("exploration créative", export["source_context"]["project_goal"])
+        self.assertNotIn("Nouvel objectif", export["source_context"]["project_goal"])
+        self.assertEqual(export["brief"], PROPOSAL)
+        self.assertEqual(hashlib.sha256(export["source_contract_json"].encode("utf-8")).hexdigest(),
+                         old.spec_sha256)
+
+    def test_old_export_without_source_archive_is_explicitly_incomplete(self):
+        old, _, _ = self.run_draft()
+        SafeRoadmapReplanner(self.store).apply(
+            roadmap(goal="Autre objectif."), source="revised")
+        self.store.db.execute("DELETE FROM mission_spec_history")
+        output = json.loads(self.service.export(
+            "research-1", repository=REPO, spec_sha256=old.spec_sha256,
+            model_digest=old.model_digest))
+        self.assertFalse(output["current"])
+        self.assertFalse(output["source_context_available"])
+        self.assertIsNone(output["source_context"])
+
+    def test_history_survives_removal_of_optional_goal_from_current_contract(self):
+        old, _, _ = self.run_draft()
+        new = json.loads(roadmap())
+        del new["project_goal"]
+        SafeRoadmapReplanner(self.store).apply(json.dumps(new), source="remove-goal")
+        history = self.service.history("research-1", repository=REPO)
+        self.assertEqual(len(history), 1)
+        self.assertFalse(history[0][1].current)
+        output = json.loads(self.service.export(
+            "research-1", repository=REPO, spec_sha256=old.spec_sha256,
+            model_digest=old.model_digest))
+        self.assertIn("exploration créative", output["source_context"]["project_goal"])
+        self.assertFalse(output["current"])
+        with self.assertRaises(ResearchBriefError):
+            self.service.prepare("research-1", config_path=self.config_path)
+
+    def test_export_rejects_foreign_repository_and_corrupt_artifact_or_source(self):
+        receipt, _, _ = self.run_draft()
+        args = dict(spec_sha256=receipt.spec_sha256, model_digest=receipt.model_digest)
+        with self.assertRaisesRegex(ResearchBriefError, "Foreign"):
+            self.service.export("research-1", repository="someone/else", **args)
+        SafeRoadmapReplanner(self.store).apply(roadmap(goal="Révision"), source="new")
+        self.store.db.execute("UPDATE mission_spec_history SET spec_json='{}'")
+        with self.assertRaisesRegex(ResearchBriefError, "source damaged"):
+            self.service.export("research-1", repository=REPO, **args)
+        self.store.db.execute("DELETE FROM mission_spec_history")
+        self.store.db.execute("UPDATE research_briefs SET proposal_json='{}'")
+        with self.assertRaisesRegex(ResearchBriefError, "integrity"):
+            self.service.export("research-1", repository=REPO, **args)
+
+    def test_history_before_first_proposal_does_not_install_research_schema(self):
+        self.assertEqual(self.service.history("research-1", repository=REPO), ())
+        self.assertIsNone(self.store.db.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='research_briefs'").fetchone())
+        for kwargs in ({"limit": 0}, {"limit": True}, {"limit": 101},
+                       {"before_record": 0}, {"before_record": True}):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ResearchBriefError):
+                self.service.history("research-1", repository=REPO, **kwargs)
+
+    def test_export_remains_readable_while_paused_without_preparing_again(self):
+        receipt, _, _ = self.run_draft()
+        self.store.set_paused(True)
+        with patch.object(ollama_protocol, "_http", side_effect=AssertionError("no inference")):
+            exported = self.service.export(
+                "research-1", repository=REPO, spec_sha256=receipt.spec_sha256,
+                model_digest=receipt.model_digest)
+        self.assertEqual(json.loads(exported)["status"], STATUS)
+        with self.assertRaises(ResearchBriefError):
+            self.service.prepare("research-1", config_path=self.config_path)
+
+    def test_cli_history_and_exclusive_export_preserve_database_and_existing_files(self):
+        receipt, _, _ = self.run_draft()
+        common = ["--db", str(self.path), "--repo", REPO, "--mission-id", "research-1"]
+        with redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(research_main(["history", *common]), 0)
+        records = json.loads(out.getvalue())
+        self.assertTrue(records[0]["current"])
+        self.assertNotIn("brief", records[0])
+        dest = self.root / "dossier R&D é.json"
+        export = ["export", *common, "--spec-sha256", receipt.spec_sha256,
+                  "--model-digest", receipt.model_digest]
+        self.assertEqual(research_main([*export, "--output-file", str(dest)]), 0)
+        self.assertEqual(json.loads(dest.read_text(encoding="utf-8"))["brief"], PROPOSAL)
+        before_file = dest.read_bytes()
+        before_specs = self.store.db.execute("SELECT spec_json FROM mission_specs").fetchone()[0]
+        for target in (dest, self.path):
+            with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                research_main([*export, "--output-file", str(target)])
+        self.assertEqual(dest.read_bytes(), before_file)
+        self.assertEqual(self.store.db.execute(
+            "SELECT spec_json FROM mission_specs").fetchone()[0], before_specs)
+
+    def test_cli_rejects_ambiguous_options_without_creating_output(self):
+        common = ["--db", str(self.path), "--repo", REPO, "--mission-id", "research-1"]
+        missing_db = self.root / "missing.sqlite"
+        for argv in (["export", *common], ["history", *common, "--output-file", str(self.root/"x")],
+                     ["history", "--db", str(missing_db), "--repo", REPO, "--mission-id", "x"]):
+            with self.subTest(argv=argv), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                research_main(argv)
+        self.assertFalse(missing_db.exists())
+        self.assertFalse((self.root/"x").exists())
 
     def test_modified_goal_mid_inference_is_rejected_without_artifact(self):
         def changed(*args, **kwargs):
