@@ -110,6 +110,54 @@ class ProjectChatUiTests(unittest.TestCase):
         self.assertIn("non vérifiée", window.history.toPlainText())
         window.close()
 
+    def test_csv_button_targets_selected_circuit_and_shows_comparison(self):
+        from unittest.mock import patch as mocked
+        import json
+        done = ChatView(SID, REPO, "Étudier un circuit RC", (), (), "READY",
+                        None, "chat-" + SID[:24], "1" * 64,
+                        "Circuit à comparer", "STAGED", 0, 0, 0, (),
+                        ("RC ngspice: tension finale 4.99 V",),
+                        (2,), ())
+        compared = ChatView(SID, REPO, "Étudier un circuit RC", (), (), "READY",
+                            None, "chat-" + SID[:24], "1" * 64,
+                            "Circuit à comparer", "STAGED", 0, 0, 0, (),
+                            ("RC ngspice: tension finale 4.99 V",),
+                            (2,), ("Tâche 3: RMSE 0.05 V, mesures non certifiées",))
+        with mocked.object(ProjectChatWindow, "_call", return_value=done):
+            window = ProjectChatWindow(
+                database=self.database, repository=REPO, model_config=self.config)
+            self.flush(window)
+        self.assertTrue(window.compare_button.isEnabled())
+        self.assertEqual(window.circuit_selector.currentData(), 2)
+        csv = self.database.parent / "mesures.csv"
+        csv.write_text("time_seconds,voltage_volts\n0,0\n1,5\n",
+                       encoding="utf-8")
+        with mocked("holding.project_chat_ui.QFileDialog.getOpenFileName",
+                    return_value=(str(csv), "CSV")), \
+             mocked.object(window, "_call", return_value=compared) as action:
+            window.import_measurements()
+            self.assertFalse(window.compare_button.isEnabled())
+            self.flush(window)
+            self.assertEqual(action.call_args.args[0], "measure")
+            args = json.loads(action.call_args.args[1])
+            self.assertEqual(args["task_index"], 2)
+            self.assertEqual(args["file_path"], str(csv))
+        self.assertIn("RMSE 0.05 V", window.history.toPlainText())
+        self.assertIn("mesures non certifiées", window.history.toPlainText())
+        window.close()
+
+    def test_csv_button_disabled_without_real_simulated_circuit(self):
+        done = ChatView(SID, REPO, "Sans appareil", (), (), "READY",
+                        None, "chat-" + SID[:24], "1" * 64,
+                        "Concept")
+        with patch.object(ProjectChatWindow, "_call", return_value=done):
+            window = ProjectChatWindow(
+                database=self.database, repository=REPO, model_config=self.config)
+            self.flush(window)
+        self.assertFalse(window.compare_button.isEnabled())
+        self.assertEqual(window.circuit_selector.count(), 0)
+        window.close()
+
     def test_unverified_result_does_not_claim_prototype_complete(self):
         done = ChatView(SID, REPO, "Créer un outil innovant", (), (),
                         "READY", None, "chat-" + SID[:24],
