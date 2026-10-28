@@ -6,7 +6,7 @@ description: Audit borné des règles IA, capacités plugins, preuves et certifi
 # Holding governance
 
 1. Lire `AI_ENTRYPOINT.md`, `AGENTS.md`, `ZERO_TRUST_RULES.md` et
-   `docs/CERTIFICATION_CONTRACT.md`.
+   `docs/QUALITY_RELEASE_GATES.md`.
 2. Inspecter les consommateurs réels, `config/tool_registry.json` et
    `holding/tool_registry.py` avant de modifier une règle ou une capacité.
 3. Confirmer qu'un plugin est présent, autorisé, compatible avec les quotas

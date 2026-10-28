@@ -12,13 +12,12 @@ DOCUMENTS = (
     "AGENTS.md",
     "AI_ENTRYPOINT.md",
     "ZERO_TRUST_RULES.md",
-    "docs/CERTIFICATION_CONTRACT.md",
     "docs/TOOLCHAIN.md",
     "docs/QUALITY_RELEASE_GATES.md",
     ".agents/skills/holding-governance/SKILL.md",
     ".github/copilot-instructions.md",
     ".github/pull_request_template.md",
-    ".github/workflows/ai_governance_validation.yml",
+    ".github/workflows/foundation_policy_validation.yml",
     "config/tool_registry.json",
 )
 
@@ -59,14 +58,14 @@ def check(root: Path) -> list[str]:
     if "AI_ENTRYPOINT.md" not in agents or "ZERO_TRUST_RULES.md" not in agents:
         errors.append("AGENTS.md must link canonical entrypoint and zero trust")
     entry = (root / "AI_ENTRYPOINT.md").read_text(encoding="utf-8")
-    for anchor in ("AGENTS.md", "docs/CERTIFICATION_CONTRACT.md",
+    for anchor in ("AGENTS.md", "docs/QUALITY_RELEASE_GATES.md",
                    "config/tool_registry.json", "NOT_RUN", "CERTIFIED"):
         if anchor not in entry:
             errors.append(f"entrypoint missing: {anchor}")
-    workflow = (root / ".github/workflows/ai_governance_validation.yml").read_text(encoding="utf-8")
-    for anchor in ("ready_for_review", "synchronize", "labeled",
+    workflow = (root / ".github/workflows/foundation_policy_validation.yml").read_text(encoding="utf-8")
+    for anchor in ("ready_for_review", "labeled",
                    "github.event.pull_request.head.sha", "persist-credentials: false",
-                   "tools/ai_governance_guard.py", "test_ai_governance_guard.py",
+                   "python -B -X utf8 -m unittest", "test_*.py",
                    "windows-latest", "ubuntu-latest"):
         if anchor not in workflow:
             errors.append(f"workflow missing: {anchor}")

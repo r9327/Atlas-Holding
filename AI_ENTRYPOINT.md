@@ -28,7 +28,8 @@ Dof-Atlas comme si elles existaient ici.
 6. Vérifier chaque commit contre son parent, puis l'intégration globale de la
    PR ; noter les tests réellement exécutés, non exécutés et bloqués.
 7. Conserver la PR en Draft durant le développement. Après revue complète,
-   Ready for review lance le contrôle IA ciblé sur le SHA de tête. La
+   Ready for review lance les workflows effectivement applicables à la PR.
+   Le contrôle IA local ne vaut pas preuve de leur exécution. La
    certification d'une phase/release reste **indépendante** et suit
    `docs/QUALITY_RELEASE_GATES.md`.
 
