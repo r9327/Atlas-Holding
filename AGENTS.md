@@ -45,3 +45,9 @@ Le contrat `docs/USER_AUTONOMY_PROFILE.md` est obligatoire : l'utilisateur fourn
 ## Anti-complexite et gate architectural
 
 Avant toute nouvelle responsabilite, verifier l'owner canonique dans le code existant : pas de moteur parallele, pas de cache jumeau ni de copie de fonction substantielle. Toute modification structurelle non triviale doit avoir des consommateurs verifies et des tests de comportement. Le controle leger `tools/architecture_guard.py` compare le SHA de la PR a sa base et bloque uniquement les nouveaux cycles statiques, duplications substantielles, contournements des droits UI et variantes de modules clairement parallelises. Voir `docs/ARCHITECTURE_REGRESSION_GATE.md`. Les dependances dynamiques, l'interface Windows et la RAM restent du ressort de Doctor/Graphify et des essais reellement executes. Les nouvelles PR ne peuvent pas s'autocertifier. Ne pas lancer de FULL a chaque commit ; faire la certification finale apres stabilisation.
+
+## Contrat de travail sur Holding elle-même
+
+Pour toute modification du dépôt Holding, lire `AI_ENTRYPOINT.md` puis `AI_CONTEXT.md`. Les frontières de certification et plugins sont définies par `HOLDING_CERTIFICATION.md` et `docs/PLUGIN_GOVERNANCE.md` ; ne pas dupliquer ces règles dans des instructions individuelles. Le validateur statique `python -m tools.governance_check --json` contrôle le catalogue déclaré et les contrats, **pas** l'installation réelle ni la certification Windows.
+
+Toute PR est Draft jusqu'au lot complet, puis Ready pour la certification du SHA final par le workflow universel `Holding AI & Quality Certification` en plus des gates de domaine ; les règles de protection GitHub doivent être configurées séparément. Tester, relire chaque commit puis la PR entière et consigner explicitement les vérifications NOT_RUN.

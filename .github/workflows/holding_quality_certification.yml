@@ -1,0 +1,80 @@
+name: Holding AI & Quality Certification
+
+on:
+  pull_request:
+    branches: [main]
+    types: [ready_for_review, synchronize, reopened]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: holding-cert-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  PYTHONUTF8: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+
+jobs:
+  policy:
+    if: github.event_name == 'push' || github.event.pull_request.draft == false
+    name: AI policy / exact SHA
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - name: Check canonical governance contract and exact SHA
+        run: python -B -X utf8 -m tools.governance_check --expected-sha "$CANDIDATE_SHA" --json
+      - name: Validate governance and existing MCP registry tests
+        run: |
+          python -B -X utf8 -m unittest discover -s tests -p 'test_governance_check.py' -v
+          python -B -X utf8 -m unittest discover -s tests -p 'test_tool_registry.py' -v
+      - name: Check checkout unchanged
+        shell: bash
+        run: test -z "$(git status --porcelain --untracked-files=normal)"
+
+  full-tests:
+    needs: policy
+    if: needs.policy.result == 'success'
+    name: Holding tests / ${{ matrix.os }} / exact SHA
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - name: Linux Qt runtime
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libegl1
+      - name: Install pinned UI test dependency
+        run: python -m pip install --disable-pip-version-check PySide6==6.12.0
+      - name: Check Python source syntax
+        run: python -c "import ast,pathlib; [ast.parse(p.read_text(encoding='utf-8'),filename=str(p)) for d in ('holding','tests','tools') for p in pathlib.Path(d).rglob('*.py')]"
+      - name: Execute complete existing Python regression suite
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QTWEBENGINE_CHROMIUM_FLAGS: --disable-gpu --no-sandbox
+          QTWEBENGINE_DISABLE_SANDBOX: "1"
+        run: python -B -X utf8 -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Check checkout unchanged
+        shell: bash
+        run: test -z "$(git status --porcelain --untracked-files=normal)"
