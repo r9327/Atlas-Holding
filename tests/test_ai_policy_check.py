@@ -71,6 +71,16 @@ class AiPolicyCheckTests(unittest.TestCase):
         self.assertIn("certification workflow missing: windows-latest",
                       verify(self.root))
 
+    def test_architecture_step_uses_cross_platform_shell(self) -> None:
+        path = self.root / ".github/workflows/holding-pr-certification.yml"
+        workflow = path.read_text(encoding="utf-8")
+        path.write_text(workflow.replace(
+            "Reject new static architecture debt\n        shell: bash",
+            "Reject new static architecture debt"), encoding="utf-8")
+        self.assertTrue(any(error.startswith(
+            "certification workflow missing: Reject new static architecture debt")
+            for error in verify(self.root)))
+
 
 if __name__ == "__main__":
     unittest.main()

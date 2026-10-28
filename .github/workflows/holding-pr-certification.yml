@@ -99,6 +99,7 @@ jobs:
           set -o pipefail
           python -B -X utf8 -m unittest discover -s tests -p 'test_*.py' -v 2>&1 | tee "$RUNNER_TEMP/holding-unittest.log"
       - name: Reject new static architecture debt
+        shell: bash
         run: python -B -X utf8 -m tools.architecture_guard --base-ref "$BASE_SHA"
       - name: Require clean checkout and unchanged candidate
         shell: bash

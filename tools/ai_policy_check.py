@@ -93,7 +93,8 @@ def verify(root: Path = ROOT) -> list[str]:
         "ready_for_review", "synchronize", "ci:validate",
         "github.event.pull_request.head.sha", "fetch-depth: 0",
         "ubuntu-latest", "windows-latest", "test_*.py",
-        "tools.architecture_guard", "Holding Certification / Required",
+        "tools.architecture_guard", "Reject new static architecture debt\n        shell: bash",
+        "Holding Certification / Required",
         "needs.ai-policy.result", "needs.cross-platform-tests.result",
     ):
         if fragment not in workflow:
