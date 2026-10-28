@@ -87,6 +87,8 @@ class ProjectChatUiTests(unittest.TestCase):
         self.assertIn("Prototype proposé.", window.history.toPlainText())
         self.assertIn("non vérifiée", window.history.toPlainText())
         self.assertNotIn("certifié", window.status.text().casefold())
+        self.assertFalse(window.send.isEnabled())
+        self.assertIn("autre dépôt", window.status.text())
         window.close()
 
 

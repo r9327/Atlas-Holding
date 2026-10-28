@@ -71,6 +71,17 @@ class ProjectChatTests(unittest.TestCase):
                                        config_path=self.config).latest().concept,
                 PROPOSAL["concept"])
 
+    def test_one_project_per_repository_rejects_duplicate_conversation(self):
+        with patch.object(ollama_protocol, "_installed_model"), self.inference([]):
+            self.chat.start("Concevoir un outil de modélisation accessible.")
+        with patch.object(ollama_protocol, "_http",
+                          side_effect=AssertionError("second project cannot run")):
+            with self.assertRaisesRegex(ProjectChatError,
+                                        "already has a chat project"):
+                self.chat.start("Autre projet dans le même dépôt.")
+        self.assertEqual(self.store.db.execute(
+            "SELECT COUNT(*) FROM project_chat_sessions").fetchone()[0], 1)
+
     def test_two_questions_asked_only_once_then_automatic_start(self):
         queries = ["Qui utilisera l'outil ?", "Quel est son usage prioritaire ?"]
         with patch.object(ollama_protocol, "_installed_model"), self.inference(queries) as http:

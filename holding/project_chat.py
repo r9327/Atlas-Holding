@@ -186,6 +186,14 @@ class ProjectChatCoordinator:
         mission_id = "chat-" + session_id[:24]
         with self.store._transaction():
             self._check_run()
+            existing = self.store.db.execute(
+                "SELECT session_id FROM project_chat_sessions WHERE repository=? "
+                "LIMIT 1", (self.repository,)
+            ).fetchone()
+            if existing is not None:
+                raise ProjectChatError(
+                    "This repository already has a chat project; reopen its session "
+                    "or explicitly select a different project repository")
             self.store.db.execute(
                 "INSERT INTO project_chat_sessions "
                 "(session_id,repository,initial_goal,questions_json,answers_json,"

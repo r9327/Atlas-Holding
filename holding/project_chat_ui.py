@@ -112,7 +112,8 @@ class ProjectChatWindow(QMainWindow):
 
     @Slot()
     def submit(self) -> None:
-        if self._closing or self._busy:
+        if (self._closing or self._busy
+                or (self._current is not None and self._current.status == "READY")):
             return
         text = self.entry.text().strip()
         if not text:
@@ -140,8 +141,9 @@ class ProjectChatWindow(QMainWindow):
             if self._current and self._current.status in ("ASSESSING", "GENERATING"):
                 self._schedule("resume", None)
                 return
-        self.send.setEnabled(True)
-        self.entry.setEnabled(True)
+        can_send = self._current is None or self._current.status == "ASKING"
+        self.send.setEnabled(can_send)
+        self.entry.setEnabled(can_send)
 
     def _render(self) -> None:
         view = self._current
@@ -167,8 +169,8 @@ class ProjectChatWindow(QMainWindow):
             self.status.setText(
                 "Étude enregistrée. Empreinte : " +
                 (view.proposal_sha256[:16] if view.proposal_sha256 else "inconnue") +
-                "…  Tu peux décrire un nouveau projet.")
-            self.entry.setPlaceholderText("Nouveau projet…")
+                "…  Pour un autre projet, choisis un autre dépôt.")
+            self.entry.setPlaceholderText("Autre projet : nouveau dépôt requis")
         else:
             self.status.setText("Étude R&D en cours, reprise possible.")
         self.history.setPlainText("\n\n".join(lines))

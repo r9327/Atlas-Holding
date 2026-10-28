@@ -37,6 +37,11 @@ Un service distant et une machine non fiable ne doivent pas recevoir
 directement ce point d'entrée. Pause/STOP empêchent la génération ; aucune
 permission Git, shell ou token n'est accordé par le texte du chat.
 
+Une nouvelle conversation indépendante sur le même dépôt est refusée :
+relancer l'outil avec un autre dépôt explicitement choisi. Le formulaire
+est désactivé après création du dossier pour ne pas faire croire qu'une
+deuxième mission autonome peut être lancée sous ce même objectif.
+
 L'analyse de l'idée, la génération du dossier et le redémarrage sont
 automatiques dans ce périmètre ; la R&D expérimentale, la conception CAO,
 les simulations, le développement complet et l'exécution multi-agents
