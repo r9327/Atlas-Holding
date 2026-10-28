@@ -32,7 +32,12 @@ class CodeWorkerTests(unittest.TestCase):
         git(self.canonical,'add','README.md');git(self.canonical,'commit','-m','init')
         git(self.canonical,'remote','add','origin','https://github.com/r9327/Dof-Atlas.git')
         self.store=StateStore(root/'state.db');self.addCleanup(self.store.close)
-        RoadmapImporter(self.store).import_text(json.dumps({'repo':REPO,'missions':[{'id':'job','operation':'code','acceptance':['feature.py works']}] }),source='local-test')
+        RoadmapImporter(self.store).import_text(json.dumps({
+            'repo': REPO,
+            'project_goal': 'Créer un assistant de gestion de quêtes respectant les joueurs.',
+            'missions': [{'id': 'job', 'operation': 'code',
+                          'acceptance': ['feature.py works']}],
+        }), source='local-test')
         self.store.grant_for_onboarding(StandingGrant(REPO,frozenset({'code','commit'}),int(time.time())+500))
         self.lease=DaemonLease(self.store.path,heartbeat=False);self.lease.acquire();self.addCleanup(self.lease.release)
         self.git=GitWorktrees(self.canonical,root/'trees',REPO)
@@ -83,6 +88,43 @@ else:
         worker = LocalCodeWorker(self.actor,runner,health_directory=self.root)
         worker(Mission('job',REPO))
         self.assertEqual((self.root/'trees'/'job'/'goal.py').read_text(),"'feature.py works'")
+
+    def test_persisted_project_goal_reaches_actual_local_agent(self):
+        self.agent_path.write_text('''import json,sys
+request=json.load(sys.stdin)
+if request['action']=='health':
+ print(json.dumps({'protocol':1,'action':'health','status':'ok','agent_ready':True}))
+else:
+ goal=request['payload']['project_goal']
+ assert 'gestion de quêtes' in goal
+ assert request['payload']['acceptance']==['feature.py works']
+ print(json.dumps({'protocol':1,'action':'plan_patch','status':'ok',
+ 'plan':{'files':[{'path':'intent.txt','content':goal}],
+         'commit_message':'feat: preserve project objective'}}))
+''')
+        runner=LocalProcessAgent(AgentProgram(Path(sys.executable).resolve(),
+              (str(self.agent_path),), timeout_seconds=3))
+        worker=LocalCodeWorker(self.actor, runner, health_directory=self.root)
+        worker(Mission('job',REPO))
+        self.assertIn('gestion de quêtes',
+                      (self.root/'trees'/'job'/'intent.txt').read_text())
+
+    def test_corrupt_stored_project_goal_blocks_before_model(self):
+        row=self.store.db.execute(
+            "SELECT spec_json FROM mission_specs WHERE id='job'").fetchone()
+        spec=json.loads(row[0])
+        spec['project_goal']='X'*5000
+        with self.store._transaction():
+            self.store.db.execute("UPDATE mission_specs SET spec_json=? WHERE id='job'",
+                                  (json.dumps(spec),))
+        worker=self.worker(self.plan())
+        from unittest.mock import patch
+        with patch.object(worker.agent,'request',
+                          side_effect=AssertionError('model launched')) as run:
+            with self.assertRaisesRegex(CodePlanError,'Invalid stored project direction'):
+                worker(Mission('job',REPO))
+            run.assert_not_called()
+        self.assertFalse((self.root/'trees'/'job').exists())
 
     def test_missing_roadmap_spec_refuses_to_start_work(self):
         with self.store._transaction():

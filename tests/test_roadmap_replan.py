@@ -75,6 +75,33 @@ class RoadmapReplanTests(unittest.TestCase):
             finally:
                 db.close()
 
+    def test_incremental_direction_inherits_global_project_goal(self):
+        goal='Développer une plateforme durable de recherche et de conception.'
+        first=json.dumps({'repo':REPO,'project_goal':goal,'missions':[A,B]})
+        self.assertEqual(self.replan.apply(first, source='user-goal').revised, ('a','b'))
+        delta=self.replan.append_direction(document(C),source='new-mission')
+        self.assertEqual(delta.added,('c',))
+        specs=[json.loads(row[0]) for row in self.store.db.execute(
+            'SELECT spec_json FROM mission_specs ORDER BY id')]
+        self.assertEqual([item['project_goal'] for item in specs],[goal]*3)
+
+    def test_project_goal_cannot_be_rewritten_after_mission_starts(self):
+        goal='Construire un outil de recherche.'
+        first=json.dumps({'repo':REPO,'project_goal':goal,'missions':[A,B]})
+        self.replan.apply(first,source='first-goal')
+        self.assertEqual(self.store.claim_next(online=False).mission_id,'a')
+        changed=json.dumps({'repo':REPO,'project_goal':'Autre projet',
+                            'missions':[A,B]})
+        with self.assertRaisesRegex(StoreError,'ALREADY_STARTED'):
+            self.replan.apply(changed,source='changed-goal')
+        with self.assertRaisesRegex(StoreError,'requires full roadmap replan'):
+            self.replan.append_direction(
+                json.dumps({'repo':REPO,'project_goal':'Autre projet',
+                            'missions':[C]}),source='unsafe-delta')
+        spec=json.loads(self.store.db.execute(
+            "SELECT spec_json FROM mission_specs WHERE id='a'").fetchone()[0])
+        self.assertEqual(spec['project_goal'],goal)
+
     def test_incremental_preview_never_mutates_queue(self):
         before = self.store.events()
         preview = self.replan.preview_direction(document(C))
