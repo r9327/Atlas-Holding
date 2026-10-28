@@ -78,7 +78,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - name: Upload bounded test evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4.6.2
         with:
           name: holding-unittest-${{ matrix.os }}-${{ github.run_id }}
           path: ${{ runner.temp }}/holding-unittest.log
