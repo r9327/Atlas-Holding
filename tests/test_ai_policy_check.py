@@ -52,6 +52,25 @@ class AiPolicyCheckTests(unittest.TestCase):
         (self.root / "CLAUDE.md").write_text("# unrelated\n", encoding="utf-8")
         self.assertIn("missing agent entrypoint pointer: CLAUDE.md", verify(self.root))
 
+    def test_certification_aggregator_drift_blocks(self) -> None:
+        path = self.root / ".github/workflows/holding-pr-certification.yml"
+        workflow = path.read_text(encoding="utf-8")
+        path.write_text(workflow.replace(
+            "Holding Certification / Required", "Optional summary"),
+            encoding="utf-8")
+        self.assertIn(
+            "certification workflow missing: Holding Certification / Required",
+            verify(self.root),
+        )
+
+    def test_certification_requires_both_platforms(self) -> None:
+        path = self.root / ".github/workflows/holding-pr-certification.yml"
+        workflow = path.read_text(encoding="utf-8")
+        path.write_text(workflow.replace("windows-latest", "ubuntu-latest"),
+                        encoding="utf-8")
+        self.assertIn("certification workflow missing: windows-latest",
+                      verify(self.root))
+
 
 if __name__ == "__main__":
     unittest.main()

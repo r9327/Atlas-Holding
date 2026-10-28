@@ -5,7 +5,7 @@ Processus: branche isolée, PR Draft, développement et tests ciblés, revue de 
 ## Niveaux distincts
 
 - LOCAL_VERIFIED : commandes réellement exécutées, SHA, environnement, portée et résultats archivables. Un test non exécuté est UNKNOWN et un test bloqué est BLOCKED.
-- PR_CI_VERIFIED : réussite de tous les jobs requis au SHA exact. holding-pr-certification.yml couvre les règles IA et les tests Python Linux/Windows. architecture-regression.yml couvre les régressions architecturales statiques. Un job skipped ne vaut pas PASS.
+- PR_CI_VERIFIED : réussite de `Holding Certification / Required` au SHA exact. Le workflow `holding-pr-certification.yml` agrège la politique IA, la suite Python Linux/Windows et le garde architectural. Un job skipped ne vaut pas PASS.
 - NATIVE_WINDOWS_VERIFIED : véritables essais Windows nécessaires au lot, installation, UI, Ollama, sécurité, reprise réseau, ressources et crash avec mesures et logs.
 - RELEASE_CERTIFIED : toutes les conditions pertinentes de docs/QUALITY_RELEASE_GATES.md et docs/WINDOWS_LIVE_ACCEPTANCE.md sont prouvées sur le candidat exact, avec approbations requises. Une PR verte ne suffit pas.
 
@@ -19,4 +19,4 @@ Le garde architecture actuel est tools/architecture_guard.py. Atlas Doctor, AI C
 
 Conserver SHA base/candidat, fichiers, risque, tests et logs réellement observés, contrôles non exécutés, vérification de chaque commit, revue de l'intégration et risques résiduels. Utiliser REVIEW OK, IMPROVEMENTS ADVISED ou CHANGES REQUIRED uniquement pour la logique, jamais pour signaler une certification.
 
-Les paramètres GitHub de protection de branche et les checks requis sont externes à cette PR et doivent être configurés/vérifiés séparément. Un fichier workflow ne rend pas un check obligatoire.
+Les paramètres GitHub de protection de branche et les checks requis sont externes au dépôt. La protection de `main` doit exiger `Holding Certification / Required`; un fichier workflow seul ne rend pas ce check obligatoire. L'agrégateur ne certifie ni l'installateur natif, ni une release, ni une preuve privilégiée.

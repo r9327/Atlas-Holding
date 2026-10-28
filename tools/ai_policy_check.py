@@ -11,6 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 REQUIRED = (
     "AGENTS.md", "AI_ENTRYPOINT.md", "ZERO_TRUST_RULES.md", "CLAUDE.md",
     ".github/copilot-instructions.md", ".ai/README.md", ".ai/task_profiles.json",
+    ".github/pull_request_template.md",
+    ".github/workflows/holding-pr-certification.yml",
     "docs/HOLDING_CERTIFICATION.md", "docs/TOOLCHAIN.md", "docs/LOCAL_MCP.md",
     "config/tool_registry.json",
     ".agents/skills/evidence-driven-validation/SKILL.md",
@@ -84,6 +86,18 @@ def verify(root: Path = ROOT) -> list[str]:
     for name in ("AGENTS.md", "CLAUDE.md", ".github/copilot-instructions.md"):
         if "AI_ENTRYPOINT.md" not in (root / name).read_text(encoding="utf-8"):
             errors.append(f"missing agent entrypoint pointer: {name}")
+
+    workflow = (root / ".github/workflows/holding-pr-certification.yml").read_text(
+        encoding="utf-8")
+    for fragment in (
+        "ready_for_review", "synchronize", "ci:validate",
+        "github.event.pull_request.head.sha", "fetch-depth: 0",
+        "ubuntu-latest", "windows-latest", "test_*.py",
+        "tools.architecture_guard", "Holding Certification / Required",
+        "needs.ai-policy.result", "needs.cross-platform-tests.result",
+    ):
+        if fragment not in workflow:
+            errors.append(f"certification workflow missing: {fragment}")
     return errors
 
 

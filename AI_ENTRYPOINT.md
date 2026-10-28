@@ -17,6 +17,12 @@ Ce document est l'entrée canonique pour les contributions IA au dépôt **Atlas
 
 Voir docs/HOLDING_CERTIFICATION.md. Une validation locale ne vaut pas un succès CI, un succès CI ne prouve pas une exécution Windows réelle, et aucune de ces preuves ne vaut automatiquement certification release. Skipped, BLOCKED et tests non exécutés ne sont jamais PASS.
 
+États de preuve : `CODE_DONE` signifie que le patch et sa revue sont terminés ;
+`VALIDATED` qu'une vérification délimitée a réellement réussi au SHA indiqué ;
+`CERTIFIED` que toute la chaîne exigée par le périmètre a réussi au même SHA.
+`NOT_RUN`, `SKIPPED`, `BLOCKED` ou un résultat d'un autre SHA ne sont jamais
+des synonymes de `CERTIFIED`.
+
 ## Audit borné des règles
 
 Toute modification des instructions d'agents, profils, skills, plugins, registre, CI ou garde-fous doit examiner les consommateurs directs, commandes existantes, permissions, statut d'implémentation et conflits. Garder une autorité canonique et des pointeurs dans les entrées fournisseur.
