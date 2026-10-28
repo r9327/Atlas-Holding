@@ -110,6 +110,7 @@ class ChatView:
     queued_tasks: int = 0
     deferred_tasks: int = 0
     simulated_tasks: int = 0
+    simulation_results: tuple[str, ...] = ()
 
 
 class ProjectChatCoordinator:
@@ -178,6 +179,11 @@ class ProjectChatCoordinator:
             len(plan.queued) if plan else 0,
             len(plan.deferred) - len(simulations) if plan else 0,
             len(simulations),
+            tuple(
+                f"{item.model}: résultat {item.final} ; preuve de calcul "
+                f"{item.result_sha256[:12]}…"
+                for item in simulations
+            ),
         )
 
     def latest(self) -> ChatView | None:

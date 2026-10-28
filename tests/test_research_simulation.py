@@ -86,6 +86,9 @@ class NumericalSimulationTests(unittest.TestCase):
         self.assertEqual(view.queued_tasks, 0)
         self.assertEqual(view.simulated_tasks, 2)
         self.assertEqual(view.deferred_tasks, 2)
+        self.assertEqual(len(view.simulation_results), 2)
+        self.assertIn("résultat 22", view.simulation_results[0])
+        self.assertIn("résultat 640", view.simulation_results[1])
         self.assertEqual(len(self.store.missions()), 1)
         self.assertEqual(self.store.db.execute(
             "SELECT COUNT(*) FROM grants").fetchone()[0], 0)

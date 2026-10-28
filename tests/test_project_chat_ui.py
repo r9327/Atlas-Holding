@@ -95,12 +95,15 @@ class ProjectChatUiTests(unittest.TestCase):
     def test_completed_local_simulations_shown_as_computed_not_proven(self):
         done = ChatView(SID, REPO, "Concevoir un modèle", (), (), "READY", None,
                         "chat-" + SID[:24], "1" * 64,
-                        "Concept de simulation", "STAGED", 0, 1, 2)
+                        "Concept de simulation", "STAGED", 0, 1, 2,
+                        ("linear_discrete: résultat 22 ; preuve de calcul abc…",))
         with patch.object(ProjectChatWindow, "_call", return_value=done):
             window = ProjectChatWindow(
                 database=self.database, repository=REPO, model_config=self.config)
             self.flush(window)
         self.assertIn("2 simulations numériques calculées",
+                      window.history.toPlainText())
+        self.assertIn("linear_discrete: résultat 22",
                       window.history.toPlainText())
         self.assertIn("1 tâches hors code différées",
                       window.history.toPlainText())
