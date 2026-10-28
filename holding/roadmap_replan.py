@@ -31,6 +31,17 @@ class ReplanResult:
     applied: bool
 
 
+@dataclass(frozen=True)
+class MissionSpecRevision:
+    mission_id: str
+    repository: str
+    version: int
+    replaced_by_version: int
+    spec_sha256: str
+    specification: dict
+    archived_epoch: int
+
+
 class SafeRoadmapReplanner:
     def __init__(self, store: StateStore):
         # Preview is genuinely read-only: no auto-migration, DDL, or events.
@@ -141,11 +152,51 @@ class SafeRoadmapReplanner:
         doc, jobs, specs, digest = self._parse(raw)
         return self._classify(doc, jobs, specs, digest)
 
+    def history(self, mission_id: str, *, limit: int = 20,
+                before_version: int | None = None) -> tuple[MissionSpecRevision, ...]:
+        """Read verified prior contracts, newest first; never install a schema."""
+        if (not isinstance(mission_id, str) or not mission_id.strip()
+                or len(mission_id) > 80 or type(limit) is not int or not 1 <= limit <= 100
+                or (before_version is not None
+                    and (type(before_version) is not int or before_version < 1))):
+            raise StoreError("Invalid mission history request")
+        mission = self.store.db.execute(
+            "SELECT repo FROM missions WHERE id=?", (mission_id,)).fetchone()
+        if mission is None:
+            raise StoreError("Unknown mission for history")
+        if not self.store.db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='mission_spec_history'").fetchone():
+            return ()
+        query = "SELECT * FROM mission_spec_history WHERE mission_id=?"
+        args: list = [mission_id]
+        if before_version is not None:
+            query += " AND version<?"
+            args.append(before_version)
+        query += " ORDER BY version DESC LIMIT ?"
+        args.append(limit)
+        revisions = []
+        for row in self.store.db.execute(query, args):
+            try:
+                digest = hashlib.sha256(row["spec_json"].encode("utf-8")).hexdigest()
+                spec = json.loads(row["spec_json"])
+                if (digest != row["spec_sha256"] or not isinstance(spec, dict)
+                        or spec.get("id") != mission_id
+                        or row["version"] >= row["replaced_by_version"]):
+                    raise ValueError("Archived contract provenance mismatch")
+            except (ValueError, TypeError, UnicodeError) as exc:
+                raise StoreError("Corrupt archived mission specification") from exc
+            revisions.append(MissionSpecRevision(
+                mission_id, mission["repo"], row["version"], row["replaced_by_version"],
+                digest, spec, row["archived_epoch"]))
+        return tuple(revisions)
+
     def _expand_direction(self, raw: str) -> tuple[str, str]:
         """Merge explicit incremental requirements with all stored prior work."""
         self._require_existing_roadmap()
         doc, _jobs, specifications, delta_digest = self._parse(raw, incremental=True)
         merged: dict[str, dict] = {}
+        stored_goals: set[str] = set()
         for row in self.store.db.execute(
                 "SELECT s.id,s.spec_json FROM mission_specs s "
                 "JOIN missions m ON m.id=s.id WHERE m.repo=? ORDER BY m.id",
@@ -156,11 +207,28 @@ class SafeRoadmapReplanner:
                 raise StoreError("Corrupt existing roadmap during delta import") from exc
             if not isinstance(item, dict) or item.get("id") != row["id"]:
                 raise StoreError("Existing roadmap identity mismatch")
+            # Specs hold an immutable copy of the direction, but task fields
+            # cannot impersonate a top-level project goal on re-import.
+            old_goal = item.pop("project_goal", None)
+            if old_goal is not None:
+                stored_goals.add(old_goal)
             merged[row["id"]] = item
+        if len(stored_goals) > 1:
+            raise StoreError("Conflicting stored project goals require full replan")
+        old_goal = next(iter(stored_goals), None)
+        new_goal = doc.get("project_goal")
+        if old_goal is not None and new_goal is not None and old_goal != new_goal:
+            raise StoreError("Project goal change requires full roadmap replan")
         for mid, encoded in specifications.items():
-            merged[mid] = json.loads(encoded)
-        expanded = json.dumps({"repo": doc["repo"], "missions": list(merged.values())},
-                              ensure_ascii=False, separators=(",", ":"))
+            mission = json.loads(encoded)
+            mission.pop("project_goal", None)
+            merged[mid] = mission
+        expanded_doc = {"repo": doc["repo"], "missions": list(merged.values())}
+        effective_goal = new_goal if new_goal is not None else old_goal
+        if effective_goal is not None:
+            expanded_doc["project_goal"] = effective_goal
+        expanded = json.dumps(expanded_doc, ensure_ascii=False,
+                              separators=(",", ":"))
         if len(expanded.encode("utf-8")) > MAX_ROADMAP_BYTES:
             raise StoreError("Expanded roadmap exceeds 2 MiB")
         return expanded, delta_digest
@@ -214,6 +282,18 @@ class SafeRoadmapReplanner:
                 self.store._event(mid, "MISSION_IMPORTED", f"replan:{version}")
             for mid in plan.revised:
                 job = by_id[mid]
+                prior_spec = self.store.db.execute(
+                    "SELECT spec_json,version FROM mission_specs WHERE id=?", (mid,)
+                ).fetchone()
+                if prior_spec is None:
+                    raise StoreError("Missing mission contract during replan")
+                self.store.db.execute(
+                    "INSERT INTO mission_spec_history "
+                    "(mission_id,version,replaced_by_version,spec_sha256,spec_json,archived_epoch) "
+                    "VALUES(?,?,?,?,?,?)",
+                    (mid, prior_spec["version"], version,
+                     hashlib.sha256(prior_spec["spec_json"].encode("utf-8")).hexdigest(),
+                     prior_spec["spec_json"], now))
                 updated = self.store.db.execute("""UPDATE missions SET
                     dependencies=?, priority=?, external_required=?,
                     product_decision_required=?,updated_at=?

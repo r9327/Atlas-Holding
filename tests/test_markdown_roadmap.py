@@ -1,6 +1,7 @@
 """Markdown roadmap is strict, versioned, atomic and not a permission source."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -48,6 +49,31 @@ class MarkdownRoadmapTests(unittest.TestCase):
         again = importer.import_text(EXAMPLE, source="roadmap-v3.md")
         self.assertEqual(again.version, first.version)
         self.assertEqual(again.added, ())
+
+    def test_markdown_goal_is_preserved_as_immutable_mission_context(self):
+        goal='Concevoir une interface simple et utile, sans changer la sécurité.'
+        text=EXAMPLE.replace('Repository: r9327/Dof-Atlas',
+                             'Repository: r9327/Dof-Atlas\\nObjectif: '+goal)
+        # Use a real newline in the roadmap header.
+        text=text.replace('\\nObjectif:', '\nObjectif:')
+        result=parse_markdown_roadmap(text)
+        self.assertEqual(result['project_goal'],goal)
+        RoadmapImporter(self.store).import_text(text,source='goal-roadmap')
+        specs=[row[0] for row in self.store.db.execute(
+            'SELECT spec_json FROM mission_specs ORDER BY id')]
+        self.assertEqual(len(specs),2)
+        self.assertTrue(all(json.loads(item)['project_goal']==goal for item in specs))
+
+    def test_markdown_rejects_late_or_duplicate_goal(self):
+        for text in (
+            EXAMPLE.replace('## architecture','Objectif: premier\\nObjectif: second\\n## architecture'),
+            EXAMPLE.replace('## interface','Objectif: tardif\\n## interface'),
+            EXAMPLE.replace('## architecture','Objectif: '+'X'*4097+'\\n## architecture'),
+        ):
+            text=text.replace('\\n','\n')
+            with self.subTest(text=text[:80]),self.assertRaises(StoreError):
+                RoadmapImporter(self.store).import_text(text,source='invalid-goal')
+            self.assertFalse(self.store.missions())
 
     def test_fenced_json_roadmaps_still_supported(self):
         text = ('```json\n'

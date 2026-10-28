@@ -19,6 +19,7 @@ from .schema import ROADMAP_SCHEMA, apply_schema
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 MAX_ROADMAP_BYTES = 2 * 1024 * 1024
+MAX_PROJECT_GOAL_BYTES = 4096
 
 
 @dataclass(frozen=True)
@@ -45,8 +46,14 @@ def _document(raw: str) -> dict[str, Any]:
         except (ValueError, TypeError) as exc:
             raise StoreError('Roadmap must contain valid JSON, a fenced JSON block, '
                              'or explicit Markdown tasks') from exc
-    if not isinstance(doc, dict) or set(doc) != {'repo', 'missions'}:
-        raise StoreError('Roadmap requires exactly repo and missions')
+    if (not isinstance(doc, dict) or not {'repo', 'missions'} <= set(doc)
+            or set(doc) - {'repo', 'missions', 'project_goal'}):
+        raise StoreError('Roadmap requires repo, missions and optional project_goal')
+    if 'project_goal' in doc:
+        goal = doc['project_goal']
+        if (not isinstance(goal, str) or not goal.strip()
+                or len(goal.encode('utf-8')) > MAX_PROJECT_GOAL_BYTES):
+            raise StoreError('Project goal must be nonblank UTF-8 text up to 4096 bytes')
     if (not isinstance(doc['repo'], str) or not _REPO.fullmatch(doc['repo']) or
         any(part in ('.', '..') for part in doc['repo'].split('/'))):
         raise StoreError('Invalid exact repository name')
@@ -84,6 +91,10 @@ def _parse_missions(doc: dict[str, Any], *,
             raise StoreError('Invalid flags')
         normalized = dict(item, depends_on=deps, priority=priority,
                           external_required=flags[0], product_decision_required=flags[1])
+        # Persist the user-provided project direction with each immutable
+        # mission contract. No schema migration or mutable prompt file needed.
+        if 'project_goal' in doc:
+            normalized['project_goal'] = doc['project_goal']
         specifications[mid] = json.dumps(normalized, sort_keys=True, ensure_ascii=False, separators=(',', ':'))
         jobs.append(Mission(mid, doc['repo'], operation=op, dependencies=tuple(deps),
                             priority=priority, external_required=flags[0],

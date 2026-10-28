@@ -109,8 +109,8 @@ class LocalCodeWorker:
             raise CodePlanError('Patch exceeds total size limit')
         return result
 
-    def _acceptance(self, mission: Mission) -> tuple[str, ...]:
-        """Never ask an LLM to code without the original roadmap requirements."""
+    def _mission_context(self, mission: Mission) -> tuple[tuple[str, ...], str | None]:
+        """Recover exact persisted acceptance and global user project direction."""
         table = self.git.store.db.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='mission_specs'"
         ).fetchone()
@@ -125,17 +125,23 @@ class LocalCodeWorker:
             spec = json.loads(row['spec_json'])
         except (ValueError, TypeError) as exc:
             raise CodePlanError('Damaged roadmap mission specification') from exc
+        if not isinstance(spec, dict):
+            raise CodePlanError('Invalid roadmap mission specification')
         criteria = spec.get('acceptance')
         if (spec.get('id') != mission.id or spec.get('operation') != mission.operation or
                 not isinstance(criteria, list) or not criteria or
                 any(not isinstance(item, str) or not item.strip() for item in criteria)):
             raise CodePlanError('Mission and roadmap specification disagree')
-        return tuple(criteria)
+        goal = spec.get('project_goal')
+        if goal is not None and (not isinstance(goal, str) or not goal.strip()
+                                 or len(goal.encode('utf-8')) > 4096):
+            raise CodePlanError('Invalid stored project direction')
+        return tuple(criteria), goal
 
     def __call__(self, mission: Mission) -> str:
         if mission.operation != 'code':
             raise CodePlanError('This worker handles only code missions')
-        criteria = self._acceptance(mission)
+        criteria, project_goal = self._mission_context(mission)
         # Verify BOTH standing grants before spending CPU/VRAM on generation or
         # creating a worktree. A 'code'-only grant is never commit permission.
         self.git._require(mission.id, 'code', 'commit')
@@ -149,6 +155,8 @@ class LocalCodeWorker:
                    'branch': worktree.branch, 'base_sha': worktree.base_sha,
                    'dependencies': list(mission.dependencies),
                    'acceptance': list(criteria)}
+        if project_goal is not None:
+            request['project_goal'] = project_goal
         # A failing independent QA SHA gives the coding agent explicit
         # correction context without passing it credentials, signatures,
         # arbitrary test commands, or a self-certification privilege.

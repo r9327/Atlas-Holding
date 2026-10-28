@@ -31,6 +31,8 @@ class ProjectPlanBinding:
     lot_ids: tuple[str, ...]
     initially_ready_lots: tuple[str, ...]
     status: str = "PREFLIGHT_ONLY"
+    importable_lots: tuple[str, ...] = ()
+    deferred_lots: tuple[str, ...] = ()
 
 
 def bind_selected_project_plan(
@@ -80,4 +82,6 @@ def bind_selected_project_plan(
         source_digest=plan.source_digest,
         lot_ids=tuple(lot.lot_id for lot in plan.lots),
         initially_ready_lots=plan.initially_ready_lots(),
+        importable_lots=plan.importable_lot_ids(),
+        deferred_lots=plan.deferred_lot_ids(),
     )

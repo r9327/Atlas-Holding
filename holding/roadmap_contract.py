@@ -47,9 +47,37 @@ class RoadmapPlan:
     source_digest: str
     requirements: tuple[Requirement, ...]
     lots: tuple[Lot, ...]
+    project_goal: str | None = None
 
     def initially_ready_lots(self) -> tuple[str, ...]:
         return tuple(lot.lot_id for lot in self.lots if lot.state == "READY")
+
+    def importable_lot_ids(self) -> tuple[str, ...]:
+        """Admit only eligible lots whose complete dependency chain is eligible.
+
+        This is planner preflight, NOT an execution grant. Every deferred lot
+        remains part of the complete, exact-SHA validated plan.
+        """
+        eligible = {
+            lot.lot_id for lot in self.lots
+            if lot.autonomy in {"AUTO", "AUTO_WITH_STANDING_GRANT"}
+            and lot.state not in {"BLOCKED", "REQUIRES_DECISION"}
+        }
+        while True:
+            closed = {
+                lot.lot_id for lot in self.lots
+                if lot.lot_id in eligible
+                and all(dep in eligible for dep in lot.dependencies)
+            }
+            if closed == eligible:
+                break
+            eligible = closed
+        return tuple(lot.lot_id for lot in self.lots if lot.lot_id in eligible)
+
+    def deferred_lot_ids(self) -> tuple[str, ...]:
+        """The complete plan's non-importable lots, including dependents."""
+        importable = set(self.importable_lot_ids())
+        return tuple(lot.lot_id for lot in self.lots if lot.lot_id not in importable)
 
 
 def _exact(value: Any, keys: set[str], label: str) -> dict[str, Any]:
@@ -85,10 +113,19 @@ def validate_roadmap_plan(
         payload = json.loads(raw)
     except (UnicodeError, ValueError) as exc:
         raise RoadmapContractError("Roadmap plan is not valid JSON") from exc
-    data = _exact(payload, {
+    mandatory = {
         "schema_version", "repository", "snapshot_sha", "source_uri",
         "source_digest", "requirements", "lots",
-    }, "roadmap plan")
+    }
+    if (not isinstance(payload, dict) or not mandatory <= set(payload)
+            or set(payload) - mandatory - {"project_goal"}):
+        raise RoadmapContractError("Unexpected roadmap plan shape")
+    data = payload
+    goal = data.get("project_goal")
+    if "project_goal" in data and (not isinstance(goal, str)
+                                   or not goal.strip()
+                                   or len(goal.encode("utf-8")) > 4096):
+        raise RoadmapContractError("Invalid bounded project goal")
     if type(data["schema_version"]) is not int or data["schema_version"] != 1:
         raise RoadmapContractError("Unsupported roadmap plan schema")
     if (data["repository"] != expected_repository
@@ -182,5 +219,5 @@ def validate_roadmap_plan(
 
     return RoadmapPlan(
         expected_repository, expected_snapshot_sha, expected_source_digest,
-        tuple(requirements), tuple(lots),
+        tuple(requirements), tuple(lots), goal,
     )

@@ -106,6 +106,28 @@ class OllamaTests(unittest.TestCase):
         self.assertEqual(context['requirements'], ['Add the answer field'])
         self.assertIn('src/existing.py', [x['path'] for x in context['source_files']])
 
+    def test_project_goal_reaches_model_as_data_not_system_authority(self):
+        payload=self.payload()
+        payload['project_goal']='Construire une interface accessible pour les débutants.'
+        op.dispatch(CONFIG, {'protocol':1,'action':'plan_patch','payload':payload},
+                    self.root)
+        prompt=Stub.recorded[-1]['messages']
+        self.assertIn('project goal', prompt[0]['content'])
+        user=json.loads(prompt[1]['content'])
+        self.assertEqual(user['project_goal'], payload['project_goal'])
+        self.assertEqual(user['requirements'], payload['acceptance'])
+        self.assertNotIn(payload['project_goal'], prompt[0]['content'])
+
+    def test_project_goal_must_be_bounded_before_inference(self):
+        for goal in ('', ' '*20, 'X'*4097, 33, ['override']):
+            with self.subTest(goal=str(goal)[:25]):
+                payload=self.payload()
+                payload['project_goal']=goal
+                with self.assertRaisesRegex(op.AdapterError,'Invalid project direction'):
+                    op.dispatch(CONFIG, {'protocol':1,'action':'plan_patch',
+                                         'payload':payload}, self.root)
+                self.assertEqual(Stub.recorded, [])
+
     def test_context_prioritizes_relevant_source_outside_first_40_files(self):
         filler = self.root / 'aaa'
         filler.mkdir()
