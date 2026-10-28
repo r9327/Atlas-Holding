@@ -304,6 +304,12 @@ class MeasurementComparisonService:
                 # Verify the cached record against its original simulation.
                 self.inspect(session_id, task_index=task_index)
                 return self._receipt(previous, cached=True)
+            if self.store.db.execute(
+                    "SELECT COUNT(*) FROM research_measurement_comparisons "
+                    "WHERE session_id=? AND task_index=?",
+                    (session_id, task_index)).fetchone()[0] >= 16:
+                raise MeasurementComparisonError(
+                    "Maximum 16 measurement sets per circuit")
             when = int(time.time())
             self.store.db.execute(
                 "INSERT INTO research_measurement_comparisons "

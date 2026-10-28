@@ -7,6 +7,7 @@ event handlers. The operator owns the repo/model selection outside chat text.
 from __future__ import annotations
 
 import argparse
+import json
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Literal
@@ -14,7 +15,7 @@ from typing import Literal
 from PySide6.QtCore import QTimer, Slot
 from PySide6.QtWidgets import (
     QApplication, QLabel, QLineEdit, QMainWindow, QPushButton,
-    QTextEdit, QVBoxLayout, QHBoxLayout, QWidget,
+    QTextEdit, QVBoxLayout, QHBoxLayout, QWidget, QFileDialog, QComboBox,
 )
 
 from .project_chat import ChatView, ProjectChatCoordinator, ProjectChatError
@@ -71,6 +72,16 @@ class ProjectChatWindow(QMainWindow):
         row.addWidget(self.entry)
         row.addWidget(self.send)
         col.addLayout(row)
+        measurements = QHBoxLayout()
+        self.circuit_selector = QComboBox()
+        self.circuit_selector.setObjectName("circuitTaskSelector")
+        self.compare_button = QPushButton("Importer mesures CSV")
+        self.compare_button.setObjectName("importMeasurementsCsv")
+        self.compare_button.setEnabled(False)
+        self.compare_button.clicked.connect(self.import_measurements)
+        measurements.addWidget(self.circuit_selector)
+        measurements.addWidget(self.compare_button)
+        col.addLayout(measurements)
         self.disclaimer = QLabel(
             "Dossier R&D proposé, non vérifié. Aucune fabrication, "
             "expérience ou permission Git n'est déclenchée par ce chat.")
@@ -84,7 +95,7 @@ class ProjectChatWindow(QMainWindow):
         self._poll.start()
         self._schedule("latest", None)
 
-    def _call(self, action: Literal["latest", "start", "answer", "resume"],
+    def _call(self, action: Literal["latest", "start", "answer", "resume", "measure"],
               value: str | None) -> ChatView | None:
         with StateStore(self.database) as store:
             coordinator = ProjectChatCoordinator(
@@ -103,6 +114,16 @@ class ProjectChatWindow(QMainWindow):
                 if self._current is None:
                     raise ProjectChatError("No project to resume")
                 return coordinator.resume(self._current.session_id)
+            if action == "measure":
+                if self._current is None or self._current.status != "READY":
+                    raise ProjectChatError("A completed RC project is required")
+                details = json.loads(value or "{}")
+                from .research_measurement import MeasurementComparisonService
+                MeasurementComparisonService(
+                    store, repository=self.repository).import_file(
+                    self._current.session_id, details["task_index"],
+                    Path(details["file_path"]))
+                return coordinator.view(self._current.session_id)
             raise ProjectChatError("Unknown chat action")
 
     def _schedule(self, action: str, value: str | None) -> None:
@@ -111,6 +132,7 @@ class ProjectChatWindow(QMainWindow):
         self._busy = True
         self.send.setEnabled(False)
         self.entry.setEnabled(False)
+        self.compare_button.setEnabled(False)
         self.status.setText("La Holding prépare la prochaine étape R&D…")
         self._future = self._executor.submit(self._call, action, value)
 
@@ -126,6 +148,22 @@ class ProjectChatWindow(QMainWindow):
         self._schedule(
             "answer" if self._current and self._current.status == "ASKING"
             else "start", text)
+
+    @Slot()
+    def import_measurements(self) -> None:
+        if (self._closing or self._busy or not self._current
+                or self._current.status != "READY"):
+            return
+        index = self.circuit_selector.currentData()
+        if type(index) is not int:
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Importer des mesures de tension", "", "Fichiers CSV (*.csv)")
+        if not path:
+            return
+        self._schedule("measure", json.dumps({
+            "task_index": index, "file_path": path,
+        }))
 
     @Slot()
     def _poll_result(self) -> None:
@@ -148,9 +186,16 @@ class ProjectChatWindow(QMainWindow):
         can_send = self._current is None or self._current.status == "ASKING"
         self.send.setEnabled(can_send)
         self.entry.setEnabled(can_send)
+        self.compare_button.setEnabled(
+            self._current is not None and self._current.status == "READY"
+            and bool(self._current.circuit_task_indices))
 
     def _render(self) -> None:
         view = self._current
+        self.circuit_selector.clear()
+        if view is not None:
+            for idx in view.circuit_task_indices:
+                self.circuit_selector.addItem(f"Circuit tâche {idx + 1}", idx)
         if view is None:
             self.history.setPlainText("")
             self.status.setText("Décris ton projet pour commencer.")
@@ -183,6 +228,8 @@ class ProjectChatWindow(QMainWindow):
                 lines.append("Calcul hypothétique : " + result)
             for result in view.circuit_results:
                 lines.append("Circuit électrique simulé (hypothèses) : " + result)
+            for result in view.comparison_results:
+                lines.append("Comparaison simulation / mesures fournies : " + result)
             self.status.setText(
                 "Étude R&D enregistrée. " + work +
                 " Exécution selon les autorisations du moteur.")
