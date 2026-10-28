@@ -1,0 +1,101 @@
+name: Holding Certification
+
+on:
+  pull_request:
+    branches: [main]
+    types: [ready_for_review, synchronize, reopened]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: holding-cert-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  full-suite:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    name: Full suite / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+      QT_QPA_PLATFORM: offscreen
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONUTF8: '1'
+    steps:
+      - name: Checkout exact candidate without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Python 3.13
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - name: Verify exact candidate SHA
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Install Qt runtime library on Linux
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libegl1
+      - name: Install pinned UI test dependency
+        run: python -m pip install --disable-pip-version-check PySide6==6.12.0
+      - name: Check Python syntax and declarative tool registry
+        shell: bash
+        run: |
+          python -B -X utf8 - <<'PY'
+          import ast
+          from pathlib import Path
+          from holding.tool_registry import validate_tool_registry
+          for folder in ("holding", "tests", "tools"):
+              for path in Path(folder).rglob("*.py"):
+                  ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+          validate_tool_registry(Path("config/tool_registry.json").read_bytes())
+          PY
+      - name: Run the complete Holding unittest collection
+        shell: bash
+        run: |
+          set -o pipefail
+          python -B -X utf8 -m unittest discover -s tests -p 'test_*.py' -v 2>&1 | tee "$RUNNER_TEMP/holding-unittest.log"
+      - name: Reject new static architecture debt
+        shell: bash
+        run: python -B -X utf8 -m tools.architecture_guard --base-ref "$BASE_SHA"
+      - name: Require clean checkout and unchanged candidate
+        shell: bash
+        run: |
+          test -z "$(git status --porcelain --untracked-files=normal)"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Upload bounded test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: holding-unittest-${{ matrix.os }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/holding-unittest.log
+          if-no-files-found: warn
+          retention-days: 30
+
+  required:
+    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    name: Holding Certification / Required
+    needs: [full-suite]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require both full-suite matrix jobs successful
+        shell: bash
+        env:
+          MATRIX_RESULT: ${{ needs.full-suite.result }}
+        run: |
+          test "$MATRIX_RESULT" = "success"
+          echo "Both platform suites passed. This does not certify native Windows release acceptance."

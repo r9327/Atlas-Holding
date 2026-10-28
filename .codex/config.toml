@@ -1,0 +1,5 @@
+# Documentation Context7 optionnelle dans un workspace de confiance.
+# Réseau/quotas et confidentialité régis par AGENTS.md et docs/TOOLCHAIN.md.
+# Aucun secret ni installation dynamique n'est déclaré ici.
+[mcp_servers.context7]
+url = "https://mcp.context7.com/mcp"

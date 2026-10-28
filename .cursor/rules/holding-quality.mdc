@@ -1,0 +1,6 @@
+---
+description: Atlas Holding agent safety and validation
+alwaysApply: true
+---
+
+Lire `AI_ENTRYPOINT.md`, `AGENTS.md`, `ZERO_TRUST_RULES.md` et `PHASE_CERTIFICATION.md` avant de modifier Holding. Réutiliser `holding.tool_registry`, `holding.mcp_policy` et le contrôle architectural existants. Ne pas contourner les permissions ni inférer FULL d'un contrôle local. Les règles du dépôt cible priment pour ses missions.

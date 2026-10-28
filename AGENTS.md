@@ -45,3 +45,9 @@ Le contrat `docs/USER_AUTONOMY_PROFILE.md` est obligatoire : l'utilisateur fourn
 ## Anti-complexite et gate architectural
 
 Avant toute nouvelle responsabilite, verifier l'owner canonique dans le code existant : pas de moteur parallele, pas de cache jumeau ni de copie de fonction substantielle. Toute modification structurelle non triviale doit avoir des consommateurs verifies et des tests de comportement. Le controle leger `tools/architecture_guard.py` compare le SHA de la PR a sa base et bloque uniquement les nouveaux cycles statiques, duplications substantielles, contournements des droits UI et variantes de modules clairement parallelises. Voir `docs/ARCHITECTURE_REGRESSION_GATE.md`. Les dependances dynamiques, l'interface Windows et la RAM restent du ressort de Doctor/Graphify et des essais reellement executes. Les nouvelles PR ne peuvent pas s'autocertifier. Ne pas lancer de FULL a chaque commit ; faire la certification finale apres stabilisation.
+
+## Contrat de contribution à Holding (ce dépôt)
+
+Pour modifier les sources, instructions, outils, plugins, tests ou workflows de **Holding**, commencer par `AI_ENTRYPOINT.md`, suivre `ZERO_TRUST_RULES.md` et la preuve exacte décrite dans `PHASE_CERTIFICATION.md`. Le `README.md` expose les points d'entrée. Ce sont des références vers les owners actuels, pas un second moteur de règles.
+
+Tout changement d'instructions ou de sécurité impose un audit borné des règles directement affectées (entrées agents, skills, registre, CI et tests) et une revue indépendante. Le validateur du catalogue demeure `holding.tool_registry` ; le gate MCP demeure `holding.mcp_policy`. Aucun agent ne peut certifier sa propre modification de permissions, secrets ou de gates. Les règles du dépôt cible restent prioritaires quand Holding travaille sur un autre dépôt.
