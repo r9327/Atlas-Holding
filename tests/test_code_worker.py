@@ -91,7 +91,7 @@ else:
 
     def test_persisted_project_goal_reaches_actual_local_agent(self):
         self.agent_path.write_text('''import json,sys
-request=json.load(sys.stdin)
+request=json.loads(sys.stdin.buffer.read().decode('utf-8'))
 if request['action']=='health':
  print(json.dumps({'protocol':1,'action':'health','status':'ok','agent_ready':True}))
 else:
