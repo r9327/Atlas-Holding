@@ -62,3 +62,42 @@ empreintes de la spécification, du modèle et du dossier.
   L'extension du scheduler à des agents d'étude/expérimentation, la
   validation de sources externes, les simulations et l'exécution de
   prototypes sont des étapes ultérieures distinctes.
+
+## Consulter et exporter les dossiers enregistrés
+
+La consultation et l'export ne chargent pas de modèle et restent possibles
+pendant Pause/STOP. La génération, elle, reste interdite pendant l'arrêt.
+
+```shell
+python -m holding.research_brief_cli history --db "/chemin/holding.sqlite" --repo "owner/projet" --mission-id "etude-1"
+```
+
+La liste donne les empreintes exactes, le statut non vérifié et un curseur
+`record_id`. Utiliser `--limit 20 --before-record ID` pour lire les pages
+antérieures. `current` signifie que le **contrat source** correspond encore au
+contrat courant ; ce n'est ni une validation du modèle ni une certification.
+
+Choisir les empreintes de cette liste pour un export complet :
+
+```shell
+python -m holding.research_brief_cli export --db "/chemin/holding.sqlite" --repo "owner/projet" --mission-id "etude-1" --spec-sha256 SPEC_SHA --model-digest MODEL_SHA --output-file "/chemin/nouveau-dossier.json"
+```
+
+Les chemins Windows sont aussi absolus, par exemple `C:\Atlas\dossier.json`.
+Sans `--output-file`, le JSON est écrit sur la sortie standard. Un fichier
+existant n'est jamais écrasé, y compris la base de données ou un lien symbolique.
+
+Le document `research-brief-export/v1` contient tous les champs du dossier,
+leurs empreintes, le contexte et le texte JSON exact du contrat source lorsqu'il
+est disponible. Son SHA-256 se recalcule sur
+`source_contract_json.encode("utf-8")`. Les caractères UTF-8 sont conservés.
+
+Après une replanification autorisée, l'ancien dossier reste consultable avec
+`current=false` et son **ancien objectif**, grâce à l'historique de #25.
+Un contexte ancien non archivé par une version précédente du logiciel reste
+explicitement indisponible (`source_context_available=false`) : le logiciel ne
+l'invente pas à partir du nouvel objectif. Une empreinte ou une archive corrompue
+empêche l'export. Un mauvais dépôt est refusé.
+
+Ces commandes préparent la consultation dans le chat de #27 ; elles ne livrent
+pas encore son bouton d'export ni la révision interactive d'un projet commencé.

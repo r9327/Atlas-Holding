@@ -205,8 +205,9 @@ class ResearchWorkplanCoordinator:
     def _id(sid: str, index: int) -> str:
         return f"build-{sid[:24]}-{index + 1}"
 
-    def _route(self, sid: str, plan: dict):
-        authorized_indices: set[int] = set()
+    def _route(self, sid: str, plan: dict, *, completed: dict[int, str] | None = None):
+        completed = completed or {}
+        authorized_indices: set[int] = set(completed)
         queued, deferred, missions = [], [], []
         for index, task in enumerate(plan["tasks"]):
             mid = self._id(sid, index)
@@ -216,9 +217,13 @@ class ResearchWorkplanCoordinator:
                 queued.append(mid)
                 missions.append({
                     "id": mid, "operation": "code",
-                    "depends_on": [self._id(sid, i) for i in task["depends_on"]],
+                    "depends_on": [self._id(sid, i) for i in task["depends_on"]
+                                   if i not in completed],
                     "acceptance": [
-                        "Livrable logiciel : " + task["title"], *task["acceptance"]],
+                        "Livrable logiciel : " + task["title"], *task["acceptance"],
+                        *(f"Entrée de calcul hypothétique, tâche {i + 1}, "
+                          f"SHA-256 : {completed[i]}" for i in task["depends_on"]
+                          if i in completed)],
                 })
             else:
                 deferred.append(mid)
@@ -243,23 +248,84 @@ class ResearchWorkplanCoordinator:
         if _digest(record["plan_json"]) != record["plan_sha256"]:
             raise WorkplanError("Stored workplan digest mismatch")
         plan = _validate(record["plan_json"])
-        _, q, d = self._route(sid, plan)
-        if (json.loads(record["queued_json"]) != q
-                or json.loads(record["deferred_json"]) != d):
+        _, initial_q, initial_d = self._route(sid, plan)
+        q, d = json.loads(record["queued_json"]), json.loads(record["deferred_json"])
+        if (not isinstance(q, list) or not isinstance(d, list)
+                or any(not isinstance(mid, str) for mid in (*q, *d))):
             raise WorkplanError("Stored workplan routing mismatch")
-        return WorkplanView(sid, record["state"], record["plan_sha256"],
+        view = WorkplanView(sid, record["state"], record["plan_sha256"],
                             tuple(q), tuple(d), tuple(plan["tasks"]))
+        _, eligible, _ = self._route(
+            sid, plan, completed=self._completed_simulations(view)
+            if record["state"] == "STAGED" else {})
+        # A simulator/roadmap commit can precede the routing checkpoint. A
+        # persisted prefix/subset remains resumable, but never authorizes a
+        # task whose dependency has no actual integrity-checked result.
+        if (q != [mid for mid in eligible if mid in q]
+                or not set(initial_q) <= set(q)
+                or d != [self._id(sid, i) for i in range(len(plan["tasks"]))
+                         if self._id(sid, i) not in q]
+                or (record["state"] == "PREPARED" and (q, d) != (initial_q, initial_d))):
+            raise WorkplanError("Stored workplan routing mismatch")
+        return view
 
     def inspect(self, sid: str) -> WorkplanView | None:
         return self._stored(sid)
 
+    def _completed_simulations(self, plan: WorkplanView) -> dict[int, str]:
+        from .research_simulation import LocalSimulationRunner
+        from .ngspice_adapter import CircuitSimulationRunner
+        numeric = LocalSimulationRunner(self.store).inspect(plan)
+        circuits = CircuitSimulationRunner(
+            self.store, config_path=self.circuit_config_path).inspect(plan)
+        return {item.task_index: item.result_sha256 for item in (*numeric, *circuits)}
+
     def _run_simulators(self, plan: WorkplanView) -> None:
         from .research_simulation import LocalSimulationRunner
         from .ngspice_adapter import CircuitSimulationRunner
-        numeric = LocalSimulationRunner(self.store).run_available(plan)
-        CircuitSimulationRunner(
-            self.store, config_path=self.circuit_config_path
-        ).run_available(plan, numeric_done={item.task_index for item in numeric})
+        numeric = LocalSimulationRunner(self.store)
+        circuits = CircuitSimulationRunner(self.store, config_path=self.circuit_config_path)
+        attempted: set[int] = set()
+        # The validated DAG has at most eight tasks. Revisit both existing
+        # runners until no task advances, including RC -> numeric -> RC.
+        for _ in range(len(plan.tasks)):
+            self._check()
+            before = set(self._completed_simulations(plan))
+            numbers = numeric.run_available(
+                plan, circuit_done={item.task_index for item in circuits.inspect(plan)})
+            circuits.run_available(plan, numeric_done={item.task_index for item in numbers},
+                                   attempted=attempted)
+            if set(self._completed_simulations(plan)) == before:
+                break
+
+    def _advance(self, plan: WorkplanView) -> WorkplanView:
+        self._run_simulators(plan)
+        completed = self._completed_simulations(plan)
+        missions, queued, deferred = self._route(
+            plan.session_id, {"tasks": list(plan.tasks)}, completed=completed)
+        if tuple(queued) == plan.queued:
+            return plan
+        self._check()
+        # Same canonical importer and immutable IDs as the initial handoff.
+        # If the process dies after this commit, replay is a no-op.
+        SafeRoadmapReplanner(self.store).append_direction(
+            _canonical({"repo": self.repository, "missions": missions}),
+            source=f"chat-workplan:{plan.session_id}")
+        with self.store._transaction():
+            self._check()
+            current = self._stored(plan.session_id)
+            if current is None or current.plan_sha256 != plan.plan_sha256:
+                raise WorkplanError("Workplan changed during deferred handoff")
+            if current.queued != tuple(queued):
+                self.store.db.execute(
+                    "UPDATE project_workplans SET queued_json=?,deferred_json=?,"
+                    "updated_epoch=? WHERE session_id=?",
+                    (json.dumps(queued), json.dumps(deferred), int(time.time()),
+                     plan.session_id))
+                self.store._event(None, "RND_WORKPLAN_ADVANCED",
+                    f"session:{plan.session_id} plan_sha256:{plan.plan_sha256} "
+                    f"queued:{len(queued)} deferred:{len(deferred)}")
+        return self._stored(plan.session_id)
 
     def continue_from_brief(self, sid: str) -> WorkplanView:
         """Generate once, persist first, then safely import supported code lots."""
@@ -325,8 +391,7 @@ class ResearchWorkplanCoordinator:
                      int(time.time())))
             plan = self._stored(sid)
         if plan.state == "STAGED":
-            self._run_simulators(plan)
-            return plan
+            return self._advance(plan)
         missions, queued, deferred = self._route(sid, {"tasks": list(plan.tasks)})
         if missions:
             SafeRoadmapReplanner(self.store).append_direction(
@@ -345,5 +410,4 @@ class ResearchWorkplanCoordinator:
                 f"plan_sha256:{plan.plan_sha256} queued:{len(queued)} "
                 f"deferred:{len(deferred)}")
         staged = self._stored(sid)
-        self._run_simulators(staged)
-        return staged
+        return self._advance(staged)

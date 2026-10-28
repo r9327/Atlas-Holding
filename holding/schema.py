@@ -155,9 +155,18 @@ ROADMAP_SCHEMA = (
         changed_ids_json TEXT NOT NULL,
         recorded_epoch INTEGER NOT NULL
     )""",
+    """CREATE TABLE IF NOT EXISTS mission_spec_history (
+        mission_id TEXT NOT NULL REFERENCES missions(id),
+        version INTEGER NOT NULL REFERENCES roadmap_versions(version),
+        replaced_by_version INTEGER NOT NULL REFERENCES roadmap_versions(version),
+        spec_sha256 TEXT NOT NULL,
+        spec_json TEXT NOT NULL,
+        archived_epoch INTEGER NOT NULL,
+        PRIMARY KEY(mission_id, version)
+    )""",
 )
 
-ROADMAP_AMENDMENT_SCHEMA = (ROADMAP_SCHEMA[2],)
+ROADMAP_AMENDMENT_SCHEMA = ROADMAP_SCHEMA[2:]
 
 # Operator-invoked research proposals are NOT mission checkpoints or signed QA.
 # Keep their provenance separate from the autonomous execution state machine.
