@@ -21,26 +21,12 @@ from typing import Any
 from .ngspice_adapter import CircuitSimulationRunner
 from .research_workplan import WorkplanView, _validate as validate_workplan
 from .state_store import StateStore
+from .schema import RESEARCH_MEASUREMENT_SCHEMA, apply_schema
 
 MAX_CSV_BYTES = 64 * 1024
 MAX_POINTS = 512
 STATUS = "COMPARISON_MEASUREMENTS_UNVERIFIED"
 _HEADER = ["time_seconds", "voltage_volts"]
-_TABLE = """CREATE TABLE IF NOT EXISTS research_measurement_comparisons (
- session_id TEXT NOT NULL,
- task_index INTEGER NOT NULL,
- plan_sha256 TEXT NOT NULL,
- simulation_sha256 TEXT NOT NULL,
- source_sha256 TEXT NOT NULL,
- observations_sha256 TEXT NOT NULL,
- observations_json TEXT NOT NULL,
- comparison_sha256 TEXT NOT NULL,
- comparison_json TEXT NOT NULL,
- created_epoch INTEGER NOT NULL,
- PRIMARY KEY(session_id,task_index,source_sha256),
- FOREIGN KEY(session_id,task_index)
-     REFERENCES research_circuit_runs(session_id,task_index)
-)"""
 
 
 class MeasurementComparisonError(ValueError):
@@ -290,7 +276,7 @@ class MeasurementComparisonService:
             current_plan, current_sim, _ = self._source(session_id, task_index)
             if (current_plan, current_sim) != (plan_sha, sim_sha):
                 raise MeasurementComparisonError("Circuit changed during comparison")
-            self.store.db.execute(_TABLE)
+            apply_schema(self.store.db, RESEARCH_MEASUREMENT_SCHEMA)
             previous = self.store.db.execute(
                 "SELECT * FROM research_measurement_comparisons "
                 "WHERE session_id=? AND task_index=? AND source_sha256=?",

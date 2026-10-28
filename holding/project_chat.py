@@ -18,6 +18,7 @@ from . import ollama_protocol
 from .research_brief import ResearchBriefService
 from .roadmap_import import RoadmapImporter
 from .state_store import StateStore
+from .schema import PROJECT_CHAT_SCHEMA, apply_schema
 
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _SESSION = re.compile(r"^[0-9a-f]{32}$")
@@ -32,17 +33,6 @@ _ASSESSMENT_SCHEMA = {
     "required": ["questions"],
     "additionalProperties": False,
 }
-_TABLE = """CREATE TABLE IF NOT EXISTS project_chat_sessions (
-    session_id TEXT PRIMARY KEY,
-    repository TEXT NOT NULL,
-    initial_goal TEXT NOT NULL,
-    questions_json TEXT NOT NULL,
-    answers_json TEXT NOT NULL,
-    status TEXT NOT NULL CHECK(status IN ('ASSESSING','ASKING','GENERATING','READY')),
-    mission_id TEXT NOT NULL UNIQUE,
-    proposal_sha256 TEXT,
-    updated_epoch INTEGER NOT NULL
-)"""
 _ACCEPTANCE = [
     "Décrire le concept proposé et ses limites sans inventer de preuves.",
     "Formuler des hypothèses et expériences avec mesures de réussite.",
@@ -147,7 +137,7 @@ class ProjectChatCoordinator:
 
     def _ensure(self) -> None:
         with self.store._transaction():
-            self.store.db.execute(_TABLE)
+            apply_schema(self.store.db, PROJECT_CHAT_SCHEMA)
 
     def _row(self, session_id: str):
         if not isinstance(session_id, str) or not _SESSION.fullmatch(session_id):
