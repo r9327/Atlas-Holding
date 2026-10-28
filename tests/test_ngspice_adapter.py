@@ -182,6 +182,133 @@ class NgspiceAdapterTests(unittest.TestCase):
         self.assertEqual(view.circuit_results, ())
         process.assert_not_called()
 
+    def test_alternating_simulators_release_code_once_with_result_provenance(self):
+        def number(title, deps=()):
+            return dict(task("simulation", title, deps=deps), simulation={
+                "model": "linear_discrete", "initial": 1,
+                "parameter": 2, "steps": 3})
+        view, process = self.create({"tasks": [
+            number("Premier calcul"),
+            task("simulation", "RC suivant", deps=[0], circuit=CIRCUIT),
+            number("Calcul après RC", deps=[1]),
+            task("simulation", "Second RC", deps=[2], circuit=CIRCUIT),
+            task("code", "Exploiter les résultats", deps=[3]),
+            task("code", "Tester le module", deps=[4]),
+            task("hardware", "Mesure réelle"),
+            number("Calcul encore bloqué", deps=[6]),
+        ]})
+        self.assertEqual(process.call_count, 2)
+        self.assertEqual((len(view.circuit_results), view.simulated_tasks), (2, 2))
+        self.assertEqual((view.queued_tasks, view.deferred_tasks), (2, 2))
+        missions = {m.id: m for m in self.store.missions()}
+        first = f"build-{view.session_id[:24]}-5"
+        second = f"build-{view.session_id[:24]}-6"
+        self.assertEqual(missions[first].dependencies, ())
+        self.assertEqual(missions[second].dependencies, (first,))
+        result_sha = self.store.db.execute(
+            "SELECT result_sha256 FROM research_circuit_runs WHERE task_index=3"
+        ).fetchone()[0]
+        spec = json.loads(self.store.db.execute(
+            "SELECT spec_json FROM mission_specs WHERE id=?", (first,)
+        ).fetchone()[0])
+        self.assertIn(result_sha, " ".join(spec["acceptance"]))
+        self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM grants").fetchone()[0], 0)
+        before = len(self.store.events())
+        with patch("holding.ngspice_adapter.subprocess.run",
+                   side_effect=AssertionError("no repeated simulation")), \
+             patch.object(ollama_protocol, "_http",
+                          side_effect=AssertionError("no regenerated plan")):
+            for _ in range(2):
+                resumed = self.chat().resume(view.session_id)
+                self.assertEqual((resumed.queued_tasks, resumed.deferred_tasks), (2, 2))
+        self.assertEqual(len(self.store.events()), before)
+
+    def test_missing_simulator_then_configured_resume_releases_deferred_code(self):
+        from holding.roadmap_replan import SafeRoadmapReplanner
+        view, _ = self.create({"tasks": [
+            task("simulation", "RC", circuit=CIRCUIT),
+            task("code", "Exploiter RC", deps=[0]),
+        ]}, configured=False, mock_simulator=False)
+        self.assertEqual((view.queued_tasks, view.deferred_tasks), (0, 2))
+        saved = SafeRoadmapReplanner.append_direction
+        def after_commit(replanner, *args, **kwargs):
+            saved(replanner, *args, **kwargs)
+            raise TimeoutError("crash after deferred code was imported")
+        def process(argv, **kwargs):
+            (Path(kwargs["cwd"]) / "trace.txt").write_text("0 0\n1 5\n")
+            return subprocess.CompletedProcess(argv, 0)
+        with patch("holding.ngspice_adapter.subprocess.run", side_effect=process), \
+             patch.object(SafeRoadmapReplanner, "append_direction", after_commit):
+            with self.assertRaises(TimeoutError):
+                self.chat().resume(view.session_id)
+        self.assertEqual(len(self.store.missions()), 2)
+        self.assertEqual(self.chat().view(view.session_id).queued_tasks, 0)
+        with StateStore(self.db) as reopened:
+            coordinator = ProjectChatCoordinator(
+                reopened, repository=REPO, config_path=self.model_config,
+                circuit_config_path=self.simulator_config)
+            with patch("holding.ngspice_adapter.subprocess.run",
+                       side_effect=AssertionError("already calculated")), \
+                 patch.object(ollama_protocol, "_http",
+                              side_effect=AssertionError("already planned")):
+                resumed = coordinator.resume(view.session_id)
+                self.assertEqual((resumed.queued_tasks, resumed.deferred_tasks), (1, 0))
+                coordinator.resume(view.session_id)
+        self.assertEqual(self.store.db.execute(
+            "SELECT COUNT(*) FROM roadmap_amendments").fetchone()[0], 1)
+        self.assertEqual(len([e for e in self.store.events()
+                              if e["event"] == "RND_WORKPLAN_ADVANCED"]), 1)
+
+    def test_corrupt_rc_result_cannot_release_deferred_code(self):
+        view, _ = self.create({"tasks": [
+            task("simulation", "RC", circuit=CIRCUIT),
+            task("code", "Exploiter RC", deps=[0]),
+        ]}, configured=False, mock_simulator=False)
+        def process(argv, **kwargs):
+            (Path(kwargs["cwd"]) / "trace.txt").write_text("0 0\n1 5\n")
+            return subprocess.CompletedProcess(argv, 0)
+        with patch("holding.ngspice_adapter.subprocess.run", side_effect=process), \
+             patch("holding.research_workplan.SafeRoadmapReplanner.append_direction",
+                   side_effect=TimeoutError("before import")):
+            with self.assertRaises(TimeoutError):
+                self.chat().resume(view.session_id)
+        self.store.db.execute("UPDATE research_circuit_runs SET result_json='{}'")
+        with self.assertRaises(CircuitSimulationError):
+            self.chat().resume(view.session_id)
+        self.assertEqual(len(self.store.missions()), 1)
+
+    def test_failed_rc_does_not_block_independent_code_or_repeat_within_a_pass(self):
+        number = dict(task("simulation", "Calcul indépendant"), simulation={
+            "model": "linear_discrete", "initial": 1, "parameter": 2, "steps": 3})
+        plan = {"tasks": [
+            number,
+            task("code", "Exploiter le calcul", deps=[0]),
+            task("simulation", "RC indisponible", circuit=CIRCUIT),
+            task("code", "Ne pas exploiter le RC absent", deps=[2]),
+        ]}
+        with patch("holding.ngspice_adapter.execute_rc",
+                   side_effect=CircuitSimulationError("engine unavailable")) as execute:
+            view, _ = self.create(plan)
+        execute.assert_called_once()
+        self.assertEqual((view.queued_tasks, view.deferred_tasks), (1, 2))
+        self.assertIn("simulation RC en échec", view.task_details[2])
+        self.assertEqual(len(self.store.missions()), 2)
+        self.assertEqual(len([e for e in self.store.events()
+                              if e["event"] == "RND_CIRCUIT_DEFERRED"]), 1)
+        with patch("holding.ngspice_adapter.execute_rc",
+                   side_effect=CircuitSimulationError("engine unavailable")) as execute:
+            self.chat().resume(view.session_id)
+        execute.assert_called_once()
+        self.assertEqual(len([e for e in self.store.events()
+                              if e["event"] == "RND_CIRCUIT_DEFERRED"]), 1)
+        def success(argv, **kwargs):
+            (Path(kwargs["cwd"]) / "trace.txt").write_text("0 0\n1 5\n")
+            return subprocess.CompletedProcess(argv, 0)
+        with patch("holding.ngspice_adapter.subprocess.run", side_effect=success):
+            recovered = self.chat().resume(view.session_id)
+        self.assertEqual((recovered.queued_tasks, recovered.deferred_tasks), (2, 0))
+        self.assertNotIn("simulation RC en échec", recovered.task_details[2])
+
     def test_invalid_or_injected_circuit_never_reaches_simulator(self):
         from holding.ngspice_adapter import validate_circuit_spec
         values = [

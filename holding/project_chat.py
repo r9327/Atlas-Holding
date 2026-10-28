@@ -54,6 +54,12 @@ class ProjectChatError(ValueError):
     pass
 
 
+def validate_chat_text(value: Any, *, answer: bool = False) -> str:
+    """Shared UTF-8 limits for the operator UI and durable intake."""
+    return _bounded(value, maximum=600 if answer else 1400,
+                    label="clarification answer" if answer else "project goal")
+
+
 def _bounded(value: Any, *, maximum: int, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ProjectChatError("Invalid " + label)
@@ -114,6 +120,8 @@ class ChatView:
     circuit_results: tuple[str, ...] = ()
     circuit_task_indices: tuple[int, ...] = ()
     comparison_results: tuple[str, ...] = ()
+    research_brief: dict | None = None
+    task_details: tuple[str, ...] = ()
 
 
 class ProjectChatCoordinator:
@@ -159,6 +167,7 @@ class ProjectChatCoordinator:
         status = row["status"]
         next_question = questions[len(answers)] if status == "ASKING" else None
         concept = None
+        brief = None
         if status == "READY" and row["proposal_sha256"]:
             stored = self.store.db.execute(
                 "SELECT proposal_json FROM research_briefs "
@@ -169,7 +178,8 @@ class ProjectChatCoordinator:
                 from .research_brief import _digest, _validate_proposal
                 if _digest(stored["proposal_json"]) != row["proposal_sha256"]:
                     raise ProjectChatError("Stored R&D output integrity mismatch")
-                concept = _validate_proposal(stored["proposal_json"])["concept"]
+                brief = _validate_proposal(stored["proposal_json"])
+                concept = brief["concept"]
         plan = None
         if status == "READY":
             from .research_workplan import ResearchWorkplanCoordinator
@@ -180,6 +190,7 @@ class ProjectChatCoordinator:
         simulations = ()
         circuits = ()
         comparisons = ()
+        details = []
         if plan is not None and plan.state == "STAGED":
             from .research_simulation import LocalSimulationRunner
             from .ngspice_adapter import CircuitSimulationRunner
@@ -190,6 +201,36 @@ class ProjectChatCoordinator:
                 from .research_measurement import MeasurementComparisonService
                 comparisons = MeasurementComparisonService(
                     self.store, repository=self.repository).inspect(row["session_id"])
+            computed = {item.task_index for item in (*simulations, *circuits)}
+            circuit_errors = CircuitSimulationRunner(
+                self.store, config_path=self.circuit_config_path).deferred_reasons(plan)
+            from .research_workplan import ResearchWorkplanCoordinator
+            for index, task in enumerate(plan.tasks):
+                mid = ResearchWorkplanCoordinator._id(plan.session_id, index)
+                if index in computed:
+                    progress = "calculé sur hypothèses, non validé expérimentalement"
+                elif mid in plan.queued:
+                    mission = self.store.db.execute(
+                        "SELECT state FROM missions WHERE id=?", (mid,)).fetchone()
+                    progress = "transmise au moteur : " + (
+                        {"READY": "en attente d’exécution", "RUNNING": "en cours",
+                         "DONE": "terminée selon le moteur", "BLOCKED": "bloquée",
+                         "WAIT_SYNC": "en attente de synchronisation",
+                         "QUARANTINED": "en attente de vérification",
+                         "CANCELLED": "annulée"}.get(
+                            mission["state"], "étape de validation en cours")
+                        if mission else "état indisponible")
+                elif index in circuit_errors:
+                    progress = ("différée ; simulation RC en échec, "
+                                "vérifie le simulateur et sa configuration")
+                elif task["depends_on"]:
+                    progress = "différée ; prérequis : tâches " + ", ".join(
+                        str(dep + 1) for dep in task["depends_on"])
+                elif "circuit" in task and self.circuit_config_path is None:
+                    progress = "différée ; simulateur RC non configuré"
+                else:
+                    progress = "différée ; aucun exécuteur disponible pour ce travail"
+                details.append(f"Tâche {index + 1} : {task['title']} — {progress}")
         return ChatView(
             row["session_id"], row["repository"], row["initial_goal"],
             questions, answers, status, next_question,
@@ -215,6 +256,8 @@ class ProjectChatCoordinator:
                 f"mesures non certifiées ; SHA {item.comparison_sha256[:12]}…"
                 for item in comparisons
             ),
+            brief,
+            tuple(details),
         )
 
     def latest(self) -> ChatView | None:
@@ -235,7 +278,7 @@ class ProjectChatCoordinator:
 
     def start(self, goal: str) -> ChatView:
         self._check_run()
-        goal = _bounded(goal, maximum=1400, label="project goal")
+        goal = validate_chat_text(goal)
         self._ensure()
         session_id = uuid4().hex
         mission_id = "chat-" + session_id[:24]
@@ -300,7 +343,7 @@ class ProjectChatCoordinator:
                 else self.view(row["session_id"]))
 
     def answer(self, session_id: str, answer: str) -> ChatView:
-        answer = _bounded(answer, maximum=600, label="clarification answer")
+        answer = validate_chat_text(answer, answer=True)
         self._ensure()
         with self.store._transaction():
             self._check_run()
