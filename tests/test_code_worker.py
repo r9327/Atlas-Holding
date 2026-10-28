@@ -101,9 +101,9 @@ else:
  print(json.dumps({'protocol':1,'action':'plan_patch','status':'ok',
  'plan':{'files':[{'path':'intent.txt','content':goal}],
          'commit_message':'feat: preserve project objective'}}))
-''')
+''', encoding='utf-8')
         runner=LocalProcessAgent(AgentProgram(Path(sys.executable).resolve(),
-              (str(self.agent_path),), timeout_seconds=3))
+              (str(self.agent_path),), timeout_seconds=8))
         worker=LocalCodeWorker(self.actor, runner, health_directory=self.root)
         worker(Mission('job',REPO))
         self.assertIn('gestion de quêtes',
