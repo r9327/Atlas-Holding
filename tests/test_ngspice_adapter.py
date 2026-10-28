@@ -13,11 +13,11 @@ from unittest.mock import patch
 
 from holding import ollama_protocol
 from holding.ngspice_adapter import (
-    CircuitSimulationError, _parse_trace, build_rc_deck,
+    CircuitSimulationError, CircuitSimulationRunner, _parse_trace, build_rc_deck,
     execute_rc, validate_circuit_spec, validate_pinned_engine,
 )
 from holding.project_chat import ProjectChatCoordinator
-from holding.research_workplan import WorkplanError, _validate
+from holding.research_workplan import ResearchWorkplanCoordinator, WorkplanError, _validate
 from holding.state_store import StateStore
 
 REPO = "r9327/Dof-Atlas"
@@ -292,6 +292,11 @@ class NgspiceAdapterTests(unittest.TestCase):
         execute.assert_called_once()
         self.assertEqual((view.queued_tasks, view.deferred_tasks), (1, 2))
         self.assertIn("simulation RC en échec", view.task_details[2])
+        stored_plan = ResearchWorkplanCoordinator(
+            self.store, repository=REPO, config_path=self.model_config).inspect(view.session_id)
+        failures = CircuitSimulationRunner(
+            self.store, config_path=self.simulator_config).deferred_reasons(stored_plan)
+        self.assertIn("engine unavailable", failures[2])
         self.assertEqual(len(self.store.missions()), 2)
         self.assertEqual(len([e for e in self.store.events()
                               if e["event"] == "RND_CIRCUIT_DEFERRED"]), 1)
@@ -308,6 +313,7 @@ class NgspiceAdapterTests(unittest.TestCase):
             recovered = self.chat().resume(view.session_id)
         self.assertEqual((recovered.queued_tasks, recovered.deferred_tasks), (2, 0))
         self.assertNotIn("simulation RC en échec", recovered.task_details[2])
+        self.assertEqual(len(recovered.circuit_results), 1)
 
     def test_invalid_or_injected_circuit_never_reaches_simulator(self):
         from holding.ngspice_adapter import validate_circuit_spec
