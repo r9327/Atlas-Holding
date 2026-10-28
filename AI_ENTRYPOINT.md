@@ -30,7 +30,7 @@ Dof-Atlas comme si elles existaient ici.
 7. Conserver la PR en Draft durant le développement. Après revue complète,
    Ready for review lance le contrôle IA ciblé sur le SHA de tête. La
    certification d'une phase/release reste **indépendante** et suit
-   `docs/CERTIFICATION_CONTRACT.md`.
+   `docs/QUALITY_RELEASE_GATES.md`.
 
 ## Revue des règles et des plugins
 
