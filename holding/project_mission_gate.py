@@ -99,23 +99,10 @@ def import_verified_project_missions(
             expected_source_digest=binding.source_digest,
         )
         lots = {lot.lot_id: lot for lot in plan.lots}
-        # The live importer stores every supplied mission as READY. Keep all
-        # restricted lots in the authoritative planner inventory, but import
-        # only the subset that is independently executable. Descendants of a
-        # restricted lot are excluded until a verified replan unblocks them.
-        importable = {
-            lot.lot_id for lot in plan.lots
-            if lot.autonomy in {"AUTO", "AUTO_WITH_STANDING_GRANT"}
-            and lot.state not in {"BLOCKED", "REQUIRES_DECISION"}
-        }
-        while True:
-            dependency_closed = {
-                lot_id for lot_id in importable
-                if all(dep in importable for dep in lots[lot_id].dependencies)
-            }
-            if dependency_closed == importable:
-                break
-            importable = dependency_closed
+        # The live importer persists every imported mission as READY. Use the
+        # same exact-SHA preflight classification exposed by verify-plan to
+        # exclude restricted lots and all their dependent descendants.
+        importable = set(binding.importable_lots)
         if not importable:
             raise ProjectMissionGateError(
                 "no independently importable planner lots; replan required"

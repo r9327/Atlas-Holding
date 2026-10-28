@@ -190,6 +190,26 @@ class ProjectMissionGateTests(unittest.TestCase):
             self.invoke()
         self.assertFalse(self.calls)
 
+    def test_real_importer_can_add_unblocked_lots_later_without_losing_work(self):
+        from holding.control import ControlPlane
+
+        self.roadmap["lots"][1]["state"] = "BLOCKED"
+        self.missions["missions"].pop()
+        with ControlPlane(Path(self.temp.name) / "engine.sqlite") as control:
+            first = self.invoke(trusted_importer=control.import_roadmap)
+            self.assertEqual(first.added, ("lot-1",))
+            self.assertEqual([m.id for m in control.store.missions()], ["lot-1"])
+            self.assertEqual(control.store.missions()[0].state, "READY")
+
+            # A separately verified, exact-source replan unblocks lot-2.
+            self.roadmap["lots"][1]["state"] = "TRIAGED"
+            self.missions = operations()
+            second = self.invoke(trusted_importer=control.import_roadmap)
+            self.assertEqual(second.added, ("lot-2",))
+            self.assertEqual(second.preserved, ("lot-1",))
+            self.assertEqual({m.id for m in control.store.missions()},
+                             {"lot-1", "lot-2"})
+
     def test_no_independent_lots_cannot_be_imported(self):
         self.roadmap["lots"][0]["state"] = "BLOCKED"
         self.missions["missions"] = []

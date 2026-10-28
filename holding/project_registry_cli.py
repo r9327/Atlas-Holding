@@ -55,6 +55,8 @@ def main(argv: list[str] | None = None) -> int:
                 "snapshot_sha": binding.snapshot_sha,
                 "source_digest": binding.source_digest,
                 "ready_lots": list(binding.initially_ready_lots),
+                "importable_lots": list(binding.importable_lots),
+                "deferred_lots": list(binding.deferred_lots),
                 "lot_count": len(binding.lot_ids),
                 "execution_performed": False,
             }

@@ -51,6 +51,33 @@ class RoadmapPlan:
     def initially_ready_lots(self) -> tuple[str, ...]:
         return tuple(lot.lot_id for lot in self.lots if lot.state == "READY")
 
+    def importable_lot_ids(self) -> tuple[str, ...]:
+        """Admit only eligible lots whose complete dependency chain is eligible.
+
+        This is planner preflight, NOT an execution grant. Every deferred lot
+        remains part of the complete, exact-SHA validated plan.
+        """
+        eligible = {
+            lot.lot_id for lot in self.lots
+            if lot.autonomy in {"AUTO", "AUTO_WITH_STANDING_GRANT"}
+            and lot.state not in {"BLOCKED", "REQUIRES_DECISION"}
+        }
+        while True:
+            closed = {
+                lot.lot_id for lot in self.lots
+                if lot.lot_id in eligible
+                and all(dep in eligible for dep in lot.dependencies)
+            }
+            if closed == eligible:
+                break
+            eligible = closed
+        return tuple(lot.lot_id for lot in self.lots if lot.lot_id in eligible)
+
+    def deferred_lot_ids(self) -> tuple[str, ...]:
+        """The complete plan's non-importable lots, including dependents."""
+        importable = set(self.importable_lot_ids())
+        return tuple(lot.lot_id for lot in self.lots if lot.lot_id not in importable)
+
 
 def _exact(value: Any, keys: set[str], label: str) -> dict[str, Any]:
     if not isinstance(value, dict) or set(value) != keys:
