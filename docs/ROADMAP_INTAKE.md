@@ -7,6 +7,10 @@ La finalité d'un projet est fixée par son auteur. Le planificateur doit cherch
 
 Ne jamais supposer que ROAD IA V3 (issue tooling du dépôt Atlas) et ROAD V3 produit désignent le même document. Référence canonique de roadmap = URI/path choisi, repo, SHA/snapshot, empreinte, date, autorisation et périmètre.
 
+## Objectif produit transmis aux agents
+
+L'import de roadmap accepte maintenant un champ facultatif `project_goal` (texte UTF-8 non vide, au maximum 4096 octets), au niveau supérieur du JSON, ou `Project goal:` / `Objectif:` avant les missions dans le Markdown strict. Le moteur conserve une copie de cet objectif avec les critères de chaque mission ; le codeur le transmet au modèle local comme **donnée de contexte**, jamais comme permission. Les anciennes roadmaps restent valables sans ce champ. L'objectif ne modifie ni les règles du dépôt, ni les contrôles Doctor, ni les permissions. Les modifications d'un objectif sur des missions déjà démarrées nécessitent une nouvelle planification sans écraser leur historique. Le modèle ne doit pas interpréter cette direction comme une preuve ou une certification.
+
 ## Import / préparation automatique
 1. Lire le document intégral (Markdown, JSON, dossier versionné ou lien autorisé), les annexes, les tâches et les règles du dépôt cible.
 2. Extraire exhaustivement résultats attendus, contraintes, exceptions, tests, critères d'acceptation, capacités requises, contraintes de données, non-objectifs et preuves.

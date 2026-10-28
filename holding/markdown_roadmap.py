@@ -19,6 +19,7 @@ import re
 from .state_store import StoreError
 
 _REPO_LINE = re.compile(r"^Repository:\s*(\S+)\s*$", re.IGNORECASE)
+_GOAL_LINE = re.compile(r"^(?:Project goal|Objectif):\s*(.*?)\s*$", re.IGNORECASE)
 _HEADING = re.compile(r"^##\s+([A-Za-z0-9][A-Za-z0-9_.-]{0,79})\s*$")
 _KV = re.compile(r"^([A-Za-z_]+):\s*(.*?)\s*$")
 _ALLOWED = frozenset({
@@ -36,6 +37,7 @@ def parse_markdown_roadmap(raw: str) -> dict:
     if not isinstance(raw, str):
         raise StoreError("Markdown roadmap input must be UTF-8 text")
     repository = None
+    project_goal = None
     missions: list[dict] = []
     current: dict | None = None
     fields: set[str] = set()
@@ -55,6 +57,14 @@ def parse_markdown_roadmap(raw: str) -> dict:
             if repository is not None or current is not None:
                 raise StoreError("Repository must appear once before missions")
             repository = repo_line.group(1)
+            continue
+        goal_line = _GOAL_LINE.fullmatch(line)
+        if goal_line is not None:
+            if repository is None or project_goal is not None or current is not None:
+                raise StoreError("Project goal must appear once before missions")
+            project_goal = goal_line.group(1)
+            if not project_goal or len(project_goal.encode('utf-8')) > 4096:
+                raise StoreError("Invalid bounded project goal")
             continue
         heading = _HEADING.fullmatch(line)
         if heading is not None:
@@ -117,4 +127,7 @@ def parse_markdown_roadmap(raw: str) -> dict:
     for task in missions:
         if "operation" not in task or not task["acceptance"]:
             raise StoreError("Every Markdown mission needs operation and acceptance")
-    return {"repo": repository, "missions": missions}
+    document = {"repo": repository, "missions": missions}
+    if project_goal is not None:
+        document["project_goal"] = project_goal
+    return document

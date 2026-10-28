@@ -146,6 +146,7 @@ class SafeRoadmapReplanner:
         self._require_existing_roadmap()
         doc, _jobs, specifications, delta_digest = self._parse(raw, incremental=True)
         merged: dict[str, dict] = {}
+        stored_goals: set[str] = set()
         for row in self.store.db.execute(
                 "SELECT s.id,s.spec_json FROM mission_specs s "
                 "JOIN missions m ON m.id=s.id WHERE m.repo=? ORDER BY m.id",
@@ -156,11 +157,28 @@ class SafeRoadmapReplanner:
                 raise StoreError("Corrupt existing roadmap during delta import") from exc
             if not isinstance(item, dict) or item.get("id") != row["id"]:
                 raise StoreError("Existing roadmap identity mismatch")
+            # Specs hold an immutable copy of the direction, but task fields
+            # cannot impersonate a top-level project goal on re-import.
+            old_goal = item.pop("project_goal", None)
+            if old_goal is not None:
+                stored_goals.add(old_goal)
             merged[row["id"]] = item
+        if len(stored_goals) > 1:
+            raise StoreError("Conflicting stored project goals require full replan")
+        old_goal = next(iter(stored_goals), None)
+        new_goal = doc.get("project_goal")
+        if old_goal is not None and new_goal is not None and old_goal != new_goal:
+            raise StoreError("Project goal change requires full roadmap replan")
         for mid, encoded in specifications.items():
-            merged[mid] = json.loads(encoded)
-        expanded = json.dumps({"repo": doc["repo"], "missions": list(merged.values())},
-                              ensure_ascii=False, separators=(",", ":"))
+            mission = json.loads(encoded)
+            mission.pop("project_goal", None)
+            merged[mid] = mission
+        expanded_doc = {"repo": doc["repo"], "missions": list(merged.values())}
+        effective_goal = new_goal if new_goal is not None else old_goal
+        if effective_goal is not None:
+            expanded_doc["project_goal"] = effective_goal
+        expanded = json.dumps(expanded_doc, ensure_ascii=False,
+                              separators=(",", ":"))
         if len(expanded.encode("utf-8")) > MAX_ROADMAP_BYTES:
             raise StoreError("Expanded roadmap exceeds 2 MiB")
         return expanded, delta_digest
