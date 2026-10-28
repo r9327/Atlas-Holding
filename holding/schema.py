@@ -155,9 +155,18 @@ ROADMAP_SCHEMA = (
         changed_ids_json TEXT NOT NULL,
         recorded_epoch INTEGER NOT NULL
     )""",
+    """CREATE TABLE IF NOT EXISTS mission_spec_history (
+        mission_id TEXT NOT NULL REFERENCES missions(id),
+        version INTEGER NOT NULL REFERENCES roadmap_versions(version),
+        replaced_by_version INTEGER NOT NULL REFERENCES roadmap_versions(version),
+        spec_sha256 TEXT NOT NULL,
+        spec_json TEXT NOT NULL,
+        archived_epoch INTEGER NOT NULL,
+        PRIMARY KEY(mission_id, version)
+    )""",
 )
 
-ROADMAP_AMENDMENT_SCHEMA = (ROADMAP_SCHEMA[2],)
+ROADMAP_AMENDMENT_SCHEMA = ROADMAP_SCHEMA[2:]
 SYNC_STATE_SCHEMA = (
     """CREATE TABLE IF NOT EXISTS external_service_health (
         service TEXT PRIMARY KEY CHECK(service IN ('github','context7','firecrawl')),

@@ -6,6 +6,7 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
+import sqlite3
 
 from holding.autonomy import StandingGrant
 from holding.roadmap_import import RoadmapImporter
@@ -199,6 +200,88 @@ class RoadmapReplanTests(unittest.TestCase):
         self.assertEqual(tasks["c"].dependencies, ("b",))
         self.assertIn("ROADMAP_REPLANNED",
                       {e["event"] for e in self.store.events()})
+
+    def test_prior_contracts_survive_revisions_and_reopen_with_pagination(self):
+        first_spec = self.store.db.execute(
+            "SELECT spec_json FROM mission_specs WHERE id='b'").fetchone()[0]
+        changed = dict(B, acceptance=["Critères révisés en français"])
+        second = self.replan.apply(document(A, changed), source="new-criteria")
+        second_spec = self.store.db.execute(
+            "SELECT spec_json FROM mission_specs WHERE id='b'").fetchone()[0]
+        third = self.replan.apply(document(A, dict(changed, priority=4)), source="priority")
+        self.assertFalse(self.replan.apply(
+            document(A, dict(changed, priority=4)), source="replay").applied)
+        db_path = self.store.db.execute("PRAGMA database_list").fetchone()[2]
+        with StateStore(Path(db_path)) as reopened:
+            history = SafeRoadmapReplanner(reopened)
+            newest = history.history("b", limit=1)
+            self.assertEqual(newest[0].version, second.version)
+            self.assertEqual(newest[0].replaced_by_version, third.version)
+            self.assertEqual(newest[0].specification, json.loads(second_spec))
+            older = history.history("b", before_version=newest[0].version)
+            self.assertEqual(len(older), 1)
+            self.assertEqual(older[0].specification, json.loads(first_spec))
+            self.assertEqual(older[0].replaced_by_version, second.version)
+            self.assertEqual(older[0].repository, REPO)
+            self.assertEqual(len(older[0].spec_sha256), 64)
+        self.assertEqual(self.replan.history("a"), ())
+        self.assertEqual(self.store.db.execute(
+            "SELECT COUNT(*) FROM mission_spec_history").fetchone()[0], 2)
+
+    def test_goal_revision_archives_old_goal_without_grant_or_started_rewrite(self):
+        def with_goal(goal):
+            return json.dumps({"repo": REPO, "project_goal": goal, "missions": [A, B]})
+        self.replan.apply(with_goal("Premier objectif"), source="first-goal")
+        grants = [tuple(r) for r in self.store.db.execute("SELECT * FROM grants")]
+        self.replan.apply(with_goal("Objectif précisé"), source="revised-goal")
+        prior = self.replan.history("a")[0]
+        self.assertEqual(prior.specification["project_goal"], "Premier objectif")
+        self.assertEqual(grants, [tuple(r) for r in self.store.db.execute("SELECT * FROM grants")])
+        self.assertEqual(self.store.claim_next(online=False).mission_id, "a")
+        before = len(self.replan.history("a"))
+        with self.assertRaisesRegex(StoreError, "ALREADY_STARTED"):
+            self.replan.apply(with_goal("Réécriture interdite"), source="unsafe")
+        self.assertEqual(len(self.replan.history("a")), before)
+
+    def test_failed_archive_rolls_back_contracts_tasks_versions_and_events(self):
+        before_specs = [tuple(r) for r in self.store.db.execute("SELECT * FROM mission_specs")]
+        before_events = self.store.events()
+        self.store.db.execute("""CREATE TEMP TRIGGER fail_archive
+            BEFORE INSERT ON mission_spec_history BEGIN
+            SELECT RAISE(ABORT, 'archive unavailable'); END""")
+        with self.assertRaisesRegex(sqlite3.IntegrityError, "archive unavailable"):
+            self.replan.apply(document(A, dict(B, priority=3), C), source="failed")
+        self.assertEqual([tuple(r) for r in self.store.db.execute("SELECT * FROM mission_specs")],
+                         before_specs)
+        self.assertEqual(len(self.store.missions()), 2)
+        self.assertEqual(self.store.db.execute(
+            "SELECT COUNT(*) FROM roadmap_versions").fetchone()[0], 1)
+        self.assertEqual(self.store.events(), before_events)
+        self.assertEqual(self.replan.history("b"), ())
+
+    def test_history_rejects_corrupt_snapshot_and_is_otherwise_read_only(self):
+        self.replan.apply(document(A, dict(B, priority=7)), source="change")
+        before = self.store.db.total_changes
+        self.replan.history("b")
+        self.assertEqual(self.store.db.total_changes, before)
+        self.store.db.execute(
+            "UPDATE mission_spec_history SET spec_json='{}' WHERE mission_id='b'")
+        with self.assertRaisesRegex(StoreError, "Corrupt archived"):
+            self.replan.history("b")
+        for kwargs in ({"limit": True}, {"limit": 0}, {"limit": 101},
+                       {"before_version": False}, {"before_version": 0}):
+            with self.subTest(kwargs=kwargs), self.assertRaises(StoreError):
+                self.replan.history("b", **kwargs)
+
+    def test_history_on_old_database_does_not_create_tables(self):
+        self.store.db.execute("DROP TABLE mission_spec_history")
+        before = self.store.db.total_changes
+        self.assertEqual(self.replan.history("b"), ())
+        self.assertEqual(self.store.db.total_changes, before)
+        self.assertIsNone(self.store.db.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='mission_spec_history'").fetchone())
+        self.replan.apply(document(A, dict(B, priority=2)), source="first-new-revision")
+        self.assertEqual(len(self.replan.history("b")), 1)
 
     def test_new_revision_cannot_drop_foreign_or_legacy_tasks(self):
         from holding.autonomy import Mission
