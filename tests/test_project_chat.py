@@ -67,8 +67,9 @@ class ProjectChatTests(unittest.TestCase):
             "SELECT COUNT(*) FROM research_briefs").fetchone()[0], 1)
         self.assertEqual(self.store.db.execute(
             "SELECT COUNT(*) FROM grants").fetchone()[0], 0)
-        self.assertEqual(self.store.missions()[0].state, "READY")
-        self.assertEqual(self.store.missions()[0].operation, "plan")
+        research = next(m for m in self.store.missions() if m.id == result.mission_id)
+        self.assertEqual(research.state, "READY")
+        self.assertEqual(research.operation, "plan")
         self.assertEqual(result.workplan_state, "STAGED")
         self.assertEqual((result.queued_tasks, result.deferred_tasks), (1, 1))
         self.assertEqual(len(self.store.missions()), 2)
@@ -142,7 +143,7 @@ class ProjectChatTests(unittest.TestCase):
                           side_effect=lambda *a, **kw: next(responses)):
             done = self.chat.resume(prior.session_id)
         self.assertEqual(done.status, "READY")
-        self.assertEqual(len(self.store.missions()), 1)
+        self.assertEqual(len(self.store.missions()), 2)
         self.assertEqual(self.store.db.execute(
             "SELECT COUNT(*) FROM roadmap_versions").fetchone()[0], 2)
 
