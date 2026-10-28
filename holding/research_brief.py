@@ -79,8 +79,13 @@ def _bounded_text(value: Any, label: str, *, maximum: int = 1000) -> str:
 
 
 def _validate_proposal(raw: str) -> dict:
-    if (not isinstance(raw, str)
-            or not 1 <= len(raw.encode("utf-8")) <= MAX_PROPOSAL_BYTES):
+    if not isinstance(raw, str):
+        raise ResearchBriefError("Missing or oversized model proposal")
+    try:
+        size = len(raw.encode("utf-8"))
+    except UnicodeError as exc:
+        raise ResearchBriefError("Invalid Unicode in model proposal") from exc
+    if not 1 <= size <= MAX_PROPOSAL_BYTES:
         raise ResearchBriefError("Missing or oversized model proposal")
     try:
         data = json.loads(raw, object_pairs_hook=_unique_object,
@@ -180,8 +185,13 @@ class ResearchBriefService:
         if row is None:
             return None
         if (not isinstance(row["proposal_sha256"], str)
-                or not DIGEST.fullmatch(row["proposal_sha256"])
-                or _digest(row["proposal_json"]) != row["proposal_sha256"]):
+                or not DIGEST.fullmatch(row["proposal_sha256"])):
+            raise ResearchBriefError("Stored research proposal integrity mismatch")
+        try:
+            stored_digest = _digest(row["proposal_json"])
+        except (TypeError, UnicodeError) as exc:
+            raise ResearchBriefError("Stored research proposal cannot be decoded") from exc
+        if stored_digest != row["proposal_sha256"]:
             raise ResearchBriefError("Stored research proposal integrity mismatch")
         proposal = _validate_proposal(row["proposal_json"])
         return ResearchBriefReceipt(

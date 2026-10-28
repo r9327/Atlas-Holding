@@ -200,6 +200,8 @@ class ResearchBriefTests(unittest.TestCase):
             _validate_proposal('{"concept":"one","concept":"two"}')
         with self.assertRaises(ResearchBriefError):
             _validate_proposal("X" * (64 * 1024 + 1))
+        with self.assertRaises(ResearchBriefError):
+            _validate_proposal(chr(0xD800))
 
     def test_model_health_failure_has_no_recorded_proposal(self):
         with patch.object(ollama_protocol, "_installed_model",
