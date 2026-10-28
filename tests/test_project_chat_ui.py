@@ -76,6 +76,22 @@ class ProjectChatUiTests(unittest.TestCase):
         self.assertIn("Des artisans.", window.history.toPlainText())
         window.close()
 
+    def test_staged_workplan_counts_are_only_queued_not_completed(self):
+        done = ChatView(SID, REPO, "Créer un outil", (), (), "READY", None,
+                        "chat-" + SID[:24], "1" * 64, "Concept proposé",
+                        "STAGED", 2, 3)
+        with patch.object(ProjectChatWindow, "_call", return_value=done):
+            window = ProjectChatWindow(
+                database=self.database, repository=REPO,
+                model_config=self.config)
+            self.flush(window)
+        self.assertIn("2 tâches logicielles transmises",
+                      window.history.toPlainText())
+        self.assertIn("3 tâches hors code différées",
+                      window.history.toPlainText())
+        self.assertNotIn("mission terminée", window.status.text().lower())
+        window.close()
+
     def test_unverified_result_does_not_claim_prototype_complete(self):
         done = ChatView(SID, REPO, "Créer un outil innovant", (), (),
                         "READY", None, "chat-" + SID[:24],
