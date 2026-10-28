@@ -1,0 +1,426 @@
+{
+  "schema_version": 1,
+  "repository": "r9327/Atlas-Holding",
+  "snapshot_sha": "c2a1b241046749af7ad8b7e128a9d35d025956bc",
+  "source_uri": "docs/roadmap/HOLDING_AUTONOMY_V2_2026-10-28.md",
+  "source_digest": "6d358e4b5f7ce74ca149bf237ebb8ba0811b24e68a0c2d5b2ba5823837994b4b",
+  "requirements": [
+    {
+      "id": "F01",
+      "statement": "Ajouter une demande à un projet existant, avec filiation et historique, sans exiger un nouveau dépôt."
+    },
+    {
+      "id": "F02",
+      "statement": "Vérifier automatiquement les prérequis avant une mission et préparer les actions couvertes par les grants."
+    },
+    {
+      "id": "F03",
+      "statement": "Présenter le livrable, les preuves, les blocages précis et la prochaine action dans un écran cohérent."
+    },
+    {
+      "id": "F04",
+      "statement": "Changer de diagnostic, outil ou modèle après des échecs sans progrès mesurable."
+    },
+    {
+      "id": "F05",
+      "statement": "Restaurer un état vérifié en préservant les données et travaux utiles."
+    },
+    {
+      "id": "F06",
+      "statement": "Éprouver un modèle, plugin ou changement sur un dépôt isolé avant usage réel."
+    },
+    {
+      "id": "F07",
+      "statement": "Réutiliser les diagnostics, solutions et tests validés en invalidant les faits périmés."
+    },
+    {
+      "id": "F08",
+      "statement": "Informer sur les résultats et décisions nécessaires, sans journal bavard ni relances de routine."
+    },
+    {
+      "id": "F09",
+      "statement": "Transformer l’objectif en critères stables et vérifiables avant de coder."
+    },
+    {
+      "id": "F10",
+      "statement": "Chercher les fonctionnalités présentes, les PR et leurs implémentations partielles avant d’ajouter."
+    },
+    {
+      "id": "F11",
+      "statement": "Découper les gros objectifs en versions cohérentes intégrables."
+    },
+    {
+      "id": "F12",
+      "statement": "Ordonnancer les PR, détecter les conflits et retester leur composition."
+    },
+    {
+      "id": "F13",
+      "statement": "Partir d’un log, d’une erreur ou d’une capture pour reproduire puis empêcher le retour du défaut."
+    },
+    {
+      "id": "F14",
+      "statement": "Réparer les dépendances défectueuses dans les autorisations durables."
+    },
+    {
+      "id": "F15",
+      "statement": "Conserver les choix explicites de l’utilisateur avec portée, source et possibilité de révision."
+    },
+    {
+      "id": "F16",
+      "statement": "Réévaluer les tâches quand l’objectif change sans casser une opération atomique."
+    },
+    {
+      "id": "F17",
+      "statement": "Rejouer sur environnement jetable les étapes nécessaires à une panne à partir d’un journal minimal."
+    },
+    {
+      "id": "F18",
+      "statement": "Réutiliser un résultat coûteux seulement si son identité et ses préconditions restent valides."
+    }
+  ],
+  "lots": [
+    {
+      "id": "lot-F01",
+      "title": "Conversation continue par projet",
+      "dependencies": [
+        "lot-F15"
+      ],
+      "requirement_ids": [
+        "F01"
+      ],
+      "acceptance": [
+        "Une précision après livraison crée une révision liée, sans écraser le contrat précédent.",
+        "Une reprise après crash ne duplique ni demande ni mission.",
+        "Le contexte ancien pertinent est sourcé ; les tâches non touchées continuent."
+      ],
+      "autonomy": "AUTO_WITH_STANDING_GRANT",
+      "state": "TRIAGED",
+      "external_evidence_required": true,
+      "external_review_pending": true
+    },
+    {
+      "id": "lot-F02",
+      "title": "Préflight de faisabilité et capacités",
+      "dependencies": [],
+      "requirement_ids": [
+        "F02"
+      ],
+      "acceptance": [
+        "Distinguer installé, sain, autorisé, disponible et benchmarké.",
+        "Une API Ollama arrêtée propose un démarrage, pas une réinstallation.",
+        "Un prérequis absent bloque seulement les lots dépendants ; aucun faux READY."
+      ],
+      "autonomy": "AUTO_WITH_STANDING_GRANT",
+      "state": "TRIAGED",
+      "external_evidence_required": true,
+      "external_review_pending": true
+    },
+    {
+      "id": "lot-F03",
+      "title": "Suivi vivant par résultat",
+      "dependencies": [
+        "lot-F02"
+      ],
+      "requirement_ids": [
+        "F03"
+      ],
+      "acceptance": [
+        "Les statuts reflètent SQLite et le SHA observé, sans pourcentage inventé.",
+        "Pas de travail lourd sur le thread Qt.",
+        "Les détails techniques sont consultables sans saturer la vue normale."
+      ],
+      "autonomy": "AUTO_WITH_STANDING_GRANT",
+      "state": "TRIAGED",
+      "external_evidence_required": true,
+      "external_review_pending": true
+    },
+    {
+      "id": "lot-F04",
+      "title": "Changement de stratégie après stagnation",
+      "dependencies": [
+        "lot-F02",
+        "lot-F07"
+      ],
+      "requirement_ids": [
+        "F04"
+      ],
+      "acceptance": [
+        "Détecter les tentatives équivalentes et borner leur budget.",
+        "Une nouvelle stratégie doit s’appuyer sur une information nouvelle.",
+        "Aucun changement silencieux de modèle pendant une écriture ; checkpoint et traçabilité."
+      ],
+      "autonomy": "AUTO_WITH_STANDING_GRANT",
+      "state": "TRIAGED",
+      "external_evidence_required": true,
+      "external_review_pending": true
+    },
+    {
+      "id": "lot-F05",
+      "title": "Retour au dernier état validé",
+      "dependencies": [
+        "lot-F06"
+      ],
+      "requirement_ids": [
+        "F05"
+      ],
+      "acceptance": [
+        "Tester une restauration réelle et une mise à jour défectueuse sur copie jetable.",
+        "Ne pas faire de reset destructeur sur un worktree utilisateur.",
+        "Vérifier schémas, sources et empreintes avant reprise ; garder les versions utiles."
+      ],
+      "autonomy": "AUTO_WITH_STANDING_GRANT",
+      "state": "TRIAGED",
+      "external_evidence_required": true,
+      "external_review_pending": true
+    },
+    {
+      "id": "lot-F06",
+      "title": "Banc d’essai jetable des capacités",
+      "dependencies": [
+        "lot-F02"
+      ],
+      "requirement_ids": [
+        "F06"
+      ],
+      "acceptance": [
+        "Le codeur corrige un défaut injecté et l’auditeur détecte une anomalie.",
+        "Tester timeout, réponse malformée, indisponibilité et fin des processus.",
+        "Les preuves identifient version, digest, environnement et suite ; aucune auto-note."
+      ],
+      "autonomy": "AUTO_WITH_STANDING_GRANT",
+      "state": "TRIAGED",
+      "external_evidence_required": true,
+      "external_review_pending": true
+    },
+    {
+      "id": "lot-F07",
+      "title": "Mémoire des erreurs vérifiées",
+      "dependencies": [],
+      "requirement_ids": [
+        "F07"
+      ],
+      "acceptance": [
+        "Conserver cause, fichiers, SHA, test et preuve de correction.",
+        "Ne pas recycler un fait lorsque le code ou l’environnement pertinent change.",
+        "La mémoire n’accorde jamais un PASS ni un droit d’exécution."
+      ],
+      "autonomy": "AUTO_WITH_STANDING_GRANT",
+      "state": "TRIAGED",
+      "external_evidence_required": true,
+      "external_review_pending": true
+    },
+    {
+      "id": "lot-F08",
+      "title": "Bilan utile et notifications sobres",
+      "dependencies": [
+        "lot-F03"
+      ],
+      "requirement_ids": [
+        "F08"
+      ],
+      "acceptance": [
+        "Un bilan distingue code livré, validation ciblée, CI, fusion et release.",
+        "Notifier une intervention nécessaire une fois, avec cause et prochaine action.",
+        "Ne pas notifier chaque appel d’outil ; continuer les lots indépendants."
+      ],
+      "autonomy": "AUTO_WITH_STANDING_GRANT",
+      "state": "TRIAGED",
+      "external_evidence_required": true,
+      "external_review_pending": true
+    },
+    {
+      "id": "lot-F09",
+      "title": "Critères de réussite avant édition",
+      "dependencies": [],
+      "requirement_ids": [
+        "F09"
+      ],
+      "acceptance": [
+        "Chaque exigence promise possède un ID et un test ou une preuve attendue.",
+        "Poser zéro à trois questions seulement si elles changent réellement le résultat.",
+        "Un changement de direction conserve la source et le diff des exigences."
+      ],
+      "autonomy": "AUTO_WITH_STANDING_GRANT",
+      "state": "TRIAGED",
+      "external_evidence_required": true,
+      "external_review_pending": true
+    },
+    {
+      "id": "lot-F10",
+      "title": "Détection de l’existant avant création",
+      "dependencies": [
+        "lot-F09"
+      ],
+      "requirement_ids": [
+        "F10"
+      ],
+      "acceptance": [
+        "Relever le propriétaire canonique et les consommateurs pertinents.",
+        "Distinguer code présent, PR non fusionnée et fonctionnalité réellement opérationnelle.",
+        "Une proposition de doublon est remplacée par réutilisation ou adaptation justifiée."
+      ],
+      "autonomy": "AUTO_WITH_STANDING_GRANT",
+      "state": "TRIAGED",
+      "external_evidence_required": true,
+      "external_review_pending": true
+    },
+    {
+      "id": "lot-F11",
+      "title": "Petites livraisons utilisables",
+      "dependencies": [
+        "lot-F09",
+        "lot-F10"
+      ],
+      "requirement_ids": [
+        "F11"
+      ],
+      "acceptance": [
+        "Chaque lot produit un résultat vérifiable et possède ses dépendances.",
+        "Les interfaces transversales sont exercées avant accumulation de branches.",
+        "Aucun lot n’est supprimé silencieusement pour présenter le chantier comme fini."
+      ],
+      "autonomy": "AUTO_WITH_STANDING_GRANT",
+      "state": "TRIAGED",
+      "external_evidence_required": true,
+      "external_review_pending": true
+    },
+    {
+      "id": "lot-F12",
+      "title": "Gestion des dépendances entre PR",
+      "dependencies": [
+        "lot-F11",
+        "lot-F06"
+      ],
+      "requirement_ids": [
+        "F12"
+      ],
+      "acceptance": [
+        "Respecter les bases de PR empilées et préserver les commits uniques.",
+        "Une nouvelle composition invalide les preuves incompatibles avec son SHA.",
+        "Fusion uniquement sous délégation et selon les règles applicables, jamais sur du vert périmé."
+      ],
+      "autonomy": "AUTO_WITH_STANDING_GRANT",
+      "state": "TRIAGED",
+      "external_evidence_required": true,
+      "external_review_pending": true
+    },
+    {
+      "id": "lot-F13",
+      "title": "Reproduction et régression des bugs",
+      "dependencies": [
+        "lot-F06"
+      ],
+      "requirement_ids": [
+        "F13"
+      ],
+      "acceptance": [
+        "Séparer observation, hypothèse et reproduction confirmée.",
+        "Obtenir un test rouge avant correction quand la reproduction le permet.",
+        "Ne pas présenter une analyse statique comme une correction visuelle Windows vérifiée."
+      ],
+      "autonomy": "AUTO_WITH_STANDING_GRANT",
+      "state": "TRIAGED",
+      "external_evidence_required": true,
+      "external_review_pending": true
+    },
+    {
+      "id": "lot-F14",
+      "title": "Réparation de l’environnement",
+      "dependencies": [
+        "lot-F02",
+        "lot-F06"
+      ],
+      "requirement_ids": [
+        "F14"
+      ],
+      "acceptance": [
+        "Réutiliser les composants sains et ne pas écraser une installation utilisateur.",
+        "Éprouver les sources/pins et garder reprise/rollback.",
+        "Une réparation non autorisée ou payante devient une décision ciblée, pas un blocage global."
+      ],
+      "autonomy": "AUTO_WITH_STANDING_GRANT",
+      "state": "TRIAGED",
+      "external_evidence_required": true,
+      "external_review_pending": true
+    },
+    {
+      "id": "lot-F15",
+      "title": "Mémoire des décisions produit",
+      "dependencies": [],
+      "requirement_ids": [
+        "F15"
+      ],
+      "acceptance": [
+        "Distinguer décision utilisateur, défaut recommandé et hypothèse du modèle.",
+        "Une nouvelle instruction applicable remplace la préférence précédente avec historique.",
+        "Aucun mélange de décisions ou de données privées entre projets."
+      ],
+      "autonomy": "AUTO_WITH_STANDING_GRANT",
+      "state": "TRIAGED",
+      "external_evidence_required": true,
+      "external_review_pending": true
+    },
+    {
+      "id": "lot-F16",
+      "title": "Arrêt du travail devenu inutile",
+      "dependencies": [
+        "lot-F01",
+        "lot-F03",
+        "lot-F09"
+      ],
+      "requirement_ids": [
+        "F16"
+      ],
+      "acceptance": [
+        "Arrêter au checkpoint sûr les tâches obsolètes.",
+        "Préserver les livrables et preuves encore utiles.",
+        "Ne pas annuler une tâche indépendante ni réutiliser une preuve pour un contrat modifié."
+      ],
+      "autonomy": "AUTO_WITH_STANDING_GRANT",
+      "state": "TRIAGED",
+      "external_evidence_required": true,
+      "external_review_pending": true
+    },
+    {
+      "id": "lot-F17",
+      "title": "Replay d’une panne",
+      "dependencies": [
+        "lot-F13",
+        "lot-F07"
+      ],
+      "requirement_ids": [
+        "F17"
+      ],
+      "acceptance": [
+        "Journal sans secrets : versions, entrées autorisées, états et empreintes.",
+        "Replay interdit par défaut sur le dépôt ou les données utilisateur réelles.",
+        "Le replay conserve les différences d’environnement et ne fabrique aucune preuve native."
+      ],
+      "autonomy": "AUTO_WITH_STANDING_GRANT",
+      "state": "TRIAGED",
+      "external_evidence_required": true,
+      "external_review_pending": true
+    },
+    {
+      "id": "lot-F18",
+      "title": "Réemploi de résultats prouvés",
+      "dependencies": [
+        "lot-F07",
+        "lot-F10",
+        "lot-F06"
+      ],
+      "requirement_ids": [
+        "F18"
+      ],
+      "acceptance": [
+        "Clé incluant sources, contrat, versions, environnement et portée du projet.",
+        "Une dépendance changée ou une preuve expirée provoque un recalcul ciblé.",
+        "Aucune propagation de secrets ni certificat emprunté à un autre projet."
+      ],
+      "autonomy": "AUTO_WITH_STANDING_GRANT",
+      "state": "TRIAGED",
+      "external_evidence_required": true,
+      "external_review_pending": true
+    }
+  ]
+}

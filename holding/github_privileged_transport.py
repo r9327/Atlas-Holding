@@ -276,7 +276,7 @@ class GitHubPrivilegedTransport:
         query = (
             f"mutation($id:ID!,$clientMutationId:String!){{{name}(input:{{"
             "pullRequestId:$id,clientMutationId:$clientMutationId}){"
-            "clientMutationId pullRequest{id isDraft}}}}"
+            "clientMutationId pullRequest{id isDraft}}}"
         )
         response = self._request(
             "POST", "https://api.github.com/graphql",
