@@ -1,7 +1,7 @@
 # Premier livrable R&D local — propositions vérifiables
 
 Cette étape complète la PR #25 : la Holding peut produire **à la demande** un
-dossier de recherche et conception pour une mission de type \`plan\`, en
+dossier de recherche et conception pour une mission de type `plan`, en
 utilisant un modèle Ollama installé localement, identifié par son digest exact.
 L'outil ne nécessite pas de service distant, n'accède pas au Web et ne modifie
 aucun dépôt Git.
@@ -9,10 +9,10 @@ aucun dépôt Git.
 ## Préparation
 
 Importer une roadmap JSON via la commande opérateur existante. Son objectif
-\`project_goal\` est obligatoire pour produire un dossier R&D (mais demeure
+`project_goal` est obligatoire pour produire un dossier R&D (mais demeure
 facultatif pour les autres tâches).
 
-\`\`\`json
+```json
 {
   "repo": "owner/projet",
   "project_goal": "Concevoir un système de tri automatisé pour un atelier.",
@@ -24,20 +24,20 @@ facultatif pour les autres tâches).
     }
   ]
 }
-\`\`\`
+```
 
 Le modèle doit être déjà installé sur le poste avec une configuration
-Ollama existante et épinglée au format \`schema=1\`, \`model\`, \`digest\`,
-\`num_ctx\`, \`timeout\`. Le fichier de configuration et la base SQLite sont
+Ollama existante et épinglée au format `schema=1`, `model`, `digest`,
+`num_ctx`, `timeout`. Le fichier de configuration et la base SQLite sont
 des chemins locaux absolus choisis par l'opérateur.
 
-\`\`\`shell
+```shell
 python -m holding.daemon_cli --db "/chemin/holding.sqlite" import --roadmap-file "/chemin/roadmap.json" --source "operator:rd"
 python -m holding.daemon_cli --db "/chemin/holding.sqlite" research-brief --mission-id "etude-1" --model-config "/chemin/modele.json"
-\`\`\`
+```
 
-La commande retourne un JSON comprenant \`status\` =
-\`UNVERIFIED_RESEARCH_PROPOSAL\`, un concept, des hypothèses, des expériences
+La commande retourne un JSON comprenant `status` =
+`UNVERIFIED_RESEARCH_PROPOSAL`, un concept, des hypothèses, des expériences
 avec critères de mesure, des étapes de prototype, des inconnues et les
 empreintes de la spécification, du modèle et du dossier.
 
@@ -54,7 +54,7 @@ empreintes de la spécification, du modèle et du dossier.
   sans réinterroger le modèle ; après révision du plan, un nouvel artefact
   reçoit une nouvelle identité. Les propositions historiques ne valent jamais
   preuve de réalisation.
-- La commande n'accepte qu'une mission \`plan\` en état \`READY\`.
+- La commande n'accepte qu'une mission `plan` en état `READY`.
   Pause/STOP et toute modification de mission pendant la génération
   empêchent de persister le résultat.
 - Il s'agit pour l'instant d'une **action explicite de l'opérateur**,

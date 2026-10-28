@@ -116,6 +116,27 @@ class ResearchBriefTests(unittest.TestCase):
         self.assertEqual(response["brief"]["concept"], PROPOSAL["concept"])
         self.assertEqual(self.store.missions()[0].state, "READY")
 
+    def test_fresh_database_does_not_generate_without_imported_plan(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with StateStore(Path(directory) / "blank.sqlite") as blank:
+                with self.assertRaisesRegex(ResearchBriefError, "Import a plan"):
+                    ResearchBriefService(blank).prepare(
+                        "research-1", config_path=self.config_path)
+
+    def test_invalid_unicode_project_goal_is_rejected_before_generation(self):
+        with self.store._transaction():
+            spec = json.loads(self.store.db.execute(
+                "SELECT spec_json FROM mission_specs WHERE id='research-1'"
+            ).fetchone()[0])
+            spec["project_goal"] = "\ud800"
+            self.store.db.execute(
+                "UPDATE mission_specs SET spec_json=? WHERE id='research-1'",
+                (json.dumps(spec),))
+        with patch.object(ollama_protocol, "_http",
+                          side_effect=AssertionError("unexpected model call")):
+            with self.assertRaises(ResearchBriefError):
+                self.service.prepare("research-1", config_path=self.config_path)
+
     def test_operator_must_select_imported_plan_and_explicit_goal(self):
         for task_id in ("absent", "../unsafe", "research-1; drop table"):
             with self.subTest(task_id=task_id), \

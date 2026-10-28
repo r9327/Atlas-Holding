@@ -67,8 +67,13 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict:
 
 
 def _bounded_text(value: Any, label: str, *, maximum: int = 1000) -> str:
-    if (not isinstance(value, str) or not value.strip()
-            or len(value.encode("utf-8")) > maximum):
+    if not isinstance(value, str) or not value.strip():
+        raise ResearchBriefError("Invalid bounded " + label)
+    try:
+        size = len(value.encode("utf-8"))
+    except UnicodeError as exc:
+        raise ResearchBriefError("Invalid Unicode in " + label) from exc
+    if size > maximum:
         raise ResearchBriefError("Invalid bounded " + label)
     return value
 
@@ -127,6 +132,11 @@ class ResearchBriefService:
     def _source(self, mission_id: str) -> tuple[str, str, dict]:
         if not isinstance(mission_id, str) or not MISSION_ID.fullmatch(mission_id):
             raise ResearchBriefError("Invalid mission identifier")
+        installed = self.store.db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='mission_specs'").fetchone()
+        if not installed:
+            raise ResearchBriefError("Import a plan mission before research")
         row = self.store.db.execute(
             "SELECT m.repo,m.operation,m.state,s.spec_json "
             "FROM missions m JOIN mission_specs s ON s.id=m.id "
