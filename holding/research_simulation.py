@@ -121,17 +121,21 @@ class LocalSimulationRunner:
                 computed["model"], computed["final"], row["computed_epoch"]))
         return tuple(result)
 
-    def run_available(self, plan) -> tuple[SimulationReceipt, ...]:
+    def run_available(self, plan, *, circuit_done: set[int] | None = None
+                      ) -> tuple[SimulationReceipt, ...]:
         """Run only bounded simulations whose dependencies already ran here."""
         if self.store.background_suspended():
             raise SimulationError("Simulations paused or stopped")
         if plan.state != "STAGED":
             raise SimulationError("Staged project workplan required")
         complete = {item.task_index for item in self.inspect(plan)}
+        # Only the coordinator supplies indices of integrity-checked RC runs.
+        dependencies_done = set(circuit_done or ())
         for index, task in enumerate(plan.tasks):
             spec = task.get("simulation")
             if (index in complete or task["kind"] != "simulation" or spec is None
-                    or any(dep not in complete for dep in task["depends_on"])):
+                    or any(dep not in complete | dependencies_done
+                           for dep in task["depends_on"])):
                 continue
             text = _canonical(compute_simulation(spec))
             with self.store._transaction():

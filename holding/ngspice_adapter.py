@@ -268,22 +268,55 @@ class CircuitSimulationRunner:
                 row["executable_sha256"], float(last[1]), row["computed_epoch"]))
         return tuple(result)
 
-    def run_available(self, plan, *, numeric_done: set[int]) -> tuple[CircuitReceipt, ...]:
+    def deferred_reasons(self, plan) -> dict[int, str]:
+        reasons = {}
+        for index, task in enumerate(plan.tasks):
+            if "circuit" not in task:
+                continue
+            prefix = (f"session:{plan.session_id} plan:{plan.plan_sha256} "
+                      f"task:{index} reason:")
+            row = self.store.db.execute(
+                "SELECT detail FROM events WHERE event='RND_CIRCUIT_DEFERRED' "
+                "AND detail LIKE ? ORDER BY seq DESC LIMIT 1", (prefix + "%",)
+            ).fetchone()
+            if row:
+                reasons[index] = row["detail"][len(prefix):]
+        return reasons
+
+    def run_available(self, plan, *, numeric_done: set[int],
+                      attempted: set[int] | None = None) -> tuple[CircuitReceipt, ...]:
         if self.store.background_suspended():
             raise CircuitSimulationError("Simulations paused or stopped")
         if plan.state != "STAGED":
             raise CircuitSimulationError("Only staged workplans may run circuit simulation")
         finished = {r.task_index for r in self.inspect(plan)}
+        attempted = attempted if attempted is not None else set()
         if self.config_path is None:
             return self.inspect(plan)
         for index, task in enumerate(plan.tasks):
-            if (index in finished or task["kind"] != "simulation"
+            if (index in finished or index in attempted or task["kind"] != "simulation"
                     or "circuit" not in task
                     or any(dep not in finished | numeric_done
                            for dep in task["depends_on"])):
                 continue
             circuit = validate_circuit_spec(task["circuit"])
-            result, exe_sha = execute_rc(circuit, self.config_path)
+            attempted.add(index)
+            try:
+                result, exe_sha = execute_rc(circuit, self.config_path)
+            except CircuitSimulationError as exc:
+                # A failed native task is deferred, never completed. Continue
+                # independent tasks; corruption of persisted results still
+                # raises from inspect(), and Pause/STOP still aborts the run.
+                detail = (f"session:{plan.session_id} plan:{plan.plan_sha256} "
+                          f"task:{index} reason:{str(exc)[:240]}")
+                with self.store._transaction():
+                    if self.store.background_suspended():
+                        raise CircuitSimulationError("Simulations paused or stopped") from exc
+                    if not self.store.db.execute(
+                            "SELECT 1 FROM events WHERE event='RND_CIRCUIT_DEFERRED' "
+                            "AND detail=? LIMIT 1", (detail,)).fetchone():
+                        self.store._event(None, "RND_CIRCUIT_DEFERRED", detail)
+                continue
             encoded = _canonical(result)
             with self.store._transaction():
                 if self.store.background_suspended():

@@ -87,7 +87,7 @@ class ProjectChatUiTests(unittest.TestCase):
             self.flush(window)
         self.assertIn("2 tâches logicielles transmises",
                       window.history.toPlainText())
-        self.assertIn("3 tâches hors code différées",
+        self.assertIn("3 tâches différées",
                       window.history.toPlainText())
         self.assertNotIn("mission terminée", window.status.text().lower())
         window.close()
@@ -105,7 +105,7 @@ class ProjectChatUiTests(unittest.TestCase):
                       window.history.toPlainText())
         self.assertIn("linear_discrete: résultat 22",
                       window.history.toPlainText())
-        self.assertIn("1 tâches hors code différées",
+        self.assertIn("1 tâches différées",
                       window.history.toPlainText())
         self.assertIn("non vérifiée", window.history.toPlainText())
         window.close()
@@ -124,6 +124,92 @@ class ProjectChatUiTests(unittest.TestCase):
         self.assertFalse(window.send.isEnabled())
         self.assertIn("Exécution selon les autorisations", window.status.text())
         window.close()
+
+
+    def test_oversized_utf8_answer_stays_editable_without_calling_model(self):
+        with patch.object(ProjectChatWindow, "_call", return_value=self.asking()):
+            window = ProjectChatWindow(
+                database=self.database, repository=REPO, model_config=self.config)
+            self.addCleanup(window.close)
+            self.flush(window)
+        for text in ("x" * 601, "é" * 301):
+            with self.subTest(text=text[:4]), patch.object(window, "_call") as call:
+                window.entry.setText(text)
+                window.submit()
+                call.assert_not_called()
+                self.assertEqual(window.entry.text(), text)
+                self.assertTrue(window.send.isEnabled())
+                self.assertIn("600 octets UTF-8", window.status.text())
+        accepted = ChatView(SID, REPO, "Créer un outil innovant",
+                            ("Pour qui ?", "Quel usage ?"), ("é" * 300,),
+                            "ASKING", "Quel usage ?", "chat-" + SID[:24], None, None)
+        with patch.object(window, "_call", return_value=accepted):
+            window.entry.setText("é" * 300)
+            window.submit()
+            self.flush(window)
+        self.assertEqual(window.entry.text(), "")
+        self.assertIn("2/2", window.status.text())
+
+
+    def test_model_failure_keeps_input_and_resume_reloads_without_resubmission(self):
+        with patch.object(ProjectChatWindow, "_call", return_value=None):
+            window = ProjectChatWindow(
+                database=self.database, repository=REPO, model_config=self.config)
+            self.addCleanup(window.close)
+            self.flush(window)
+        with patch.object(window, "_call", side_effect=TimeoutError("model")):
+            window.entry.setText("Mon projet conservé")
+            window.submit()
+            self.flush(window)
+        self.assertEqual(window.entry.text(), "Mon projet conservé")
+        self.assertFalse(window.send.isEnabled())
+        self.assertFalse(window.retry.isHidden())
+        asking = self.asking()
+        from dataclasses import replace
+        with patch.object(window, "_call", return_value=replace(
+                asking, initial_goal="Mon projet conservé")) as call:
+            window.retry.click()
+            self.flush(window)
+            self.assertEqual(call.call_args.args, ("resume", None))
+        self.assertEqual(window.entry.text(), "")
+        self.assertTrue(window.send.isEnabled())
+
+
+    def test_resume_after_database_failure_keeps_unaccepted_text(self):
+        with patch.object(ProjectChatWindow, "_call", return_value=None):
+            window = ProjectChatWindow(
+                database=self.database, repository=REPO, model_config=self.config)
+            self.addCleanup(window.close)
+            self.flush(window)
+        with patch.object(window, "_call", side_effect=OSError("database unavailable")):
+            window.entry.setText("Objectif non enregistré")
+            window.submit()
+            self.flush(window)
+        with patch.object(window, "_call", return_value=None):
+            window.retry.click()
+            self.flush(window)
+        self.assertEqual(window.entry.text(), "Objectif non enregistré")
+        self.assertTrue(window.send.isEnabled())
+
+
+
+    def test_deferred_tasks_can_be_resumed_without_closing_window(self):
+        from dataclasses import replace
+        waiting = ChatView(SID, REPO, "Simuler un circuit", (), (), "READY", None,
+                           "chat-" + SID[:24], "1" * 64, "RC", "STAGED", 0, 2)
+        with patch.object(ProjectChatWindow, "_call", return_value=waiting):
+            window = ProjectChatWindow(
+                database=self.database, repository=REPO, model_config=self.config)
+            self.addCleanup(window.close)
+            self.flush(window)
+        self.assertFalse(window.retry.isHidden())
+        recovered = replace(waiting, queued_tasks=1, deferred_tasks=0)
+        with patch.object(window, "_call", return_value=recovered) as call:
+            window.retry.click()
+            self.flush(window)
+            self.assertEqual(call.call_args.args, ("resume", None))
+        self.assertTrue(window.retry.isHidden())
+        self.assertIn("1 tâches logicielles transmises", window.history.toPlainText())
 
 
 if __name__ == "__main__":
