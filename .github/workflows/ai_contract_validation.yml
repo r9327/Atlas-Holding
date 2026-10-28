@@ -1,0 +1,39 @@
+name: AI contract validation
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    types: [ready_for_review, synchronize, reopened, labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  ai-contract:
+    # Draft edits do not trigger the final gate. Explicit ci:validate can request it early.
+    if: >-
+      github.event_name == 'push' ||
+      github.event.pull_request.draft == false ||
+      github.event.label.name == 'ci:validate'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Checkout candidate SHA
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Python 3.13
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Static policy and plugin registry gate
+        run: python -B -X utf8 tools/ai_contract_check.py
+      - name: Policy regression tests
+        run: python -B -X utf8 -m unittest discover -s tests -p "test_ai_contract_check.py" -v
+      - name: Clean checkout
+        shell: bash
+        run: test -z "$(git status --porcelain --untracked-files=normal)"

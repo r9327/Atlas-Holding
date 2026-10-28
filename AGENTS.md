@@ -1,5 +1,7 @@
 # Atlas Holding — règles fondamentales des agents
 
+**Entrée IA commune :** lire `AI_ENTRYPOINT.md` avant toute modification. Les exigences de certification de Holding sont précisées dans `docs/AI_CERTIFICATION.md` et restent subordonnées aux preuves indépendantes réelles.
+
 ## Mission
 Orchestrer en local, avec reprise persistante et sans abonnement IA imposé, le développement de dépôts autorisés. Le premier dépôt cible est r9327/Dof-Atlas. La Holding n'est **pas** la source de vérité des règles de ce dépôt.
 
