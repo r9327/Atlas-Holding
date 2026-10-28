@@ -24,7 +24,8 @@ from .state_store import StateStore
 class ProjectChatWindow(QMainWindow):
     """One visible chat input and a durable local R&D conversation."""
 
-    def __init__(self, *, database: Path, repository: str, model_config: Path):
+    def __init__(self, *, database: Path, repository: str,
+                 model_config: Path, circuit_config: Path | None = None):
         super().__init__()
         if not all(isinstance(p, Path) and p.is_absolute()
                    for p in (database, model_config)):
@@ -32,6 +33,7 @@ class ProjectChatWindow(QMainWindow):
         self.database = database
         self.repository = repository
         self.model_config = model_config
+        self.circuit_config = circuit_config
         self._executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="atlas-project-chat")
         self._future: Future | None = None
@@ -86,7 +88,8 @@ class ProjectChatWindow(QMainWindow):
               value: str | None) -> ChatView | None:
         with StateStore(self.database) as store:
             coordinator = ProjectChatCoordinator(
-                store, repository=self.repository, config_path=self.model_config)
+                store, repository=self.repository, config_path=self.model_config,
+                circuit_config_path=self.circuit_config)
             if action == "latest":
                 view = coordinator.latest()
                 return coordinator.resume(view.session_id) if view else None
@@ -178,6 +181,8 @@ class ProjectChatWindow(QMainWindow):
             lines.append("Holding : " + work)
             for result in view.simulation_results:
                 lines.append("Calcul hypothétique : " + result)
+            for result in view.circuit_results:
+                lines.append("Circuit électrique simulé (hypothèses) : " + result)
             self.status.setText(
                 "Étude R&D enregistrée. " + work +
                 " Exécution selon les autorisations du moteur.")
@@ -200,15 +205,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--db", type=Path, required=True)
     parser.add_argument("--repo", required=True)
     parser.add_argument("--model-config", type=Path, required=True)
+    parser.add_argument("--circuit-config", type=Path,
+                        help="Chemin absolu du moteur ngspice épinglé (optionnel)")
     args = parser.parse_args(argv)
-    if not args.db.is_absolute() or not args.model_config.is_absolute():
-        parser.error("--db and --model-config must be absolute paths")
+    if (not args.db.is_absolute() or not args.model_config.is_absolute()
+            or (args.circuit_config is not None
+                and not args.circuit_config.is_absolute())):
+        parser.error("all supplied config and database paths must be absolute")
     from .ollama_protocol import _config
     _config(args.model_config)
     app = QApplication.instance() or QApplication([])
     window = ProjectChatWindow(
         database=args.db, repository=args.repo,
-        model_config=args.model_config)
+        model_config=args.model_config, circuit_config=args.circuit_config)
     window.show()
     return int(app.exec())
 

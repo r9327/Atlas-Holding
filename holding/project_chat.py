@@ -111,12 +111,14 @@ class ChatView:
     deferred_tasks: int = 0
     simulated_tasks: int = 0
     simulation_results: tuple[str, ...] = ()
+    circuit_results: tuple[str, ...] = ()
 
 
 class ProjectChatCoordinator:
     """Durable small-chat R&D intake for an explicitly chosen repository."""
 
-    def __init__(self, store: StateStore, *, repository: str, config_path: Path):
+    def __init__(self, store: StateStore, *, repository: str,
+                 config_path: Path, circuit_config_path: Path | None = None):
         if not isinstance(store, StateStore):
             raise ProjectChatError("Trusted SQLite store required")
         if (not isinstance(repository, str) or not _REPO.fullmatch(repository)
@@ -126,7 +128,12 @@ class ProjectChatCoordinator:
             raise ProjectChatError("Trusted absolute model config required")
         self.store = store
         self.repository = repository
+        if (circuit_config_path is not None and
+                (not isinstance(circuit_config_path, Path)
+                 or not circuit_config_path.is_absolute())):
+            raise ProjectChatError("Trusted absolute circuit config required")
         self.config_path = config_path
+        self.circuit_config_path = circuit_config_path
 
     def _ensure(self) -> None:
         with self.store._transaction():
@@ -166,23 +173,33 @@ class ProjectChatCoordinator:
             from .research_workplan import ResearchWorkplanCoordinator
             plan = ResearchWorkplanCoordinator(
                 self.store, repository=self.repository,
-                config_path=self.config_path).inspect(row["session_id"])
+                config_path=self.config_path,
+                circuit_config_path=self.circuit_config_path).inspect(row["session_id"])
         simulations = ()
+        circuits = ()
         if plan is not None and plan.state == "STAGED":
             from .research_simulation import LocalSimulationRunner
+            from .ngspice_adapter import CircuitSimulationRunner
             simulations = LocalSimulationRunner(self.store).inspect(plan)
+            circuits = CircuitSimulationRunner(
+                self.store, config_path=self.circuit_config_path).inspect(plan)
         return ChatView(
             row["session_id"], row["repository"], row["initial_goal"],
             questions, answers, status, next_question,
             row["mission_id"], row["proposal_sha256"], concept,
             plan.state if plan else None,
             len(plan.queued) if plan else 0,
-            len(plan.deferred) - len(simulations) if plan else 0,
+            len(plan.deferred) - len(simulations) - len(circuits) if plan else 0,
             len(simulations),
             tuple(
                 f"{item.model}: résultat {item.final} ; preuve de calcul "
                 f"{item.result_sha256[:12]}…"
                 for item in simulations
+            ),
+            tuple(
+                f"RC ngspice: tension finale {item.final_voltage_volts:.6g} V ; "
+                f"empreinte {item.result_sha256[:12]}…"
+                for item in circuits
             ),
         )
 
@@ -327,7 +344,8 @@ class ProjectChatCoordinator:
         from .research_workplan import ResearchWorkplanCoordinator
         ResearchWorkplanCoordinator(
             self.store, repository=self.repository,
-            config_path=self.config_path).continue_from_brief(session_id)
+            config_path=self.config_path,
+            circuit_config_path=self.circuit_config_path).continue_from_brief(session_id)
         return self.view(session_id)
 
     def resume(self, session_id: str) -> ChatView:
@@ -342,6 +360,7 @@ class ProjectChatCoordinator:
             from .research_workplan import ResearchWorkplanCoordinator
             ResearchWorkplanCoordinator(
                 self.store, repository=self.repository,
-                config_path=self.config_path).continue_from_brief(session_id)
+                config_path=self.config_path,
+            circuit_config_path=self.circuit_config_path).continue_from_brief(session_id)
             return self.view(session_id)
         return self._view(row)

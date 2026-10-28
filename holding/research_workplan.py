@@ -44,6 +44,16 @@ _SCHEMA = {"type":"object","properties":{
             "steps":{"type":"integer","minimum":1,"maximum":64},
         },"required":["model","initial","parameter","steps"],
         "additionalProperties":False},
+        "circuit":{"type":"object","properties":{
+            "resistance_ohms":{"type":"integer","minimum":1,"maximum":1000000},
+            "capacitance_microfarads":{"type":"integer","minimum":1,"maximum":100000},
+            "supply_millivolts":{"type":"integer","minimum":-100000,"maximum":100000},
+            "initial_millivolts":{"type":"integer","minimum":-100000,"maximum":100000},
+            "duration_ms":{"type":"integer","minimum":1,"maximum":10000},
+            "samples":{"type":"integer","minimum":8,"maximum":128},
+        },"required":["resistance_ohms","capacitance_microfarads",
+                     "supply_millivolts","initial_millivolts","duration_ms","samples"],
+        "additionalProperties":False},
         },"required":["kind","title","acceptance","depends_on"],
         "additionalProperties":False}},
     },"required":["tasks"],"additionalProperties":False}
@@ -102,13 +112,20 @@ def _validate(raw: str) -> dict:
         if (not isinstance(task, dict)
                 or not {"kind", "title", "acceptance", "depends_on"} <= set(task)
                 or set(task) - {"kind", "title", "acceptance",
-                                 "depends_on", "simulation"}):
+                                 "depends_on", "simulation", "circuit"}):
             raise WorkplanError("Invalid task fields")
+        if "simulation" in task and "circuit" in task:
+            raise WorkplanError("Simulation task cannot mix numerical and circuit models")
         if "simulation" in task:
             from .research_simulation import validate_simulation_spec
             if task["kind"] != "simulation":
                 raise WorkplanError("Only simulation tasks can declare numeric parameters")
             validate_simulation_spec(task["simulation"])
+        if "circuit" in task:
+            from .ngspice_adapter import validate_circuit_spec
+            if task["kind"] != "simulation":
+                raise WorkplanError("Circuit model requires simulation task kind")
+            validate_circuit_spec(task["circuit"])
         if not isinstance(task["kind"], str) or task["kind"] not in _KINDS:
             raise WorkplanError("Invalid task kind")
         _text(task["title"], 180)
@@ -137,14 +154,20 @@ class WorkplanView:
 
 
 class ResearchWorkplanCoordinator:
-    def __init__(self, store: StateStore, *, repository: str, config_path: Path):
+    def __init__(self, store: StateStore, *, repository: str, config_path: Path,
+                 circuit_config_path: Path | None = None):
         if not isinstance(store, StateStore):
             raise WorkplanError("Trusted store required")
         if (not isinstance(repository, str)
                 or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository)
                 or not isinstance(config_path, Path) or not config_path.is_absolute()):
             raise WorkplanError("Explicit trusted repository and model config required")
+        if (circuit_config_path is not None and
+                (not isinstance(circuit_config_path, Path)
+                 or not circuit_config_path.is_absolute())):
+            raise WorkplanError("Explicit absolute circuit simulator config required")
         self.store, self.repository, self.config_path = store, repository, config_path
+        self.circuit_config_path = circuit_config_path
 
     def _check(self) -> None:
         if self.store.background_suspended():
@@ -230,6 +253,14 @@ class ResearchWorkplanCoordinator:
     def inspect(self, sid: str) -> WorkplanView | None:
         return self._stored(sid)
 
+    def _run_simulators(self, plan: WorkplanView) -> None:
+        from .research_simulation import LocalSimulationRunner
+        from .ngspice_adapter import CircuitSimulationRunner
+        numeric = LocalSimulationRunner(self.store).run_available(plan)
+        CircuitSimulationRunner(
+            self.store, config_path=self.circuit_config_path
+        ).run_available(plan, numeric_done={item.task_index for item in numeric})
+
     def continue_from_brief(self, sid: str) -> WorkplanView:
         """Generate once, persist first, then safely import supported code lots."""
         self._check()
@@ -262,7 +293,14 @@ class ResearchWorkplanCoordinator:
                             "initial 0..1000000, parameter 0..10000; "
                             "steps 1..64. Do not invent measured inputs or "
                             "claim these calculations validate reality. "
-                            "Never attach simulation to code or hardware.")},
+                            "Never attach simulation to code or hardware. "
+                            "For an RC transient circuit, optionally attach "
+                            "circuit={resistance_ohms,capacitance_microfarads,"
+                            "supply_millivolts,initial_millivolts,duration_ms,samples} "
+                            "with bounded integer values. This is an idealized "
+                            "RC template, not measured hardware. The ngspice "
+                            "adapter runs only when configured by the operator; "
+                            "do not request permission through project text.")},
                         {"role": "user", "content": _canonical({
                             "project_goal": goal, "research_proposal": brief})},
                     ]}, timeout=config["timeout"])
@@ -287,8 +325,7 @@ class ResearchWorkplanCoordinator:
                      int(time.time())))
             plan = self._stored(sid)
         if plan.state == "STAGED":
-            from .research_simulation import LocalSimulationRunner
-            LocalSimulationRunner(self.store).run_available(plan)
+            self._run_simulators(plan)
             return plan
         missions, queued, deferred = self._route(sid, {"tasks": list(plan.tasks)})
         if missions:
@@ -308,6 +345,5 @@ class ResearchWorkplanCoordinator:
                 f"plan_sha256:{plan.plan_sha256} queued:{len(queued)} "
                 f"deferred:{len(deferred)}")
         staged = self._stored(sid)
-        from .research_simulation import LocalSimulationRunner
-        LocalSimulationRunner(self.store).run_available(staged)
+        self._run_simulators(staged)
         return staged
