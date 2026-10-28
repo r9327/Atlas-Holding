@@ -88,7 +88,8 @@ class ProjectChatWindow(QMainWindow):
             coordinator = ProjectChatCoordinator(
                 store, repository=self.repository, config_path=self.model_config)
             if action == "latest":
-                return coordinator.latest()
+                view = coordinator.latest()
+                return coordinator.resume(view.session_id) if view else None
             if action == "start":
                 return coordinator.start(value or "")
             if action == "answer":
@@ -166,10 +167,16 @@ class ProjectChatWindow(QMainWindow):
             lines.append("Holding : Dossier R&D enregistré (proposition non vérifiée).")
             if view.concept:
                 lines.append("Concept : " + view.concept)
+            work = (
+                f"{view.queued_tasks} tâches logicielles transmises, "
+                f"{view.deferred_tasks} tâches hors code différées."
+                if view.workplan_state == "STAGED"
+                else "Plan de développement non transféré ; reprise requise."
+            )
+            lines.append("Holding : " + work)
             self.status.setText(
-                "Étude enregistrée. Empreinte : " +
-                (view.proposal_sha256[:16] if view.proposal_sha256 else "inconnue") +
-                "…  Pour un autre projet, choisis un autre dépôt.")
+                "Étude R&D enregistrée. " + work +
+                " Exécution selon les autorisations du moteur.")
             self.entry.setPlaceholderText("Autre projet : nouveau dépôt requis")
         else:
             self.status.setText("Étude R&D en cours, reprise possible.")

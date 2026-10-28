@@ -106,6 +106,9 @@ class ChatView:
     mission_id: str
     proposal_sha256: str | None
     concept: str | None
+    workplan_state: str | None = None
+    queued_tasks: int = 0
+    deferred_tasks: int = 0
 
 
 class ProjectChatCoordinator:
@@ -156,10 +159,19 @@ class ProjectChatCoordinator:
                 if _digest(stored["proposal_json"]) != row["proposal_sha256"]:
                     raise ProjectChatError("Stored R&D output integrity mismatch")
                 concept = _validate_proposal(stored["proposal_json"])["concept"]
+        plan = None
+        if status == "READY":
+            from .research_workplan import ResearchWorkplanCoordinator
+            plan = ResearchWorkplanCoordinator(
+                self.store, repository=self.repository,
+                config_path=self.config_path).inspect(row["session_id"])
         return ChatView(
             row["session_id"], row["repository"], row["initial_goal"],
             questions, answers, status, next_question,
             row["mission_id"], row["proposal_sha256"], concept,
+            plan.state if plan else None,
+            len(plan.queued) if plan else 0,
+            len(plan.deferred) if plan else 0,
         )
 
     def latest(self) -> ChatView | None:
@@ -300,6 +312,10 @@ class ProjectChatCoordinator:
                 "proposal_sha256=?,updated_epoch=? WHERE session_id=?",
                 (receipt.proposal_sha256, int(time.time()), session_id),
             )
+        from .research_workplan import ResearchWorkplanCoordinator
+        ResearchWorkplanCoordinator(
+            self.store, repository=self.repository,
+            config_path=self.config_path).continue_from_brief(session_id)
         return self.view(session_id)
 
     def resume(self, session_id: str) -> ChatView:
@@ -310,4 +326,10 @@ class ProjectChatCoordinator:
             return self._assess(row)
         if row["status"] == "GENERATING":
             return self._finish(session_id)
+        if row["status"] == "READY":
+            from .research_workplan import ResearchWorkplanCoordinator
+            ResearchWorkplanCoordinator(
+                self.store, repository=self.repository,
+                config_path=self.config_path).continue_from_brief(session_id)
+            return self.view(session_id)
         return self._view(row)

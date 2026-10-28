@@ -16,6 +16,12 @@ from holding.state_store import StateStore
 REPO = "r9327/Dof-Atlas"
 CONFIG = {"schema": 1, "model": "chat-test:Q4", "digest": "b" * 64,
           "num_ctx": 4096, "timeout": 6}
+WORKPLAN = {"tasks": [
+    {"kind": "code", "title": "Créer le prototype logiciel",
+     "acceptance": ["Ajouter un module de démarrage"], "depends_on": []},
+    {"kind": "hardware", "title": "Préparer le montage",
+     "acceptance": ["Documenter les composants requis"], "depends_on": [0]},
+]}
 PROPOSAL = {
     "concept": "Prototype d'interface accessible.",
     "hypotheses": ["Les utilisateurs souhaitent une interface simple."],
@@ -43,6 +49,7 @@ class ProjectChatTests(unittest.TestCase):
             {"message": {"content": json.dumps({"questions": questions},
                                                ensure_ascii=False)}},
             {"message": {"content": json.dumps(PROPOSAL, ensure_ascii=False)}},
+            {"message": {"content": json.dumps(WORKPLAN, ensure_ascii=False)}},
         ])
         return patch.object(ollama_protocol, "_http",
                             side_effect=lambda *args, **kwargs: next(replies))
@@ -55,13 +62,16 @@ class ProjectChatTests(unittest.TestCase):
         self.assertEqual(result.questions, ())
         self.assertEqual(result.concept, PROPOSAL["concept"])
         self.assertEqual(len(result.proposal_sha256), 64)
-        self.assertEqual(http.call_count, 2)
+        self.assertEqual(http.call_count, 3)
         self.assertEqual(self.store.db.execute(
             "SELECT COUNT(*) FROM research_briefs").fetchone()[0], 1)
         self.assertEqual(self.store.db.execute(
             "SELECT COUNT(*) FROM grants").fetchone()[0], 0)
         self.assertEqual(self.store.missions()[0].state, "READY")
         self.assertEqual(self.store.missions()[0].operation, "plan")
+        self.assertEqual(result.workplan_state, "STAGED")
+        self.assertEqual((result.queued_tasks, result.deferred_tasks), (1, 1))
+        self.assertEqual(len(self.store.missions()), 2)
         with patch.object(ollama_protocol, "_http",
                           side_effect=AssertionError("must be cached")):
             self.assertEqual(self.chat.resume(result.session_id).status, "READY")
@@ -95,7 +105,7 @@ class ProjectChatTests(unittest.TestCase):
             self.assertEqual(http.call_count, 1)
             done = self.chat.answer(first.session_id, "Faire des maquettes.")
             self.assertEqual(done.status, "READY")
-            self.assertEqual(http.call_count, 2)
+            self.assertEqual(http.call_count, 3)
         spec = json.loads(self.store.db.execute(
             "SELECT spec_json FROM mission_specs WHERE id=?", (done.mission_id,)
         ).fetchone()[0])
@@ -123,14 +133,18 @@ class ProjectChatTests(unittest.TestCase):
         prior = self.chat.latest()
         self.assertEqual(prior.status, "GENERATING")
         self.assertEqual(len(self.store.missions()), 1)
+        responses = iter([
+            {"message": {"content": json.dumps(PROPOSAL)}},
+            {"message": {"content": json.dumps(WORKPLAN)}},
+        ])
         with patch.object(ollama_protocol, "_installed_model"), \
              patch.object(ollama_protocol, "_http",
-                          return_value={"message": {"content": json.dumps(PROPOSAL)}}):
+                          side_effect=lambda *a, **kw: next(responses)):
             done = self.chat.resume(prior.session_id)
         self.assertEqual(done.status, "READY")
         self.assertEqual(len(self.store.missions()), 1)
         self.assertEqual(self.store.db.execute(
-            "SELECT COUNT(*) FROM roadmap_versions").fetchone()[0], 1)
+            "SELECT COUNT(*) FROM roadmap_versions").fetchone()[0], 2)
 
     def test_paused_state_never_assesses_or_imports(self):
         self.store.set_paused(True)
