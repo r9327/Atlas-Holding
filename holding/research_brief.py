@@ -126,6 +126,14 @@ class ResearchBriefReceipt:
     brief: dict
 
 
+@dataclass(frozen=True)
+class ResearchBriefView:
+    receipt: ResearchBriefReceipt
+    current: bool
+    source_context: dict | None
+    source_contract_json: str | None
+
+
 class ResearchBriefService:
     """Produce only inspectable research hypotheses, never mutate a mission."""
 
@@ -134,7 +142,23 @@ class ResearchBriefService:
             raise ResearchBriefError("Trusted store is required")
         self.store = store
 
-    def _source(self, mission_id: str) -> tuple[str, str, dict]:
+    @staticmethod
+    def _context(spec: dict, mission_id: str, repository: str) -> dict:
+        if (not isinstance(spec, dict) or spec.get("id") != mission_id
+                or spec.get("operation") != "plan"):
+            raise ResearchBriefError("Mission specification identity mismatch")
+        goal = _bounded_text(spec.get("project_goal"), "project goal", maximum=4096)
+        criteria = spec.get("acceptance")
+        if not isinstance(criteria, list) or not 1 <= len(criteria) <= 30:
+            raise ResearchBriefError("Invalid criteria")
+        for value in criteria:
+            _bounded_text(value, "criterion", maximum=1200)
+        return {"project_goal": goal, "acceptance": criteria,
+                "mission_id": mission_id, "repository": repository}
+
+    def _source(self, mission_id: str, *, require_ready: bool = True,
+                require_context: bool = True
+                ) -> tuple[str, str, dict]:
         if not isinstance(mission_id, str) or not MISSION_ID.fullmatch(mission_id):
             raise ResearchBriefError("Invalid mission identifier")
         installed = self.store.db.execute(
@@ -147,7 +171,8 @@ class ResearchBriefService:
             "FROM missions m JOIN mission_specs s ON s.id=m.id "
             "WHERE m.id=?", (mission_id,),
         ).fetchone()
-        if row is None or row["operation"] != "plan" or row["state"] != "READY":
+        if (row is None or row["operation"] != "plan"
+                or (require_ready and row["state"] != "READY")):
             raise ResearchBriefError("A READY imported plan mission is required")
         try:
             spec = json.loads(row["spec_json"])
@@ -156,19 +181,98 @@ class ResearchBriefService:
         if (not isinstance(spec, dict) or spec.get("id") != mission_id
                 or spec.get("operation") != "plan"):
             raise ResearchBriefError("Mission specification identity mismatch")
-        goal = _bounded_text(spec.get("project_goal"), "project goal", maximum=4096)
-        criteria = spec.get("acceptance")
-        if (not isinstance(criteria, list) or not 1 <= len(criteria) <= 30):
-            raise ResearchBriefError("Invalid criteria")
-        for value in criteria:
-            _bounded_text(value, "criterion", maximum=1200)
         # Scope is attached to mission's persisted project, not model output.
-        return row["repo"], _digest(row["spec_json"]), {
-            "project_goal": goal,
-            "acceptance": criteria,
-            "mission_id": mission_id,
-            "repository": row["repo"],
-        }
+        context = self._context(spec, mission_id, row["repo"]) if require_context else {}
+        return row["repo"], _digest(row["spec_json"]), context
+
+    def inspect(self, mission_id: str, *, repository: str, spec_sha256: str,
+                model_digest: str) -> ResearchBriefView:
+        """Read an exact stored artifact without a model or a schema mutation."""
+        if any(not isinstance(value, str) or not DIGEST.fullmatch(value)
+               for value in (spec_sha256, model_digest)):
+            raise ResearchBriefError("Exact source and model digests required")
+        repo, current_sha, _ = self._source(
+            mission_id, require_ready=False, require_context=False)
+        if repository != repo:
+            raise ResearchBriefError("Foreign research repository")
+        receipt = self._cached(mission_id, repo, spec_sha256, model_digest)
+        if receipt is None:
+            raise ResearchBriefError("Stored research proposal unavailable")
+        current = spec_sha256 == current_sha
+        context = None
+        contract_json = None
+        if current:
+            row = self.store.db.execute(
+                "SELECT spec_json FROM mission_specs WHERE id=?", (mission_id,)).fetchone()
+            if row is None or _digest(row["spec_json"]) != spec_sha256:
+                raise ResearchBriefError("Research source changed during inspection")
+            contract_json = row["spec_json"]
+            context = self._context(json.loads(contract_json), mission_id, repo)
+        if not current and self.store.db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='mission_spec_history'").fetchone():
+            archived = self.store.db.execute(
+                "SELECT version,spec_json FROM mission_spec_history WHERE mission_id=? "
+                "AND spec_sha256=? ORDER BY version DESC LIMIT 1",
+                (mission_id, spec_sha256)).fetchone()
+            if archived:
+                from .roadmap_replan import SafeRoadmapReplanner
+                from .state_store import StoreError
+                try:
+                    revisions = SafeRoadmapReplanner(self.store).history(
+                        mission_id, limit=1, before_version=archived["version"] + 1)
+                except StoreError as exc:
+                    raise ResearchBriefError("Archived research source damaged") from exc
+                if (not revisions or revisions[0].spec_sha256 != spec_sha256
+                        or _digest(archived["spec_json"]) != spec_sha256):
+                    raise ResearchBriefError("Archived research provenance mismatch")
+                context = self._context(revisions[0].specification, mission_id, repo)
+                contract_json = archived["spec_json"]
+        return ResearchBriefView(receipt, current, context, contract_json)
+
+    def history(self, mission_id: str, *, repository: str, limit: int = 20,
+                before_record: int | None = None) -> tuple[tuple[int, ResearchBriefView], ...]:
+        """Bounded, newest-first history; the record ID is the pagination cursor."""
+        if (type(limit) is not int or not 1 <= limit <= 100
+                or (before_record is not None
+                    and (type(before_record) is not int or before_record < 1))):
+            raise ResearchBriefError("Invalid research history page")
+        repo, _, _ = self._source(mission_id, require_ready=False, require_context=False)
+        if repository != repo:
+            raise ResearchBriefError("Foreign research repository")
+        if not self.store.db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='research_briefs'").fetchone():
+            return ()
+        query = "SELECT rowid AS record_id,spec_sha256,model_digest FROM research_briefs WHERE mission_id=?"
+        args: list = [mission_id]
+        if before_record is not None:
+            query += " AND rowid<?"
+            args.append(before_record)
+        query += " ORDER BY rowid DESC LIMIT ?"
+        args.append(limit)
+        return tuple((row["record_id"], self.inspect(
+            mission_id, repository=repo, spec_sha256=row["spec_sha256"],
+            model_digest=row["model_digest"])) for row in self.store.db.execute(query, args))
+
+    def export(self, mission_id: str, *, repository: str, spec_sha256: str,
+               model_digest: str) -> str:
+        view = self.inspect(mission_id, repository=repository,
+                            spec_sha256=spec_sha256, model_digest=model_digest)
+        receipt = view.receipt
+        return json.dumps({
+            "schema": "research-brief-export/v1", "status": STATUS,
+            "mission_id": mission_id, "repository": receipt.repository,
+            "current": view.current,
+            "source_context_available": view.source_context is not None,
+            "source_context": view.source_context,
+            "source_contract_json": view.source_contract_json,
+            "spec_sha256": receipt.spec_sha256, "model_digest": receipt.model_digest,
+            "proposal_sha256": receipt.proposal_sha256,
+            "created_epoch": receipt.created_epoch, "brief": receipt.brief,
+            "note": ("Proposition non vérifiée, sans preuve expérimentale. "
+                     "Un dossier historique ne valide pas le contrat courant."),
+        }, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n"
 
     def _cached(self, mission_id: str, repository: str, spec_sha: str,
                 model_digest: str) -> ResearchBriefReceipt | None:
