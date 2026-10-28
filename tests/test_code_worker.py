@@ -107,7 +107,7 @@ else:
         worker=LocalCodeWorker(self.actor, runner, health_directory=self.root)
         worker(Mission('job',REPO))
         self.assertIn('gestion de quêtes',
-                      (self.root/'trees'/'job'/'intent.txt').read_text())
+                      (self.root/'trees'/'job'/'intent.txt').read_text(encoding='utf-8'))
 
     def test_corrupt_stored_project_goal_blocks_before_model(self):
         row=self.store.db.execute(
