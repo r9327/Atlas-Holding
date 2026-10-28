@@ -30,6 +30,8 @@ jobs:
           from pathlib import Path
           import subprocess, sys
           candidates = (
+              "test_inventory_cli.py", "test_inventory.py",
+              "test_provision_plan.py", "test_roadmap_contract.py",
               "test_document_intake.py", "test_document_csv.py",
               "test_document_exchange.py", "test_document_source.py",
               "test_documentalist_cli.py", "test_document_html.py",
@@ -54,6 +56,25 @@ jobs:
               print("Testing", name, flush=True)
               subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", name, "-v"], check=True)
           PY
+      - name: Verify versioned autonomy roadmap when present
+        if: hashFiles('docs/roadmap/HOLDING_AUTONOMY_V2_2026-10-28.plan.json') != ''
+        env:
+          ROADMAP_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          python - <<'PYCODE'
+          import hashlib, json, os
+          from pathlib import Path
+          from holding.roadmap_contract import validate_roadmap_plan
+          source = Path("docs/roadmap/HOLDING_AUTONOMY_V2_2026-10-28.md")
+          plan = source.with_suffix(".plan.json")
+          validate_roadmap_plan(
+              plan.read_bytes(), expected_repository="r9327/Atlas-Holding",
+              expected_snapshot_sha=os.environ["ROADMAP_BASE_SHA"],
+              expected_source_digest=hashlib.sha256(source.read_bytes()).hexdigest(),
+          )
+          print("Roadmap coverage, dependencies, source and base verified; no missions executed")
+          PYCODE
       - name: Checkout clean after tests
         shell: bash
         run: test -z "$(git status --porcelain --untracked-files=normal)"
