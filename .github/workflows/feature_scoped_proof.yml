@@ -1,12 +1,15 @@
 name: Feature-scoped proof (opt-in)
 on:
   pull_request:
-    types: [labeled]
+    types: [labeled, ready_for_review, synchronize]
 permissions:
   contents: read
 jobs:
   pure-python:
-    if: github.event.label.name == 'ci:feature-scoped'
+    if: >-
+      github.event.label.name == 'ci:feature-scoped' ||
+      (github.event.pull_request.draft == false &&
+       contains(github.event.pull_request.labels.*.name, 'ci:feature-scoped'))
     strategy:
       fail-fast: false
       matrix:
@@ -45,6 +48,13 @@ jobs:
               "test_update_manifest_client.py", "test_update_probe.py",
               "test_update_probe_cli.py", "test_update_stage.py",
               "test_update_switch.py",
+              "test_sqlite_backup.py", "test_migrations.py",
+              "test_github_privileged_transport.py", "test_github_privileged_worker.py",
+              "test_github_mutation_gate.py", "test_sync_coordinator.py",
+              "test_schema_authority.py",
+              "test_research_brief.py", "test_project_chat.py",
+              "test_research_workplan.py", "test_research_simulation.py",
+              "test_ngspice_adapter.py", "test_research_measurement.py",
           )
           present = [name for name in candidates if (Path("tests") / name).is_file()]
           if not present:
