@@ -36,11 +36,11 @@ class GovernanceContractTests(unittest.TestCase):
         self.assertFalse(registry.paid_services_allowed)
         self.assertFalse(registry.executable_hub_ready)
 
-    def test_workflow_does_not_claim_full_certification(self):
-        workflow = (ROOT / ".github/workflows/ai_governance_validation.yml").read_text(encoding="utf-8")
+    def test_existing_foundation_workflow_keeps_exact_head_check(self):
+        workflow = (ROOT / ".github/workflows/foundation_policy_validation.yml").read_text(encoding="utf-8")
         self.assertIn("pull_request:", workflow)
         self.assertIn("github.event.pull_request.head.sha", workflow)
-        self.assertIn("ai_governance_guard.py", workflow)
+        self.assertIn("python -B -X utf8 -m unittest", workflow)
         self.assertNotIn("CERTIFIED=true", workflow)
 
 
