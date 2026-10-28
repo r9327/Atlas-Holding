@@ -124,7 +124,12 @@ class GitHubPrivilegedTransportTests(unittest.TestCase):
         graphql = opener.requests[-1]
         self.assertEqual(graphql.full_url, "https://api.github.com/graphql")
         body = json.loads(graphql.data)
-        self.assertIn("markPullRequestReadyForReview", body["query"])
+        self.assertEqual(body["query"], (
+            "mutation($id:ID!,$clientMutationId:String!){"
+            "markPullRequestReadyForReview(input:{pullRequestId:$id,"
+            "clientMutationId:$clientMutationId}){clientMutationId "
+            "pullRequest{id isDraft}}}"
+        ))
         self.assertEqual(body["variables"]["clientMutationId"], KEY)
 
     def test_moved_head_is_known_rejection_before_mutation(self):
