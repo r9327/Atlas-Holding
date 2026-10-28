@@ -83,6 +83,29 @@ class ProjectMissionGateTests(unittest.TestCase):
         self.assertEqual(len(self.calls), 1)
         self.assertEqual(self.calls[0][1], "trusted:roadmap")
 
+    def test_verified_planner_goal_reaches_real_importer(self):
+        from holding.control import ControlPlane
+        goal='Concevoir une plateforme qui simplifie la recherche.'
+        self.roadmap['project_goal']=goal
+        self.missions['project_goal']=goal
+        with ControlPlane(Path(self.temp.name) / 'engine.sqlite') as control:
+            result=self.invoke(trusted_importer=control.import_roadmap)
+            self.assertEqual(result.added,('lot-1','lot-2'))
+            specs=[json.loads(row[0]) for row in control.store.db.execute(
+                'SELECT spec_json FROM mission_specs ORDER BY id')]
+            self.assertEqual([spec['project_goal'] for spec in specs],[goal,goal])
+
+    def test_unverified_or_missing_goal_cannot_be_injected(self):
+        self.missions['project_goal']='Unverified change'
+        with self.assertRaisesRegex(ProjectMissionGateError,'project goal differs'):
+            self.invoke()
+        self.assertFalse(self.calls)
+        self.missions.pop('project_goal')
+        self.roadmap['project_goal']='Verified goal'
+        with self.assertRaisesRegex(ProjectMissionGateError,'project goal differs'):
+            self.invoke()
+        self.assertFalse(self.calls)
+
     def test_wrong_repository_denied_before_import(self):
         self.missions["repo"] = "example/other"
         with self.assertRaisesRegex(ProjectMissionGateError, "another project"):

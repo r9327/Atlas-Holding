@@ -73,7 +73,9 @@ def import_verified_project_missions(
         raise
     except (ValueError, RecursionError, UnicodeError) as exc:
         raise ProjectMissionGateError("invalid operational roadmap JSON") from exc
-    if (not isinstance(document, dict) or set(document) != {"repo", "missions"}
+    if (not isinstance(document, dict)
+            or not {"repo", "missions"} <= set(document)
+            or set(document) - {"repo", "missions", "project_goal"}
             or not isinstance(document["missions"], list)):
         raise ProjectMissionGateError("invalid operational roadmap structure")
     if len(document["missions"]) > 2000:
@@ -98,6 +100,10 @@ def import_verified_project_missions(
             expected_snapshot_sha=binding.snapshot_sha,
             expected_source_digest=binding.source_digest,
         )
+        # The operational text is still untrusted: it may not invent or alter
+        # the product goal authenticated by the exact-source planner plan.
+        if document.get("project_goal") != plan.project_goal:
+            raise ProjectMissionGateError("operational project goal differs from verified planner")
         lots = {lot.lot_id: lot for lot in plan.lots}
         # The live importer persists every imported mission as READY. Use the
         # same exact-SHA preflight classification exposed by verify-plan to

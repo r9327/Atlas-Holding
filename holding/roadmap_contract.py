@@ -47,6 +47,7 @@ class RoadmapPlan:
     source_digest: str
     requirements: tuple[Requirement, ...]
     lots: tuple[Lot, ...]
+    project_goal: str | None = None
 
     def initially_ready_lots(self) -> tuple[str, ...]:
         return tuple(lot.lot_id for lot in self.lots if lot.state == "READY")
@@ -112,10 +113,19 @@ def validate_roadmap_plan(
         payload = json.loads(raw)
     except (UnicodeError, ValueError) as exc:
         raise RoadmapContractError("Roadmap plan is not valid JSON") from exc
-    data = _exact(payload, {
+    mandatory = {
         "schema_version", "repository", "snapshot_sha", "source_uri",
         "source_digest", "requirements", "lots",
-    }, "roadmap plan")
+    }
+    if (not isinstance(payload, dict) or not mandatory <= set(payload)
+            or set(payload) - mandatory - {"project_goal"}):
+        raise RoadmapContractError("Unexpected roadmap plan shape")
+    data = payload
+    goal = data.get("project_goal")
+    if "project_goal" in data and (not isinstance(goal, str)
+                                   or not goal.strip()
+                                   or len(goal.encode("utf-8")) > 4096):
+        raise RoadmapContractError("Invalid bounded project goal")
     if type(data["schema_version"]) is not int or data["schema_version"] != 1:
         raise RoadmapContractError("Unsupported roadmap plan schema")
     if (data["repository"] != expected_repository
@@ -209,5 +219,5 @@ def validate_roadmap_plan(
 
     return RoadmapPlan(
         expected_repository, expected_snapshot_sha, expected_source_digest,
-        tuple(requirements), tuple(lots),
+        tuple(requirements), tuple(lots), goal,
     )
