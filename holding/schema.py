@@ -167,6 +167,21 @@ ROADMAP_SCHEMA = (
 )
 
 ROADMAP_AMENDMENT_SCHEMA = ROADMAP_SCHEMA[2:]
+
+# Operator-invoked research proposals are NOT mission checkpoints or signed QA.
+# Keep their provenance separate from the autonomous execution state machine.
+RESEARCH_BRIEF_SCHEMA = (
+    """CREATE TABLE IF NOT EXISTS research_briefs (
+        mission_id TEXT NOT NULL REFERENCES missions(id),
+        spec_sha256 TEXT NOT NULL,
+        model_digest TEXT NOT NULL,
+        model_name TEXT NOT NULL,
+        proposal_sha256 TEXT NOT NULL,
+        proposal_json TEXT NOT NULL,
+        created_epoch INTEGER NOT NULL,
+        PRIMARY KEY(mission_id,spec_sha256,model_digest)
+    )""",
+)
 SYNC_STATE_SCHEMA = (
     """CREATE TABLE IF NOT EXISTS external_service_health (
         service TEXT PRIMARY KEY CHECK(service IN ('github','context7','firecrawl')),
