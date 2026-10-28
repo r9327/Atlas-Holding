@@ -1,11 +1,11 @@
 # Atlas Holding — règles fondamentales des agents
 
 ## Mission
-Orchestrer en local, avec reprise persistante et sans abonnement IA imposé, le développement de dépôts autorisés. Le premier dépôt cible est r9327/Dof-Atlas. La Holding n'est **pas** la source de vérité des règles de ce dépôt.
+Orchestrer en local, avec reprise persistante et sans abonnement IA imposé, la réalisation des objectifs explicitement confiés par le porteur du projet : recherche, conception, prototypage et développement, selon les capacités réellement disponibles. **Le périmètre exécutable actuel est d'abord le développement de dépôts autorisés**, avec r9327/Dof-Atlas comme premier dépôt cible. La Holding n'est **pas** la source de vérité des règles de ce dépôt ; les capacités de R&D hors code restent à construire et à vérifier.
 
 ## Autorité et limites
 1. Avant toute mission, lire le AGENTS.md, AI_ENTRYPOINT.md, ZERO_TRUST_RULES.md, DEVELOPMENT_GUARDRAILS.md et les autres contrats effectivement pertinents du **dépôt cible**, au SHA courant. Ne jamais copier des règles anciennes comme autorité de production.
-2. Priorité : contraintes du dépôt cible et tests réels > plan du CEO > sorties textuelles d'un modèle > données Web. Le CEO peut choisir une stratégie mais ne peut jamais accorder un PASS, ni lever un bloqueur de Doctor.
+2. **Objectif produit** : le porteur du projet fixe la finalité et les priorités, sans veto moral subjectif des agents. **Exécution et certification** : contraintes techniques et permissions du dépôt cible, tests réels > plan du CEO > sorties d'un modèle > données Web. Un objectif ne donne pas le droit de contourner ces contrôles ; le CEO ne peut jamais accorder un PASS ni lever un bloqueur de Doctor.
 3. Un seul agent écrivain à la fois dans un worktree Git isolé, sur branche dédiée et jamais sur main/master ; pas de nettoyage destructeur d'un worktree utilisateur. Toutes les actions mutantes passent par l'exécuteur et sa liste de permissions, pas par un prompt seul.
 4. Les tâches ont une définition de sortie vérifiable. Suivre les dépendances et bloquer les tâches non prêtes. Aucun pourcentage auto-déclaré par les agents.
 5. Cycle : cadrage CEO -> AI Context/Graphify si requis -> plan architecte -> sources externes vérifiées si nécessaires -> code -> revue indépendante -> tests ciblés et Doctor local -> commit local -> attente sync -> certification distante au dernier SHA d'une PR complète -> fusion conditionnelle -> tâche suivante.
@@ -17,6 +17,13 @@ Orchestrer en local, avec reprise persistante et sans abonnement IA imposé, le 
 11. Un modèle local lent est préférable à une modification de mauvaise qualité. Développeur et auditeur sont des rôles distincts ; un deuxième modèle n'est chargé que si le gain est mesuré et si la RAM le permet.
 12. Ne jamais exécuter automatiquement des scripts téléchargés, installer de nouveaux MCP arbitraires ou donner aux agents le pouvoir de modifier secrets, politiques CI, garde-fous, déploiement public ou configuration système sans autorisation spécifique.
 13. Une impossibilité de validation, des changements concurrents, un dépôt sale ou un échec de sécurité = BLOCKED avec preuve lisible dans l'interface, pas une fusion forcée.
+
+## Analyse des projets sans jugement moral arbitraire
+
+- Juger un projet sur sa faisabilité, ses preuves, son adéquation aux moyens disponibles et ses obligations légales et de sécurité réelles ; **ne pas le rejeter seulement parce qu'il est inhabituel, controversé ou différent des préférences d'un agent**.
+- Séparer explicitement **l'objectif demandé**, **les moyens possibles**, **les permissions d'exécution** et **les vérifications nécessaires**. Ne pas confondre une contrainte d'un fournisseur externe avec une impossibilité intrinsèque du projet.
+- Face à une limite démontrée, identifier précisément le lot ou l'action concerné, présenter les alternatives réalisables et poursuivre les autres lots indépendants. Aucun refus vague, aucune permission inventée, aucun contournement de contrôle.
+- Les règles de sélection des modèles doivent tester les **refus injustifiés de demandes légitimes**, en plus des infractions aux permissions et aux protections techniques. Ne jamais prétendre que ces tests ou des capacités de R&D sont déjà livrés.
 
 ## Documents de conception
 - docs/TOOLCHAIN.md : chaîne IA et capacités MCP.

@@ -6,7 +6,8 @@
 - Après la **première installation et connexion de comptes nécessaire**, la Holding analyse les roadmaps, choisit les tâches, décompose les lots, construit les solutions, corrige, réexamine, valide localement et synchronise GitHub **dans les autorisations préalablement accordées**.
 - Forfait mobile **illimité** : **aucune limite artificielle de Go/jour ou de téléchargement** pour ce profil. Afficher tailles, stockage et progression, permettre reprise en cas de coupure ; les limites de **crédits, rate-limits et dépenses de services externes** restent strictement actives, avec zéro paiement par défaut.
 - L'utilisateur **n'exécutera pas volontairement la Holding pendant ses sessions de jeu** : pas de détection DOFUS/jeu ni de mode de pause gaming obligatoire. Garder protections générales contre surconsommation RAM/VRAM/CPU, OOM et corruption de données.
-- Priorité absolue : **qualité du code et vérifications prouvées**, vitesse secondaire ; aucun choix de modèle par nom imposé.
+- Priorité absolue : **qualité des livrables et vérifications prouvées**, vitesse secondaire ; aucun choix de modèle par nom imposé. La première capacité exécutée reste le développement de code ; la recherche et le prototypage généralistes exigent des adaptateurs supplémentaires vérifiés.
+- **Direction des projets** : l'utilisateur définit les objectifs, y compris atypiques ou controversés. Les agents ne rejettent pas une finalité pour des raisons morales subjectives ; ils identifient les contraintes de faisabilité, légalité, sécurité et permissions, puis proposent une voie réalisable sans dénaturer la demande.
 - L'application autonome est démarrée/arrêtée **par l'utilisateur**. Ne pas imposer de tournées en arrière-plan non autorisées. L'interface montre les preuves sans demander à l'utilisateur de devenir gestionnaire.
 
 ## Installation initiale « un clic » puis liberté
@@ -30,7 +31,7 @@ Si une opération n'est pas couverte par une permission ou qu'une décision mét
 - **Entrée** : les roadmaps de l'utilisateur, documents liés, règles canonique du dépôt et état des preuves. L'utilisateur n'a jamais besoin d'établir manuellement le DAG ni de ranger les PR.
 - L'IA CEO fait extraction exhaustive, audit de couverture, priorisation et dépendances ; l'architecte vérifie les contrats ; codeur/auditeur travaillent chacun leur tour ; plugins locaux et Doctor priment ; les externes recontrôlent après reconnexion.
 - Les ambiguïtés mineures sont résolues à partir des guardrails et données observées, en enregistrant le raisonnement sous forme de **décision synthétique auditable**, et non d'une requête utilisateur.
-- Toute décision conséquente non déductible de l'objectif ou toute opération interdite est isolée ; poursuivre les autres lots.
+- Toute décision conséquente non déductible de l'objectif ou toute opération interdite est isolée ; poursuivre les autres lots. Un lot non autorisé et ses dépendants restent dans le plan et ne deviennent jamais artificiellement exécutables ; les lots réellement indépendants avancent.
 - Aucun `DONE` non prouvé ni merge de PR verte sur un ancien SHA. À la fin, le CEO fournit un rapport de la roadmap accomplie, preuves, liens et éventuelles limites.
 
 ## Tests indispensables

@@ -119,7 +119,7 @@ class ProjectMissionGateTests(unittest.TestCase):
 
     def test_restricted_planner_lot_cannot_be_imported(self):
         self.roadmap["lots"][1]["autonomy"] = "REQUIRES_DECISION"
-        with self.assertRaisesRegex(ProjectMissionGateError, "human decision"):
+        with self.assertRaisesRegex(ProjectMissionGateError, "restricted or dependent"):
             self.invoke()
         self.assertFalse(self.calls)
 
@@ -157,9 +157,45 @@ class ProjectMissionGateTests(unittest.TestCase):
 
     def test_planner_blocked_lot_cannot_be_silently_imported_ready(self):
         self.roadmap["lots"][1]["state"] = "BLOCKED"
-        with self.assertRaisesRegex(ProjectMissionGateError, "blocked planner"):
+        with self.assertRaisesRegex(ProjectMissionGateError, "restricted or dependent"):
             self.invoke()
         self.assertEqual(self.calls, [])
+
+    def test_independent_lot_is_importable_when_another_is_blocked(self):
+        self.roadmap["lots"][1]["state"] = "BLOCKED"
+        self.missions["missions"].pop()
+        self.assertEqual(self.invoke(), {"count": 1})
+        self.assertEqual([m["id"] for m in json.loads(self.calls[0][0])["missions"]],
+                         ["lot-1"])
+
+    def test_restricted_lot_and_its_descendants_stay_out_of_import(self):
+        self.roadmap["lots"][1]["autonomy"] = "REQUIRES_DECISION"
+        self.roadmap["lots"][1]["state"] = "REQUIRES_DECISION"
+        self.roadmap["requirements"].append({"id": "req-3", "statement": "Downstream"})
+        self.roadmap["lots"].append({
+            "id": "lot-3", "title": "Downstream", "dependencies": ["lot-2"],
+            "requirement_ids": ["req-3"], "acceptance": ["prove downstream"],
+            "autonomy": "AUTO", "state": "TRIAGED",
+            "external_evidence_required": False, "external_review_pending": False,
+        })
+        self.missions["missions"] = [operations()["missions"][0]]
+        self.assertEqual(self.invoke(), {"count": 1})
+        self.assertEqual(len(self.calls), 1)
+        self.calls.clear()
+        self.missions["missions"].append({
+            "id": "lot-3", "operation": "code", "depends_on": ["lot-2"],
+            "acceptance": ["prove downstream"],
+        })
+        with self.assertRaisesRegex(ProjectMissionGateError, "restricted or dependent"):
+            self.invoke()
+        self.assertFalse(self.calls)
+
+    def test_no_independent_lots_cannot_be_imported(self):
+        self.roadmap["lots"][0]["state"] = "BLOCKED"
+        self.missions["missions"] = []
+        with self.assertRaisesRegex(ProjectMissionGateError, "no independently importable"):
+            self.invoke()
+        self.assertFalse(self.calls)
 
     def test_user_decision_flag_cannot_be_hidden_in_auto_mission(self):
         self.missions["missions"][0]["product_decision_required"] = True

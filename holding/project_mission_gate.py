@@ -99,10 +99,27 @@ def import_verified_project_missions(
             expected_source_digest=binding.source_digest,
         )
         lots = {lot.lot_id: lot for lot in plan.lots}
-        if any(lot.state in {"BLOCKED", "REQUIRES_DECISION"} for lot in plan.lots):
-            # The live importer writes all missions as READY. Never smuggle
-            # a planner-blocked lot into that executable state.
-            raise ProjectMissionGateError("blocked planner lots require explicit replan")
+        # The live importer stores every supplied mission as READY. Keep all
+        # restricted lots in the authoritative planner inventory, but import
+        # only the subset that is independently executable. Descendants of a
+        # restricted lot are excluded until a verified replan unblocks them.
+        importable = {
+            lot.lot_id for lot in plan.lots
+            if lot.autonomy in {"AUTO", "AUTO_WITH_STANDING_GRANT"}
+            and lot.state not in {"BLOCKED", "REQUIRES_DECISION"}
+        }
+        while True:
+            dependency_closed = {
+                lot_id for lot_id in importable
+                if all(dep in importable for dep in lots[lot_id].dependencies)
+            }
+            if dependency_closed == importable:
+                break
+            importable = dependency_closed
+        if not importable:
+            raise ProjectMissionGateError(
+                "no independently importable planner lots; replan required"
+            )
         mission_ids = set()
         for mission in document["missions"]:
             if not isinstance(mission, dict):
@@ -117,8 +134,10 @@ def import_verified_project_missions(
                 raise ProjectMissionGateError("mission IDs differ from approved planner lots")
             mission_ids.add(identifier)
             lot = lots[identifier]
-            if lot.autonomy not in {"AUTO", "AUTO_WITH_STANDING_GRANT"}:
-                raise ProjectMissionGateError("restricted lot requires separate human decision")
+            if identifier not in importable:
+                raise ProjectMissionGateError(
+                    "restricted or dependent planner lot requires separate replan"
+                )
             if (not isinstance(mission["operation"], str)
                     or mission["operation"] not in _ALLOWED_OPERATIONS):
                 raise ProjectMissionGateError("unsupported or privileged operation")
@@ -131,8 +150,8 @@ def import_verified_project_missions(
             priority = mission.get("priority", 0)
             if type(priority) is not int or not -1000 <= priority <= 1000:
                 raise ProjectMissionGateError("invalid mission priority")
-        if mission_ids != set(lots):
-            raise ProjectMissionGateError("operational roadmap omits approved lots")
+        if mission_ids != importable:
+            raise ProjectMissionGateError("operational roadmap omits importable planner lots")
         # Never trust LLM-shaped strings to grant capabilities. The real
         # ControlPlane importer owns transactional persistence and follow-on
         # authorization is enforced by the engine/lease/standing grants.
