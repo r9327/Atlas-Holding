@@ -1,0 +1,3 @@
+# Preserve the exact source bytes used by the versioned roadmap digest.
+docs/roadmap/HOLDING_AUTONOMY_V2_2026-10-28.md text eol=lf
+docs/roadmap/HOLDING_AUTONOMY_V2_2026-10-28.plan.json text eol=lf

@@ -52,3 +52,9 @@ Le contrat `docs/USER_AUTONOMY_PROFILE.md` est obligatoire : l'utilisateur fourn
 ## Anti-complexite et gate architectural
 
 Avant toute nouvelle responsabilite, verifier l'owner canonique dans le code existant : pas de moteur parallele, pas de cache jumeau ni de copie de fonction substantielle. Toute modification structurelle non triviale doit avoir des consommateurs verifies et des tests de comportement. Le controle leger `tools/architecture_guard.py` compare le SHA de la PR a sa base et bloque uniquement les nouveaux cycles statiques, duplications substantielles, contournements des droits UI et variantes de modules clairement parallelises. Voir `docs/ARCHITECTURE_REGRESSION_GATE.md`. Les dependances dynamiques, l'interface Windows et la RAM restent du ressort de Doctor/Graphify et des essais reellement executes. Les nouvelles PR ne peuvent pas s'autocertifier. Ne pas lancer de FULL a chaque commit ; faire la certification finale apres stabilisation.
+
+## Contribution au dépôt Holding — entrée canonique
+
+Pour tout changement non trivial dans **Holding elle-même**, commencer par AI_ENTRYPOINT.md, ZERO_TRUST_RULES.md et docs/HOLDING_CERTIFICATION.md. .ai/task_profiles.json est seulement consultatif; holding/model_selection.py reste l'autorité réelle de sélection d'un modèle vérifié.
+
+Auditer chaque commit contre son parent puis la PR entière. Pour tout changement IA, tool ou plugin, vérifier les règles modifiées et leurs consommateurs directs: autorité, doublons, chemins, permissions et CI. L'avis REVIEW OK / IMPROVEMENTS ADVISED / CHANGES REQUIRED ne remplace jamais une preuve de tests. Garder Draft pendant l'édition, puis passer Ready sur le candidat final.
