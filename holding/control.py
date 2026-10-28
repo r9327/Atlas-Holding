@@ -163,6 +163,12 @@ class ControlPlane:
         from .roadmap_import import RoadmapImporter
         return RoadmapImporter(self.store).import_text(raw, source=source)
 
+    def prepare_research_brief(self, mission_id: str, *, model_config: Path):
+        """Explicit operator action, advisory R&D proposal, no mission execution."""
+        from .research_brief import ResearchBriefService
+        return ResearchBriefService(self.store).prepare(
+            mission_id, config_path=model_config)
+
     def pause(self) -> None:
         self.store.set_paused(True)
 

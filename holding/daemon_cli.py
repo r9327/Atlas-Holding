@@ -21,12 +21,34 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--db", type=Path, default=default_database())
     parser.add_argument("action", choices=("status", "pause", "resume", "stop",
                                            "clear-stop", "import", "replan", "direction",
-                                           "coverage", "closure"))
+                                           "coverage", "closure", "research-brief"))
     parser.add_argument("--roadmap-file", type=Path)
     parser.add_argument("--source")
+    parser.add_argument("--mission-id")
+    parser.add_argument("--model-config", type=Path)
     args = parser.parse_args(argv)
     if not args.db.is_absolute():
         parser.error("--db must be an absolute path")
+    if args.action == "research-brief":
+        if (args.roadmap_file is not None or args.source is not None
+                or not args.mission_id or args.model_config is None):
+            parser.error("research-brief requires --mission-id and --model-config only")
+        if not args.model_config.is_absolute():
+            parser.error("--model-config must be an absolute path")
+        from .research_brief import ResearchBriefError
+        from .ollama_protocol import AdapterError
+        try:
+            with ControlPlane(args.db) as control:
+                result = control.prepare_research_brief(
+                    args.mission_id, model_config=args.model_config)
+        except (ResearchBriefError, AdapterError, StoreError, OSError) as exc:
+            # Never print raw prompt, untrusted output or a traceback.
+            parser.error(f"R&D proposal unavailable: {type(exc).__name__}")
+        print(json.dumps(asdict(result), ensure_ascii=False, sort_keys=True,
+                         separators=(",", ":")))
+        return 0
+    if args.mission_id is not None or args.model_config is not None:
+        parser.error("--mission-id and --model-config are only valid with research-brief")
     if args.action in ("import", "replan", "direction"):
         path = args.roadmap_file
         if path is None:
