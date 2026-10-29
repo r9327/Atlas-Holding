@@ -116,7 +116,7 @@ Se référer à `ROADMAP.md` de la PR #1 ; le test porte sur un vrai exécutable
 
 ## Répétition native multi-PR des vrais EXE (21 octobre 2026)
 
-Le workflow `.github/workflows/native_packaging_rehearsal.yml` assemble, sur un runner Windows, les sources setup, moteur et Control Center du `main` certifié au SHA `3e89b8b12ab7bb4e099622844eb7a37cea7d0066`. Il compile les deux vrais exécutables, mesure leurs SHA-256, les embarque dans `AtlasHoldingSetup.exe` puis lance le self-test natif du setup et celui des deux composants. Les entrées sont épinglées à ce SHA immuable, leurs checkouts vérifiés et aucun artefact n'est publié comme release.
+Le workflow `.github/workflows/native_packaging_rehearsal.yml` assemble, sur un runner Windows, les sources setup, moteur et Control Center du `main` certifié au SHA `fcbabe0da38c22860e724f719d88ddfb1ea3742e`. Il compile les deux vrais exécutables, mesure leurs SHA-256, les embarque dans `AtlasHoldingSetup.exe` puis lance le self-test natif du setup et celui des deux composants. Les entrées sont épinglées à ce SHA immuable, leurs checkouts vérifiés et aucun artefact n'est publié comme release.
 
 Le label `ci:package-native` déclenche ce test séparé. Cette épreuve vérifie le **câblage d'emballage et l'extraction réelle**, mais **pas** l'installation complète sur un PC vierge, l'ACL native, le lancement des agents ou une roadmap autonome. La PR reste Draft et les gates de sortie demeurent obligatoires.
 
