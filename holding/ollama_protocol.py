@@ -345,6 +345,10 @@ def _plan(config: dict, payload: dict, root: Path) -> dict:
                     or any(not safe_path(p) for p in matches)
                     or any(p not in observed or p not in local_paths
                            for p in matches)
+                    # A forged response must not hide an exact collision by
+                    # omitting it from matching_local_paths and downgrading
+                    # the status to NO_EXACT_PATH_MATCH.
+                    or set(matches) != set(observed).intersection(local_paths)
                     or len(set(matches)) != len(matches)
                     or (overlap['status'] == 'EXACT_PATH_OVERLAP')
                        != bool(matches)):
