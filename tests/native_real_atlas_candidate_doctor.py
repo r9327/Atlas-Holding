@@ -351,6 +351,70 @@ def _inspect_real_doctor_review(runner: AtlasDoctorRunner, *,
         raise RuntimeError("Verified Doctor refusal changed between stages")
     return _review_diagnostics(report, stage=stage)
 
+def _probe_main_import(runner: AtlasDoctorRunner, *, candidate: str) -> str:
+    """A bounded, non-authorizing startup probe when Doctor STARTUP fails.
+
+    Only an exception class and optional Python module identifier are emitted.
+    Real Doctor evidence is never replaced by this narrow diagnostic.
+    """
+    if not _SHA.fullmatch(candidate):
+        raise RuntimeError("Untrusted startup probe candidate SHA")
+    if (_git(runner.root, "rev-parse", "HEAD") != candidate
+            or runner._worktree_identity().dirty):
+        raise RuntimeError("Startup probe checkout identity changed")
+    script = (
+        'import json,os,sys\n'
+        'os.environ.setdefault("QT_QPA_PLATFORM","offscreen")\n'
+        'try:\n'
+        ' import main\n'
+        'except Exception as exc:\n'
+        ' print("ATLAS_IMPORT_PROBE="+json.dumps({"kind":"FAIL",'
+        '"exception":type(exc).__name__,'
+        '"module":getattr(exc,"name",None)}))\n'
+        ' sys.exit(9)\n'
+        'print("ATLAS_IMPORT_PROBE="+json.dumps({"kind":"PASS"}))\n'
+    )
+    try:
+        result = runner._execute(
+            (str(runner.interpreter), "-B", "-c", script),
+            timeout=25, stdout_limit=4096,
+        )
+        lines = result.stdout.decode("utf-8", errors="strict").splitlines()
+        records = [line.partition("ATLAS_IMPORT_PROBE=")[2]
+                   for line in lines if line.startswith("ATLAS_IMPORT_PROBE=")]
+        if len(records) != 1 or len(records[0]) > 320:
+            verdict = "UNAVAILABLE"
+        else:
+            record = json.loads(records[0])
+            if not isinstance(record, dict):
+                verdict = "UNAVAILABLE"
+            elif result.returncode == 0 and record == {"kind": "PASS"}:
+                verdict = "IMPORT_OK_STARTUP_GUARD_STILL_FAILED"
+            elif result.returncode == 9 and record.get("kind") == "FAIL":
+                exception = record.get("exception")
+                if exception not in {
+                    "ModuleNotFoundError", "ImportError", "OSError",
+                    "AttributeError", "RuntimeError", "TypeError", "ValueError",
+                }:
+                    exception = "OTHER_EXCEPTION"
+                missing = record.get("module")
+                if (type(missing) is str and len(missing) <= 100
+                        and re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", missing)):
+                    verdict = "IMPORT_FAILED:" + exception + ":module=" + missing
+                else:
+                    verdict = "IMPORT_FAILED:" + exception
+            else:
+                verdict = "UNAVAILABLE"
+    except (OSError, RuntimeError, ValueError, UnicodeError,
+            json.JSONDecodeError):
+        verdict = "UNAVAILABLE"
+    if (_git(runner.root, "rev-parse", "HEAD") != candidate
+            or _git(runner.root, "status", "--porcelain", "--untracked-files=all")
+            or runner._worktree_identity().dirty):
+        raise RuntimeError("Startup probe changed the disposable candidate")
+    return verdict
+
+
 def run(source: Path, sha: str) -> None:
     temp = _runner_root()
     source = source.resolve(strict=True)
@@ -383,11 +447,16 @@ def run(source: Path, sha: str) -> None:
         print("NONRELEASE_REAL_ATLAS_CANDIDATE_STAGE="
               + stage + ":" + advice.status, flush=True)
         if stage in ("check", "validate") and advice.status in {"REVIEW", "FAIL", "BLOCKED"}:
-            for item in _inspect_real_doctor_review(
-                    runner, stage=stage, candidate=candidate, base=sha,
-                    expected_digest=advice.report_sha256,
-                    expected_status=advice.status):
+            details = _inspect_real_doctor_review(
+                runner, stage=stage, candidate=candidate, base=sha,
+                expected_digest=advice.report_sha256,
+                expected_status=advice.status)
+            for item in details:
                 print("NONRELEASE_DOCTOR_REFUSAL_DETAIL=" + item, flush=True)
+            if (stage == "validate" and
+                    any(item.startswith("guardian=STARTUP:") for item in details)):
+                probe = _probe_main_import(runner, candidate=candidate)
+                print("NONRELEASE_ATLAS_MAIN_IMPORT_PROBE=" + probe, flush=True)
         if advice.status in ("BLOCKED", "FAIL"):
             raise RuntimeError(f"Doctor {stage} blocked or failed: no QA continuation")
         if _git(destination, "rev-parse", "HEAD") != candidate:

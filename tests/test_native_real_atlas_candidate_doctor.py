@@ -294,6 +294,50 @@ class NativeCandidateDoctorTests(unittest.TestCase):
         )
         runner._execute.assert_not_called()
 
+    def test_startup_probe_exposes_only_allowlisted_exception_and_module(self):
+        from holding.bounded_process import ProcessResult
+        from tests.native_real_atlas_candidate_doctor import _probe_main_import
+        runner = Mock()
+        runner.root = Path("C:/dummy")
+        runner.interpreter = Path("C:/Python/python.exe")
+        runner._worktree_identity.return_value.dirty = False
+        runner._execute.return_value = ProcessResult(
+            9,
+            b'ATLAS_IMPORT_PROBE={"kind":"FAIL",'
+            b'"exception":"ModuleNotFoundError","module":"app.example"}\n',
+            b"secret=do-not-print",
+        )
+        with patch("tests.native_real_atlas_candidate_doctor._git",
+                   side_effect=lambda root, command, *args: (
+                       CANDIDATE if command == "rev-parse" else ""
+                   )):
+            observed = _probe_main_import(runner, candidate=CANDIDATE)
+        self.assertEqual(
+            observed, "IMPORT_FAILED:ModuleNotFoundError:module=app.example"
+        )
+        self.assertEqual(runner._execute.call_count, 1)
+        self.assertEqual(runner._execute.call_args.kwargs["stdout_limit"], 4096)
+        self.assertNotIn("do-not-print", observed)
+
+    def test_startup_probe_never_treats_forged_status_as_a_pass(self):
+        from holding.bounded_process import ProcessResult
+        from tests.native_real_atlas_candidate_doctor import _probe_main_import
+        runner = Mock()
+        runner.root = Path("C:/dummy")
+        runner.interpreter = Path("C:/Python/python.exe")
+        runner._worktree_identity.return_value.dirty = False
+        runner._execute.return_value = ProcessResult(
+            9,
+            b'ATLAS_IMPORT_PROBE={"kind":"PASS"}\n',
+            b"",
+        )
+        with patch("tests.native_real_atlas_candidate_doctor._git",
+                   side_effect=lambda root, command, *args: (
+                       CANDIDATE if command == "rev-parse" else ""
+                   )):
+            observed = _probe_main_import(runner, candidate=CANDIDATE)
+        self.assertEqual(observed, "UNAVAILABLE")
+
     def test_review_diagnostics_reject_unbounded_or_incomplete_report(self):
         valid = {
             "action": "validate", "status": "REVIEW",
