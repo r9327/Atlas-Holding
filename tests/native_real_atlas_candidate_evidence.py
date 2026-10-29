@@ -54,7 +54,7 @@ def verify_disposable_candidate(raw: bytes, *, source_sha: str) -> str:
             or not isinstance(receipt["candidate_sha"], str)
             or not _SHA.fullmatch(receipt["candidate_sha"])
             or receipt["candidate_sha"] == source_sha
-            or receipt["modified_paths"] != ["README.md"]
+            or receipt["modified_paths"] != [".ai/context_index.json", "README.md"]
             or receipt["independent_qa_pass"] is not False
             or receipt["doctor_full_certified"] is not False
             or receipt["github_push_permitted"] is not False
