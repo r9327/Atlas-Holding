@@ -10,17 +10,8 @@ import time
 from typing import Any
 
 from .state_store import StateStore
+from .schema import RESEARCH_SIMULATION_SCHEMA, apply_schema
 
-_TABLE = """CREATE TABLE IF NOT EXISTS research_simulation_runs (
- session_id TEXT NOT NULL REFERENCES project_workplans(session_id),
- task_index INTEGER NOT NULL CHECK(task_index>=0 AND task_index<8),
- plan_sha256 TEXT NOT NULL,
- spec_sha256 TEXT NOT NULL,
- result_sha256 TEXT NOT NULL,
- result_json TEXT NOT NULL,
- computed_epoch INTEGER NOT NULL,
- PRIMARY KEY(session_id,task_index)
-)"""
 
 
 class SimulationError(ValueError):
@@ -147,7 +138,7 @@ class LocalSimulationRunner:
                 if (current is None or current["plan_sha256"] != plan.plan_sha256
                         or current["state"] != "STAGED"):
                     raise SimulationError("Plan changed during simulation")
-                self.store.db.execute(_TABLE)
+                apply_schema(self.store.db, RESEARCH_SIMULATION_SCHEMA)
                 inserted = self.store.db.execute(
                     "INSERT OR IGNORE INTO research_simulation_runs "
                     "(session_id,task_index,plan_sha256,spec_sha256,"
