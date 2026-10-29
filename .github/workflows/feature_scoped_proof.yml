@@ -1,12 +1,15 @@
 name: Feature-scoped proof (opt-in)
 on:
   pull_request:
-    types: [labeled]
+    types: [labeled, ready_for_review, synchronize]
 permissions:
   contents: read
 jobs:
   pure-python:
-    if: github.event.label.name == 'ci:feature-scoped'
+    if: >-
+      github.event.label.name == 'ci:feature-scoped' ||
+      (github.event.pull_request.draft == false &&
+       contains(github.event.pull_request.labels.*.name, 'ci:feature-scoped'))
     strategy:
       fail-fast: false
       matrix:
@@ -16,6 +19,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
@@ -27,6 +31,8 @@ jobs:
           from pathlib import Path
           import subprocess, sys
           candidates = (
+              "test_inventory_cli.py", "test_inventory.py",
+              "test_provision_plan.py", "test_roadmap_contract.py",
               "test_document_intake.py", "test_document_csv.py",
               "test_document_exchange.py", "test_document_source.py",
               "test_documentalist_cli.py", "test_document_html.py",
@@ -35,16 +41,23 @@ jobs:
               "test_project_profile_cli.py", "test_project_profile_examples.py",
               "test_project_registry.py", "test_project_registry_cli.py",
               "test_project_plan_binding.py", "test_project_mission_gate.py",
-              "test_roadmap_contract.py", "test_roadmap_control_intake.py",
+              "test_roadmap_control_intake.py",
               "test_roadmap_replan.py", "test_markdown_roadmap.py",
               "test_code_worker.py", "test_ollama_protocol.py",
-              "test_research_brief.py", "test_project_chat.py",
-              "test_research_workplan.py", "test_research_simulation.py",
-              "test_ngspice_adapter.py", "test_research_measurement.py",
+              "test_research_brief.py",
+              # Qt UI is exercised by project_chat_validation.yml with PySide6.
+              "test_project_chat.py", "test_research_workplan.py",
+              "test_research_simulation.py",
+              "test_ngspice_adapter.py",
+              "test_research_measurement.py",
               "test_update_plan.py", "test_update_download.py",
               "test_update_manifest_client.py", "test_update_probe.py",
               "test_update_probe_cli.py", "test_update_stage.py",
               "test_update_switch.py",
+              "test_sqlite_backup.py", "test_migrations.py",
+              "test_github_privileged_transport.py", "test_github_privileged_worker.py",
+              "test_github_mutation_gate.py", "test_sync_coordinator.py",
+              "test_schema_authority.py",
           )
           present = [name for name in candidates if (Path("tests") / name).is_file()]
           if not present:
@@ -53,6 +66,38 @@ jobs:
               print("Testing", name, flush=True)
               subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", name, "-v"], check=True)
           PY
+      - name: Verify versioned autonomy roadmap when present
+        if: hashFiles('docs/roadmap/HOLDING_AUTONOMY_V2_2026-10-28.plan.json') != ''
+        env:
+          ROADMAP_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          python - <<'PYCODE'
+          import hashlib, json, os, re, subprocess
+          from pathlib import Path
+          from holding.roadmap_contract import validate_roadmap_plan
+          source = Path("docs/roadmap/HOLDING_AUTONOMY_V2_2026-10-28.md")
+          plan = source.with_suffix(".plan.json")
+          raw = plan.read_bytes()
+          base = os.environ["ROADMAP_BASE_SHA"]
+          if not re.fullmatch(r"[0-9a-f]{40}", base):
+              raise SystemExit("Invalid trusted PR base SHA")
+          inherited = subprocess.run(
+              ["git", "show", f"{base}:{plan.as_posix()}"],
+              capture_output=True, check=False, timeout=15,
+          )
+          # An unchanged, already versioned plan keeps its original snapshot.
+          # A modified or new plan must be pinned to this PR's exact base.
+          pinned = json.loads(raw).get("snapshot_sha") if (
+              inherited.returncode == 0 and inherited.stdout == raw
+          ) else base
+          validate_roadmap_plan(
+              raw, expected_repository="r9327/Atlas-Holding",
+              expected_snapshot_sha=pinned,
+              expected_source_digest=hashlib.sha256(source.read_bytes()).hexdigest(),
+          )
+          print("Roadmap coverage, source digest and versioned identity verified")
+          PYCODE
       - name: Checkout clean after tests
         shell: bash
         run: test -z "$(git status --porcelain --untracked-files=normal)"
