@@ -319,6 +319,27 @@ class NativeCandidateDoctorTests(unittest.TestCase):
         self.assertEqual(runner._execute.call_args.kwargs["stdout_limit"], 4096)
         self.assertNotIn("do-not-print", observed)
 
+    def test_startup_probe_rejects_unicode_and_pii_in_module_names(self):
+        from holding.bounded_process import ProcessResult
+        from tests.native_real_atlas_candidate_doctor import _probe_main_import
+        runner = Mock()
+        runner.root = Path("C:/dummy")
+        runner.interpreter = Path("C:/Python/python.exe")
+        runner._worktree_identity.return_value.dirty = False
+        runner._execute.return_value = ProcessResult(
+            9,
+            'ATLAS_IMPORT_PROBE={"kind":"FAIL","exception":"ImportError",'
+            '"module":"app.privateÉ"}\n'.encode("utf-8"),
+            b"private-data-should-not-appear",
+        )
+        with patch("tests.native_real_atlas_candidate_doctor._git",
+                   side_effect=lambda root, command, *args: (
+                       CANDIDATE if command == "rev-parse" else ""
+                   )):
+            observed = _probe_main_import(runner, candidate=CANDIDATE)
+        self.assertEqual(observed, "IMPORT_FAILED:ImportError")
+        self.assertNotIn("private", observed)
+
     def test_startup_probe_never_treats_forged_status_as_a_pass(self):
         from holding.bounded_process import ProcessResult
         from tests.native_real_atlas_candidate_doctor import _probe_main_import

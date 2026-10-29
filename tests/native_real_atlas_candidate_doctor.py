@@ -399,7 +399,7 @@ def _probe_main_import(runner: AtlasDoctorRunner, *, candidate: str) -> str:
                     exception = "OTHER_EXCEPTION"
                 missing = record.get("module")
                 if (type(missing) is str and len(missing) <= 100
-                        and re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", missing)):
+                        and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*", missing)):
                     verdict = "IMPORT_FAILED:" + exception + ":module=" + missing
                 else:
                     verdict = "IMPORT_FAILED:" + exception
