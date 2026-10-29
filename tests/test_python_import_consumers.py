@@ -63,6 +63,60 @@ class PythonConsumerTests(unittest.TestCase):
         self.assertLessEqual(report.checked_import_files, 24)
         self.assertFalse(report.can_skip_implementation)
 
+    def test_package_initializer_relative_reexport_is_detected(self):
+        (self.root / "app" / "__init__.py").write_text(
+            "from . import feature\n", encoding="utf-8")
+        git(self.root, "add", "app/__init__.py")
+        git(self.root, "commit", "-m", "public package reexport")
+        self.sha = git(self.root, "rev-parse", "HEAD")
+        report = inspect_existing_code(
+            self.read, repository_sha=self.sha,
+            acceptance=("Use FeatureEngine",))
+        feature = next(x for x in report.candidates
+                       if x.path == "app/feature.py")
+        self.assertIn("app/__init__.py", feature.importers)
+
+    def test_grep_ranking_finds_distant_consumer_after_24_early_files(self):
+        for i in range(36):
+            (self.root / "app" / f"aaa_{i:02d}.py").write_text(
+                "unrelated = True\n", encoding="utf-8")
+        (self.root / "zclient.py").write_text(
+            "from app.feature import FeatureEngine\n", encoding="utf-8")
+        (self.root / "app" / "string_decoy.py").write_text(
+            "message = 'from app.feature import FeatureEngine'\n",
+            encoding="utf-8")
+        git(self.root, "add", ".")
+        git(self.root, "commit", "-m", "many earlier files and real external user")
+        self.sha = git(self.root, "rev-parse", "HEAD")
+        report = inspect_existing_code(
+            self.read, repository_sha=self.sha,
+            acceptance=("Modify FeatureEngine",))
+        feature = next(x for x in report.candidates
+                       if x.path == "app/feature.py")
+        self.assertIn("zclient.py", feature.importers)
+        self.assertNotIn("app/string_decoy.py", feature.importers)
+        self.assertLessEqual(report.checked_import_files, 24)
+        self.assertFalse(report.can_skip_implementation)
+
+    def test_optional_grep_failure_falls_back_without_certifying_completeness(self):
+        for i in range(30):
+            (self.root / "app" / f"extra_{i:02d}.py").write_text(
+                "answer = 42\n", encoding="utf-8")
+        git(self.root, "add", ".")
+        git(self.root, "commit", "-m", "many source files")
+        self.sha = git(self.root, "rev-parse", "HEAD")
+        def unavailable_grep(*args):
+            if args[0] == "grep":
+                raise RuntimeError("Git grep unavailable")
+            return self.read(*args)
+        report = inspect_existing_code(
+            unavailable_grep, repository_sha=self.sha,
+            acceptance=("Modify FeatureEngine",))
+        feature = next(x for x in report.candidates
+                       if x.path == "app/feature.py")
+        self.assertIn("app/client.py", feature.importers)
+        self.assertEqual(report.consumers_status, "PARTIAL_AST_IMPORT_SCAN")
+
     def test_uncommitted_import_does_not_change_exact_sha(self):
         (self.root / "app" / "client.py").write_text(
             "print('replaced')\n", encoding="utf-8")
