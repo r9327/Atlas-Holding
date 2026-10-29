@@ -95,7 +95,7 @@ def inspect_existing_code(
         raw = git_read("ls-tree", "-r", "-z", repository_sha)
     except (OSError, RuntimeError) as exc:
         raise ExistingCodeError("Git inventory unavailable") from exc
-    if not isinstance(raw, str) or len(raw.encode("utf-8", "surrogateescape")) > 4 * 1024 * 1024:
+    if not isinstance(raw, str) or not raw or len(raw.encode("utf-8", "surrogateescape")) > 4 * 1024 * 1024:
         raise ExistingCodeError("Git path inventory exceeds bound")
     records = raw.split("\0")
     if records[-1] == "":
