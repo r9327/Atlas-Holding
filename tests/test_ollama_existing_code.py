@@ -18,9 +18,11 @@ def evidence():
         "repository_sha": SHA,
         "state": "CANDIDATES_FOUND",
         "candidates": [{"path": "app/feature.py", "symbols": ["Feature"],
-                        "source": "GIT_COMMIT_PATH"}],
+                        "source": "GIT_COMMIT_PATH",
+                        "importers": ["app/client.py"]}],
         "checked_paths": 2, "scanned_python_files": 1,
-        "consumers_status": "NOT_VERIFIED",
+        "checked_import_files": 1,
+        "consumers_status": "PARTIAL_AST_IMPORT_SCAN",
         "github_pr_status": "NOT_CHECKED",
         "functionality_status": "NOT_VERIFIED",
         "recommended_action": "REVIEW_AND_REUSE_OR_ADAPT",
@@ -124,6 +126,31 @@ class ExistingCodeAdapterTests(unittest.TestCase):
                 with self.assertRaises(AdapterError):
                     _plan(CONFIG, variant, Path(folder))
                 run.assert_not_called()
+
+    def test_consumer_hint_cannot_claim_exhaustive_proof(self):
+        for field, value in (
+            ("consumers_status", "VERIFIED_COMPLETE"),
+            ("checked_import_files", 999),
+        ):
+            payload = self.payload()
+            payload["existing_code"][field] = value
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as folder, \
+                 patch("holding.ollama_protocol._http",
+                       side_effect=AssertionError("model ran")) as inference, \
+                 patch("holding.ollama_protocol._snapshot", return_value=[]):
+                with self.assertRaises(AdapterError):
+                    _plan(CONFIG, payload, Path(folder))
+                inference.assert_not_called()
+
+        payload = self.payload()
+        payload["existing_code"]["candidates"][0]["importers"] = ["../secret.py"]
+        with tempfile.TemporaryDirectory() as folder, \
+             patch("holding.ollama_protocol._http",
+                   side_effect=AssertionError("model ran")) as inference, \
+             patch("holding.ollama_protocol._snapshot", return_value=[]):
+            with self.assertRaises(AdapterError):
+                _plan(CONFIG, payload, Path(folder))
+            inference.assert_not_called()
 
     def test_old_agent_request_remains_compatible(self):
         payload = self.payload()

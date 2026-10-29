@@ -12,6 +12,8 @@ import re
 import unicodedata
 from typing import Callable
 
+from .python_import_consumers import inspect_python_import_consumers, ImportConsumerError
+
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _SAFE = re.compile(r"^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$")
 _PRIVATE = ("secret", "token", "password", "credential", "private", "apikey",
@@ -33,6 +35,7 @@ class ExistingCandidate:
     path: str
     symbols: tuple[str, ...]
     source: str = "GIT_COMMIT_PATH"
+    importers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -47,6 +50,7 @@ class ExistingCodeReport:
     functionality_status: str = "NOT_VERIFIED"
     recommended_action: str = "REVIEW_AND_REUSE_OR_ADAPT"
     can_skip_implementation: bool = False
+    checked_import_files: int = 0
 
 
 def _terms(criteria: tuple[str, ...]) -> tuple[str, ...]:
@@ -137,6 +141,7 @@ def inspect_existing_code(
         raise ExistingCodeError("Git inventory unavailable") from exc
 
     matches: list[tuple[int, str]] = []
+    names: list[str] = []  # verified regular source blobs only
     checked = 0
     scopes = sorted(
         path for path, mode, kind in root
@@ -157,6 +162,7 @@ def inspect_existing_code(
             return  # No symlink or gitlink data may become a source.
         if not _candidate_path(path):
             return
+        names.append(path)
         normalized = path.casefold()
         stem = path.rsplit("/", 1)[-1].rsplit(".", 1)[0].casefold()
         score = sum(4 if token in stem else 2 if token in normalized else 0
@@ -204,8 +210,30 @@ def inspect_existing_code(
                         and not node.name.startswith("_")
                     ][:12]
         results.append(ExistingCandidate(path, tuple(symbols)))
+    import_scanned = 0
+    consumer_status = "NOT_VERIFIED"
+    python_targets = tuple(c.path for c in results if c.path.endswith(".py"))
+    if python_targets:
+        source_paths = tuple(
+            p for p in names if p.endswith(".py") and _candidate_path(p))
+        try:
+            consumers = inspect_python_import_consumers(
+                git_read, repository_sha=repository_sha,
+                source_paths=source_paths, candidate_paths=python_targets)
+        except ImportConsumerError as exc:
+            raise ExistingCodeError("Exact-SHA consumer inventory failed") from exc
+        import_scanned = consumers.parsed_files
+        consumer_status = (consumers.status if consumers.parsed_files
+                           else "NOT_VERIFIED")
+        results = [
+            ExistingCandidate(c.path, c.symbols, c.source,
+                              consumers.importer_paths.get(c.path, ()))
+            for c in results
+        ]
     return ExistingCodeReport(
         repository_sha,
         "CANDIDATES_FOUND" if results else "NO_PATH_MATCH_IN_BOUNDED_SCAN",
         tuple(results), checked, inspected_py,
+        consumers_status=consumer_status,
+        checked_import_files=import_scanned,
     )
