@@ -42,3 +42,22 @@ Le daemon et ses gates restent les autorités pour toute exécution. L'UI
 devra afficher la provenance de ces états sans transformer un préflight en PASS.
 La suite de F02 doit raccorder les contrôles effectifs au moteur et à ses
 consommateurs, puis tester la reprise après interruption.
+
+## Premier raccordement au Control Center (schéma 6)
+
+Le moteur calcule **un préflight de la prochaine mission READY affichée**, par
+ordre de priorité, dans la **même transaction de lecture** que la projection
+SQLite des tâches. Il publie l'avis via le canal IPC authentifié existant.
+Le Control Center affiche l'identifiant et les causes (permission manquante,
+dépendance non prouvée, pause, besoin réseau non testé). Il ne reçoit jamais
+de chemin SQLite, secret ni pouvoir d'exécution supplémentaire.
+
+La lecture des instantanés v1 à v5 reste compatible : dans ces cas aucun
+préflight n'est affiché. Une coupure ou une observation périmée signale
+explicitement que l'avis n'est plus actualisé. `PRECHECK_PASSED` reste un
+**précontrôle consultatif**, jamais une preuve de worker, de modèle ou de
+permission GitHub ; les contrôles indépendants du moteur restent obligatoires.
+
+Le bandeau indique uniquement le premier lot READY ; ce n'est pas encore un
+diagnostic exhaustif de toutes les missions ou de tous les outils. Aucune
+mutation du schéma SQLite ou du projet utilisateur n'est réalisée.
