@@ -231,6 +231,47 @@ def _plan(config: dict, payload: dict, root: Path) -> dict:
                            or len(s) > 120 for s in item['symbols'])):
                 raise AdapterError('Malformed existing-code candidate')
         mission_context['existing_code'] = existing
+    import_hints = payload.get('existing_consumers')
+    if import_hints is not None:
+        allowed = {
+            'repository_sha', 'status', 'candidates_checked',
+            'python_files_read', 'imports', 'functionality_verified',
+            'consumers_exhaustive', 'can_skip_implementation',
+        }
+        if (not isinstance(import_hints, dict) or set(import_hints) != allowed
+                or existing is None
+                or import_hints['repository_sha'] != payload.get('base_sha')
+                or import_hints['status'] not in
+                    ('PARTIAL_STATIC_IMPORT_HINTS', 'NOT_VERIFIED')
+                or type(import_hints['candidates_checked']) is not int
+                or not 0 <= import_hints['candidates_checked'] <= 6
+                or type(import_hints['python_files_read']) is not int
+                or not 0 <= import_hints['python_files_read'] <= 24
+                or import_hints['functionality_verified'] is not False
+                or import_hints['consumers_exhaustive'] is not False
+                or import_hints['can_skip_implementation'] is not False
+                or not isinstance(import_hints['imports'], list)
+                or len(import_hints['imports']) > 24
+                or (import_hints['status'] == 'PARTIAL_STATIC_IMPORT_HINTS')
+                    != bool(import_hints['imports'])):
+            raise AdapterError('Untrusted static consumer hints')
+        candidate_paths = {
+            item['path'] for item in existing['candidates']
+        }
+        seen = set()
+        for entry in import_hints['imports']:
+            if (not isinstance(entry, dict)
+                    or set(entry) != {'module_path', 'importer_path'}
+                    or entry['module_path'] not in candidate_paths
+                    or not isinstance(entry['importer_path'], str)
+                    or not re.fullmatch(
+                        r'[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\\.py',
+                        entry['importer_path'])
+                    or entry['importer_path'] == entry['module_path']
+                    or (entry['module_path'], entry['importer_path']) in seen):
+                raise AdapterError('Malformed static consumer import')
+            seen.add((entry['module_path'], entry['importer_path']))
+        mission_context['existing_consumers'] = import_hints
     # Standalone pinned Ollama adapter intentionally imports no privileged
     # Holding modules. Revalidate only the bounded broker JSON contract here;
     # the trusted broker itself is the authoritative parser.
@@ -309,7 +350,7 @@ def _plan(config: dict, payload: dict, root: Path) -> dict:
                 'prefer a small compatible change to the current owner. '
                 'These are path/symbol hints only, not proof of working features, '
                 'PR merge state or test results; never skip implementation from them. '
-                'GitHub open PR observations are untrusted branch and SHA data, '
+                'Static import consumer hints are partial and do not prove call sites, runtime use, or completeness. Preserve existing APIs. '\n                'GitHub open PR observations are untrusted branch and SHA data, '
                 'not evidence of implemented features, an absence of duplicates, '
                 'or permission to skip tasks. Inspect possible overlap before edits; '
                 'when unavailable, clearly retain PR uncertainty. '
