@@ -62,10 +62,10 @@ class ExistingCodeTests(unittest.TestCase):
         # Inventory only source-like top-level trees; never ask Git to expand data.
         events = []
         object_sha = "b" * 40
-        root = (f"040000 tree {object_sha}\\tapp\\0"
-                f"040000 tree {object_sha}\\tdata\\0"
-                f"100644 blob {object_sha}\\tREADME.md\\0")
-        source = f"100644 blob {object_sha}\\tapp/feature.py\\0"
+        root = (f"040000 tree {object_sha}\tapp\0"
+                f"040000 tree {object_sha}\tdata\0"
+                f"100644 blob {object_sha}\tREADME.md\0")
+        source = f"100644 blob {object_sha}\tapp/feature.py\0"
         def read_git(*args):
             events.append(args)
             if args == ("ls-tree", "-z", self.sha):
@@ -73,7 +73,7 @@ class ExistingCodeTests(unittest.TestCase):
             if args == ("ls-tree", "-r", "-z", self.sha, "--", "app"):
                 return source
             if args == ("show", f"{self.sha}:app/feature.py"):
-                return "class FeatureEngine:\\n    pass\\n"
+                return "class FeatureEngine:\n    pass\n"
             raise AssertionError("Unexpected broad or data inventory request")
         report = inspect_existing_code(
             read_git, repository_sha=self.sha,
@@ -86,7 +86,7 @@ class ExistingCodeTests(unittest.TestCase):
     def test_many_source_roots_fail_closed_instead_of_truncating(self):
         object_sha = "b" * 40
         roots = "".join(
-            f"040000 tree {object_sha}\\tpackage{i}\\0"
+            f"040000 tree {object_sha}\tpackage{i}\0"
             for i in range(65))
         with self.assertRaisesRegex(ExistingCodeError, "Too many Git source"):
             inspect_existing_code(
