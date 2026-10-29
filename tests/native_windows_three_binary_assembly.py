@@ -103,11 +103,21 @@ def assemble(
         temp = Path(workspace).resolve()
         viewer_dir = temp / "frozen"
         setup_dir = temp / "installer"
+        # The certified main supplies the durable engine, agent and local
+        # acceptance runner. The CURRENT release candidate supplies the GUI:
+        # otherwise new UI features can pass source tests yet be absent from
+        # the exact bytes shipped in Setup.exe.
+        for kind in ("engine", "agent", "acceptance"):
+            _run([
+                sys.executable, "-B", "-m",
+                "holding.windows_control_center_build",
+                "--kind", kind, "--output-dir", str(viewer_dir),
+            ], cwd=runtime_root)
         _run([
             sys.executable, "-B", "-m",
             "holding.windows_control_center_build",
-            "--kind", "all", "--output-dir", str(viewer_dir),
-        ], cwd=runtime_root)
+            "--kind", "viewer", "--output-dir", str(viewer_dir),
+        ], cwd=setup_root)
         engine = viewer_dir / "AtlasHoldingEngine.exe"
         viewer = viewer_dir / "AtlasHoldingControlCenter.exe"
         agent = viewer_dir / "AtlasHoldingAgent.exe"
@@ -189,6 +199,7 @@ def assemble(
                 "source_shas": {
                     "release_candidate": candidate_sha,
                     "release_candidate_setup": setup_sha,
+                    "release_candidate_viewer": setup_sha,
                     "certified_main_runtime": runtime_sha,
                 },
                 "manifest_kind": (
