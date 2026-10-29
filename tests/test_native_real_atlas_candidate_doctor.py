@@ -10,8 +10,8 @@ from unittest.mock import Mock, patch
 from holding.atlas_doctor_evidence import LocalPassport
 from tests.native_real_atlas_candidate_doctor import (
     _candidate_summary, _verify_advisory, _same_canonical_checkout, _git,
-    _review_diagnostics,
-    LEVELS, SCOPE,
+    _review_diagnostics, _sync_disposable_context_index,
+    LEVELS, SCOPE, MODIFIED_PATHS,
 )
 
 SOURCE = "a" * 40
@@ -39,6 +39,41 @@ class NativeCandidateDoctorTests(unittest.TestCase):
             self.assertFalse(_same_canonical_checkout(root, "../outside"))
             self.assertFalse(_same_canonical_checkout(root, ""))
             self.assertFalse(_same_canonical_checkout(root, str(root.parent)))
+
+    def test_trusted_ai_context_tracks_staged_readme_without_running_atlas_hooks(self):
+        from holding.atlas_context_index import render_atlas_context_index
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            (root / ".ai").mkdir()
+            (root / "README.md").write_text("old\n", encoding="utf-8")
+            (root / ".ai" / "context_index.json").write_text("{}\n", encoding="utf-8")
+            _git(root, "init")
+            _git(root, "add", "--", "README.md", ".ai/context_index.json")
+            _git(root, "-c", "user.name=CI", "-c", "user.email=ci@example.invalid",
+                 "commit", "-m", "fixture")
+            (root / "README.md").write_text("updated\n", encoding="utf-8")
+            _git(root, "add", "--", "README.md")
+            staged = _git(root, "ls-tree", _git(root, "write-tree"))
+            _sync_disposable_context_index(root)
+            expected = render_atlas_context_index(staged)
+            self.assertEqual((root / ".ai" / "context_index.json").read_text(
+                encoding="utf-8"), expected)
+            self.assertEqual(tuple(sorted(_git(
+                root, "diff", "--cached", "--name-only").splitlines())),
+                MODIFIED_PATHS)
+
+    def test_missing_or_untracked_context_index_is_not_silently_accepted(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            (root / ".ai").mkdir()
+            (root / "README.md").write_text("old\n", encoding="utf-8")
+            _git(root, "init")
+            _git(root, "add", "--", "README.md")
+            _git(root, "-c", "user.name=CI", "-c", "user.email=ci@example.invalid",
+                 "commit", "-m", "fixture")
+            (root / ".ai" / "context_index.json").write_text("{}\n", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "tracked Atlas AI Context"):
+                _sync_disposable_context_index(root)
 
     def test_local_git_disables_network_prompt_and_lfs_smudge(self):
         completed = Mock(returncode=0, stdout="safe", stderr="")
