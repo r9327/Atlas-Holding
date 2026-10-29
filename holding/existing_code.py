@@ -20,7 +20,7 @@ _EXT = (".py", ".md", ".toml", ".js", ".ts", ".tsx", ".json", ".yaml", ".yml")
 _STOP = frozenset({
     "faire", "avec", "sans", "pour", "dans", "cette", "cela", "that", "from",
     "when", "must", "should", "then", "will", "where", "have", "code", "test",
-    "tests", "make", "create", "added", "feature", "fonction", "existing",
+    "tests", "make", "create", "added", "fonction", "existing",
 })
 
 
