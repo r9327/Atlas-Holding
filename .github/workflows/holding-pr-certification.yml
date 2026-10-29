@@ -1,0 +1,137 @@
+name: Holding PR Python and AI certification
+
+on:
+  pull_request:
+    branches: [main]
+    types: [ready_for_review, synchronize, reopened, labeled]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: holding-pr-final-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ai-policy:
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.draft == false ||
+      contains(github.event.pull_request.labels.*.name, 'ci:validate')
+    name: AI and tool policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - name: Verify exact candidate
+        env:
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+      - name: Validate AI and tool contracts
+        run: python -B -X utf8 -m tools.ai_policy_check
+      - name: Test contract enforcement
+        run: python -B -X utf8 -m unittest discover -s tests -p 'test_ai_policy_check.py' -v
+      - name: Require clean checkout
+        shell: bash
+        run: test -z "$(git status --porcelain --untracked-files=normal)"
+
+  cross-platform-tests:
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.draft == false ||
+      contains(github.event.pull_request.labels.*.name, 'ci:validate')
+    name: Full suite / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      QT_QPA_PLATFORM: offscreen
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - name: Verify exact candidate
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+      - name: Install Linux Qt dependency
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libegl1
+      - name: Install existing UI test dependency
+        run: python -m pip install --disable-pip-version-check PySide6==6.12.0
+      - name: Check Python syntax and declarative tool registry
+        shell: bash
+        run: |
+          python -B -X utf8 - <<'PY'
+          import ast
+          from pathlib import Path
+          from holding.tool_registry import validate_tool_registry
+          for folder in ("holding", "tests", "tools"):
+              for path in Path(folder).rglob("*.py"):
+                  ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+          validate_tool_registry(Path("config/tool_registry.json").read_bytes())
+          PY
+      - name: Full Python regression suite
+        shell: bash
+        run: |
+          set -o pipefail
+          python -B -X utf8 -m unittest discover -s tests -p 'test_*.py' -v 2>&1 | tee "$RUNNER_TEMP/holding-unittest.log"
+      - name: Reject new static architecture debt
+        shell: bash
+        run: python -B -X utf8 -m tools.architecture_guard --base-ref "$BASE_SHA"
+      - name: Require clean checkout and unchanged candidate
+        shell: bash
+        run: |
+          test -z "$(git status --porcelain --untracked-files=normal)"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+      - name: Upload bounded test evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4.6.2
+        with:
+          name: holding-unittest-${{ matrix.os }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/holding-unittest.log
+          if-no-files-found: warn
+          retention-days: 30
+
+  required:
+    if: >-
+      always() &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.draft == false ||
+       contains(github.event.pull_request.labels.*.name, 'ci:validate'))
+    name: Holding Certification / Required
+    needs: [ai-policy, cross-platform-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require policy and both platform suites successful
+        shell: bash
+        env:
+          POLICY_RESULT: ${{ needs.ai-policy.result }}
+          SUITE_RESULT: ${{ needs.cross-platform-tests.result }}
+        run: |
+          test "$POLICY_RESULT" = "success"
+          test "$SUITE_RESULT" = "success"
+          echo "Repository certification passed; native Windows release acceptance remains separate."

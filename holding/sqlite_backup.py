@@ -105,7 +105,11 @@ def restore_snapshot(snapshot: str | Path, destination: str | Path) -> Path:
         raise BackupError("Invalid checksum")
     if digest_file(snapshot) != expected:
         raise BackupError("Tampered snapshot")
-    with closing(sqlite3.connect(f"file:{snapshot.resolve()}?mode=ro", uri=True)) as original:
+    # Escape URI delimiters in both directories and filenames. A raw '#'
+    # otherwise hides the rest of the path (including mode=ro) from SQLite,
+    # which can create an unrelated empty database and restore it as success.
+    source_uri = snapshot.resolve().as_uri() + "?mode=ro"
+    with closing(sqlite3.connect(source_uri, uri=True)) as original:
         if original.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
             raise BackupError("SQLite snapshot corrupt")
         expected_state = logical_digest(original)
