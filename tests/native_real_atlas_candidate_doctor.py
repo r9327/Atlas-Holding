@@ -82,9 +82,14 @@ def _sync_disposable_context_index(destination: Path) -> None:
     """Mirror Atlas's committed AI Context without repo hooks or model edits."""
     target = destination / INDEX_PATH
     if (not target.is_file() or target.is_symlink()
-            or target.parent.is_symlink() or target.stat().st_size > 512 * 1024
-            or _git(destination, "ls-files", "--error-unmatch", "--",
-                    INDEX_PATH) != INDEX_PATH):
+            or target.parent.is_symlink() or target.stat().st_size > 512 * 1024):
+        raise RuntimeError("Canonical tracked Atlas AI Context index required")
+    try:
+        tracked = _git(destination, "ls-files", "--error-unmatch", "--",
+                       INDEX_PATH)
+    except RuntimeError as exc:
+        raise RuntimeError("Canonical tracked Atlas AI Context index required") from exc
+    if tracked != INDEX_PATH:
         raise RuntimeError("Canonical tracked Atlas AI Context index required")
     staged_tree = _git(destination, "write-tree")
     if not _SHA.fullmatch(staged_tree):
