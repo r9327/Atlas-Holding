@@ -131,11 +131,26 @@ def assemble(
         # authority, IPC capabilities or Python interpreter are provisioned.
         _run([str(viewer), "--project-chat-self-test"],
              cwd=runtime_root, timeout=90)
+        ram_receipt = temp / "native-frozen-ipc-ram.json"
         _run([
             sys.executable, "-B",
             str(Path(__file__).with_name("native_windows_runtime_smoke.py")),
             "--viewer", str(viewer), "--engine", str(engine),
+            "--ram-receipt", str(ram_receipt),
         ], cwd=runtime_root, timeout=140)
+        if not ram_receipt.is_file() or ram_receipt.stat().st_size > 4096:
+            raise RuntimeError("Real frozen IPC RAM observation is missing")
+        ram = json.loads(ram_receipt.read_text(encoding="utf-8"))
+        if (type(ram) is not dict
+                or ram.get("kind") != "NONRELEASE_FROZEN_IPC_RAM_WINDOW"
+                or type(ram.get("samples")) is not int
+                or ram["samples"] < 1
+                or ram.get("root_pids_observed") != 2
+                or type(ram.get("peak_holding_working_set_bytes")) is not int
+                or ram["peak_holding_working_set_bytes"] <= 0
+                or ram.get("normal_coding_certified") is not False
+                or ram.get("release_ready") is not False):
+            raise RuntimeError("Native process-tree RAM observation is invalid")
         _run([
             sys.executable, "-B",
             str(runtime_root / "tests" / "native_windows_agent_smoke.py"),
@@ -186,6 +201,9 @@ def assemble(
             with multi_lot_receipt.open("rb") as src, (
                     output_dir / multi_lot_receipt.name).open("xb") as dst:
                 shutil.copyfileobj(src, dst, 1024 * 1024)
+            with ram_receipt.open("rb") as src, (
+                    output_dir / ram_receipt.name).open("xb") as dst:
+                shutil.copyfileobj(src, dst, 1024 * 1024)
             observed = observe_native_release_files(output_dir)
             originals = {
                 item.name: (_sha(item), item.stat().st_size)
@@ -221,6 +239,9 @@ def assemble(
                 "local_three_lot_signed_qa_smoke": "PASS",
                 "local_three_lot_receipt_sha256": _sha(
                     output_dir / multi_lot_receipt.name),
+                "native_frozen_ipc_ram_receipt_sha256": _sha(
+                    output_dir / ram_receipt.name),
+                "native_frozen_ipc_ram": ram,
                 "release_ready": False,
                 "windows_clean_install_certified": False,
                 "acl_isolation_certified": False,
