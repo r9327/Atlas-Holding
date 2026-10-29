@@ -204,3 +204,12 @@ Le candidat Windows embarque désormais l’interface PySide6 `ProjectChatWindow
 ```
 
 Le chemin de version et les fichiers doivent être adaptés aux chemins **réellement installés** ; ceci n’est pas une commande à copier telle quelle. L’accès au chat est un mode indépendant avec une sélection de projet/configuration explicite : **l’installeur n’ajoute pas encore un bouton « Nouveau projet » et ne crée pas automatiquement la configuration du modèle ni un raccourci**. Ces étapes restent des critères du parcours utilisateur final, tout comme les mesures de RAM, un essai complet à modèle réel et les preuves Windows de machine neuve. Un test Qt ou un EXE démarré ne certifie ni une étude R&D réelle ni une release publiable.
+
+
+## Audit de provenance du GUI gelé — correction de l'assemblage natif
+
+Un smoke test natif exact-SHA a **échoué** sur le commit `38252a606b88269f038e200850f15966f7af001f` (run [40841605027](https://github.com/r9327/Atlas-Holding/actions/runs/40841605027)) : l'interface compilée provenait uniquement de `main@fcbabe0da38c22860e724f719d88ddfb1ea3742e`, avant l'ajout du mode R&D de cette PR, donc le véritable EXE retournait 2 à `--project-chat-self-test`.
+
+**Correctif `1d058050e4ca` :** l'assemblage construit désormais séparément le moteur, l'adaptateur et le runner d'acceptation depuis le `main` certifié ; le **Control Center depuis le candidat #9 exact-SHA** ; et le setup à partir du même candidat avec les deux EXE déjà hachés. Le reçu contient l'origine explicite `source_shas.release_candidate_viewer`, en plus de `certified_main_runtime`. Le test R&D est exécuté sur **les octets de l'exécutable réellement embarqué**. L'ancien PASS d'assemblage ne validait pas les changements UI de cette PR.
+
+Cette correction ne vaut pas à elle seule PASS : reconstruire puis revalider intégralement sur le nouveau SHA avant toute promotion. Le parcours utilisateur sans paramètres, les permissions à modèle réel et la publication restent bloqués.
