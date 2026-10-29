@@ -5,6 +5,7 @@ worker attestation, online probe, Doctor proof, or model benchmark.
 """
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 import re
@@ -53,7 +54,7 @@ def inspect_mission(db_path: Path, mission_id: str, *, now_epoch: int | None = N
     try:
         # SQLite mode=ro (not StateStore.__init__) prevents schema migration,
         # WAL writes and accidental creation of a missing database.
-        with sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True, timeout=2) as db:
+        with closing(sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True, timeout=2)) as db:
             db.row_factory = sqlite3.Row
             db.execute("PRAGMA query_only=ON")
             row = db.execute("SELECT * FROM missions WHERE id=?", (mission_id,)).fetchone()
