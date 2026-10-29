@@ -395,9 +395,9 @@ class WindowsSetupTests(unittest.TestCase):
         data.mkdir()
         database = data / "engine.sqlite"
         database.write_bytes(b"sqlite fixture for path checks")
-        with patch("holding.windows_engine_enrollment._require_native_windows"), \\
-             patch("holding.windows_setup.verify_runtime_payload") as verify, \\
-             patch("holding.windows_setup.validate_runtime_acl") as acl, \\
+        with patch("holding.windows_engine_enrollment._require_native_windows"), \
+             patch("holding.windows_setup.verify_runtime_payload") as verify, \
+             patch("holding.windows_setup.validate_runtime_acl") as acl, \
              patch("subprocess.Popen", return_value=Mock(pid=8419)) as spawn:
             self.assertEqual(launch_installed_project_chat(
                 install_root=self.install_root, runtime_pins=pins,
