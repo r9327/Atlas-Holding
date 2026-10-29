@@ -120,6 +120,78 @@ class ViewerEntryTests(unittest.TestCase):
                      "--engine-id", "wrong-engine"],
                     input_stream=io.BytesIO(READ + WRITE)), 2)
 
+    def test_isolated_project_chat_frozen_mode_has_no_ipc_credentials(self):
+        from pathlib import Path
+
+        class NoCredentials:
+            def isatty(self):
+                raise AssertionError("R&D mode must not read dashboard credentials")
+
+            def read(self, count=-1):
+                raise AssertionError("R&D mode must not consume the private pipe")
+
+        args = [
+            "--project-chat", "--chat-db", "/tmp/chat.sqlite",
+            "--chat-repo", "r9327/Atlas-Holding",
+            "--chat-model-config", "/tmp/model.json",
+            "--chat-circuit-config", "/tmp/circuit.json",
+        ]
+        # Path.is_absolute is portable: these are absolute POSIX paths even
+        # when running the test itself on Windows.
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            args[2] = str(root / "chat.sqlite")
+            args[6] = str(root / "model.json")
+            args[8] = str(root / "circuit.json")
+            with patch("holding.control_center_entry._run_project_chat",
+                       return_value=0) as chat, \
+                 patch("holding.control_center_entry._run_gui") as viewer:
+                self.assertEqual(main(args, input_stream=NoCredentials()), 0)
+                chat.assert_called_once_with([
+                    "--db", args[2], "--repo", "r9327/Atlas-Holding",
+                    "--model-config", args[6],
+                    "--circuit-config", args[8],
+                ])
+                viewer.assert_not_called()
+            for extra in (
+                ["--port", "80", "--engine-id", "fake"],
+                ["--readonly"], ["--probe"], ["--self-test"],
+                ["--update-root", str(root)],
+            ):
+                with self.subTest(extra=extra), \
+                     patch("holding.control_center_entry._run_project_chat") as chat:
+                    self.assertEqual(main(args + extra,
+                                          input_stream=NoCredentials()), 2)
+                    chat.assert_not_called()
+            # A partial or relative selection must fail closed before opening Qt.
+            for invalid in (
+                ["--project-chat"],
+                ["--project-chat", "--chat-db", "relative.sqlite",
+                 "--chat-repo", "r9327/Atlas-Holding",
+                 "--chat-model-config", str(root / "model.json")],
+                ["--chat-db", str(root / "chat.sqlite")],
+            ):
+                with self.subTest(invalid=invalid), \
+                     patch("holding.control_center_entry._run_project_chat") as chat:
+                    self.assertEqual(main(invalid, input_stream=NoCredentials()), 2)
+                    chat.assert_not_called()
+
+    def test_bundled_project_chat_smoke_tests_real_qt(self):
+        from holding.control_center_entry import _project_chat_self_test
+        self.assertEqual(_project_chat_self_test(), 0)
+        with patch("holding.control_center_entry._project_chat_self_test",
+                   return_value=0) as smoke, \
+             patch("holding.control_center_entry.read_capabilities") as credentials:
+            self.assertEqual(main(["--project-chat-self-test"]), 0)
+            smoke.assert_called_once_with()
+            credentials.assert_not_called()
+        for extra in (["--readonly"], ["--self-test"], ["--project-chat"]):
+            with self.subTest(extra=extra), \
+                 patch("holding.control_center_entry._project_chat_self_test") as smoke:
+                self.assertEqual(main(["--project-chat-self-test", *extra]), 2)
+                smoke.assert_not_called()
+
     def test_invalid_port_does_not_start_ui(self):
         with patch("holding.control_center_entry._run_gui") as ui:
             with redirect_stderr(io.StringIO()):
