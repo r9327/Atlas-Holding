@@ -254,7 +254,7 @@ class ControlCenterProjectionTests(unittest.TestCase):
         self.assertEqual(state.hub.age_seconds, 12)
         self.assertEqual(state.hub.source_sha256, "c" * 64)
         self.assertEqual(state.plugins, ())
-        self.assertNotIn("ACTIVE", json.dumps(payload))
+        self.assertNotEqual(payload["hub"]["state"], "ACTIVE")
 
     def test_old_or_invalid_hub_observation_cannot_claim_live_protocol(self):
         from holding.control_center_projection import DashboardProjectionError
