@@ -28,7 +28,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: r9327/Atlas-Holding
-          ref: 3e89b8b12ab7bb4e099622844eb7a37cea7d0066
+          ref: fcbabe0da38c22860e724f719d88ddfb1ea3742e
           path: upstream/integration
           persist-credentials: false
       - name: Python 3.13
@@ -80,7 +80,7 @@ jobs:
           $runtime = Join-Path $PWD "upstream/integration"
           $dest = Join-Path $env:RUNNER_TEMP "atlas-nonrelease-cross-pr-${{ github.run_id }}"
           $manifest = Join-Path $env:RUNNER_TEMP "Atlas-Holding-official-runtime-manifest.json"
-          python -B -X utf8 tests/native_windows_three_binary_assembly.py --setup-root "$setup" --runtime-root "$runtime" --setup-sha "${{ github.event.pull_request.head.sha }}" --runtime-sha 3e89b8b12ab7bb4e099622844eb7a37cea7d0066 --manifest "$manifest" --candidate-sha "${{ github.event.pull_request.head.sha }}" --output-dir "$dest"
+          python -B -X utf8 tests/native_windows_three_binary_assembly.py --setup-root "$setup" --runtime-root "$runtime" --setup-sha "${{ github.event.pull_request.head.sha }}" --runtime-sha fcbabe0da38c22860e724f719d88ddfb1ea3742e --manifest "$manifest" --candidate-sha "${{ github.event.pull_request.head.sha }}" --output-dir "$dest"
           if ($LASTEXITCODE -ne 0) { throw "Native cross-PR frozen assembly failed" }
           $evidence = Join-Path $dest "cross-pr-nonrelease-evidence.json"
           if (!(Test-Path $evidence)) { throw "Native build evidence is missing" }
