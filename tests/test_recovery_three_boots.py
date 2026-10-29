@@ -82,7 +82,7 @@ class ThreeBootRecoveryTests(unittest.TestCase):
         original_count = git(work, "rev-list", "--count", "HEAD")
         for attempt in range(3):
             with HoldingService(
-                ServiceSettings(self.database, idle_seconds=0.01),
+                ServiceSettings(self.database, idle_seconds=0.05),
                 NeverRunInterruptedWork(), online=lambda: False,
                 recovery_git=self.manager,
             ) as host:
