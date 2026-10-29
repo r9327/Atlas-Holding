@@ -256,7 +256,9 @@ class SafeRoadmapReplanner:
             if plan.blocked:
                 raise StoreError("Roadmap amendment conflicts: " +
                                  ",".join(plan.blocked[:20]))
-            if plan.version:
+            if plan.version or (not plan.added and not plan.revised):
+                # A replay after an interrupted handoff must not create an
+                # additional roadmap version for the same persisted missions.
                 return plan
             apply_schema(self.store.db, ROADMAP_AMENDMENT_SCHEMA)
             now = int(time.time())

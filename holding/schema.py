@@ -273,6 +273,38 @@ MCP_HUB_JOURNAL_SCHEMA = (
 )
 
 
+PROJECT_CHAT_SCHEMA = (
+    """CREATE TABLE IF NOT EXISTS project_chat_sessions (
+        session_id TEXT PRIMARY KEY,
+        repository TEXT NOT NULL,
+        initial_goal TEXT NOT NULL,
+        questions_json TEXT NOT NULL,
+        answers_json TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('ASSESSING','ASKING','GENERATING','READY')),
+        mission_id TEXT NOT NULL UNIQUE,
+        proposal_sha256 TEXT,
+        updated_epoch INTEGER NOT NULL
+    )""",
+)
+
+
+RESEARCH_WORKPLAN_SCHEMA = (
+    """CREATE TABLE IF NOT EXISTS project_workplans (
+     session_id TEXT PRIMARY KEY REFERENCES project_chat_sessions(session_id),
+     repository TEXT NOT NULL,
+     proposal_sha256 TEXT NOT NULL,
+     spec_sha256 TEXT NOT NULL,
+     model_digest TEXT NOT NULL,
+     plan_sha256 TEXT NOT NULL,
+     plan_json TEXT NOT NULL,
+     state TEXT NOT NULL CHECK(state IN ('PREPARED','STAGED')),
+     queued_json TEXT NOT NULL,
+     deferred_json TEXT NOT NULL,
+     updated_epoch INTEGER NOT NULL
+    )""",
+)
+
+
 def apply_schema(db: sqlite3.Connection, statements: Iterable[str]) -> None:
     """Apply canonical statements without the implicit commits of executescript."""
     for statement in statements:
