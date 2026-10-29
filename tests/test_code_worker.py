@@ -205,7 +205,7 @@ else:
             "list", ("paths", 17, "a"*40)])
         self.assertEqual(observed[0]["github_pr_path_status"], "OBSERVED")
         collision = observed[0]["github_pr_path_overlap"]
-        self.assertEqual(collision["matching_local_paths"], ["feature.py"])
+        self.assertEqual(tuple(collision["matching_local_paths"]), ("feature.py",))
         self.assertEqual(collision["status"], "EXACT_PATH_OVERLAP")
         self.assertFalse(collision["can_skip_implementation"])
 
