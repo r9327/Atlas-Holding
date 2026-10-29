@@ -262,10 +262,11 @@ def _plan(config: dict, payload: dict, root: Path) -> dict:
         for entry in import_hints['imports']:
             if (not isinstance(entry, dict)
                     or set(entry) != {'module_path', 'importer_path'}
+                    or not isinstance(entry['module_path'], str)
                     or entry['module_path'] not in candidate_paths
                     or not isinstance(entry['importer_path'], str)
                     or not re.fullmatch(
-                        r'[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\\.py',
+                        r'[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\.py',
                         entry['importer_path'])
                     or entry['importer_path'] == entry['module_path']
                     or (entry['module_path'], entry['importer_path']) in seen):
