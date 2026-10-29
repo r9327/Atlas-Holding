@@ -77,7 +77,7 @@ class ExistingCodeTests(unittest.TestCase):
             raise AssertionError("Unexpected broad or data inventory request")
         report = inspect_existing_code(
             read_git, repository_sha=self.sha,
-            acceptance=("FeatureEngine",))
+            acceptance=("feature",))
         self.assertEqual(report.state, "CANDIDATES_FOUND")
         self.assertEqual(report.candidates[0].symbols, ("FeatureEngine",))
         self.assertNotIn(("ls-tree", "-r", "-z", self.sha), events)
