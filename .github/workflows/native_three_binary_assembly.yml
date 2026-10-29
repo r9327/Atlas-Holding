@@ -24,11 +24,11 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
-      - name: Checkout exact certified main engine and GUI source
+      - name: Checkout exact integrated main candidate engine and GUI source
         uses: actions/checkout@v7
         with:
           repository: r9327/Atlas-Holding
-          ref: fcbabe0da38c22860e724f719d88ddfb1ea3742e
+          ref: 7813063b416ebaf945c0ededbfb8fdd448909a29
           path: upstream/integration
           persist-credentials: false
       - name: Python 3.13
@@ -88,7 +88,7 @@ jobs:
           $runtime = Join-Path $PWD "upstream/integration"
           $dest = Join-Path $env:RUNNER_TEMP "atlas-nonrelease-cross-pr-${{ github.run_id }}"
           $manifest = Join-Path $env:RUNNER_TEMP "Atlas-Holding-official-runtime-manifest.json"
-          python -B -X utf8 tests/native_windows_three_binary_assembly.py --setup-root "$setup" --runtime-root "$runtime" --setup-sha "${{ github.event.pull_request.head.sha }}" --runtime-sha fcbabe0da38c22860e724f719d88ddfb1ea3742e --manifest "$manifest" --candidate-sha "${{ github.event.pull_request.head.sha }}" --output-dir "$dest"
+          python -B -X utf8 tests/native_windows_three_binary_assembly.py --setup-root "$setup" --runtime-root "$runtime" --setup-sha "${{ github.event.pull_request.head.sha }}" --runtime-sha 7813063b416ebaf945c0ededbfb8fdd448909a29 --manifest "$manifest" --candidate-sha "${{ github.event.pull_request.head.sha }}" --output-dir "$dest"
           if ($LASTEXITCODE -ne 0) { throw "Native cross-PR frozen assembly failed" }
           $evidence = Join-Path $dest "cross-pr-nonrelease-evidence.json"
           if (!(Test-Path $evidence)) { throw "Native build evidence is missing" }
@@ -245,7 +245,7 @@ jobs:
           }
           if ($record.source_shas.release_candidate_viewer -ne "${{ github.event.pull_request.head.sha }}" -or
               $record.source_shas.release_candidate_engine -ne "${{ github.event.pull_request.head.sha }}" -or
-              $record.source_shas.certified_main_agent -ne "fcbabe0da38c22860e724f719d88ddfb1ea3742e") {
+              $record.source_shas.certified_main_agent -ne "7813063b416ebaf945c0ededbfb8fdd448909a29") {
             throw "Frozen R&D GUI/engine provenance differs from exact candidate/main pins"
           }
           $chatInfo = [System.Diagnostics.ProcessStartInfo]::new()

@@ -116,7 +116,7 @@ Se référer à `ROADMAP.md` de la PR #1 ; le test porte sur un vrai exécutable
 
 ## Répétition native multi-PR des vrais EXE (21 octobre 2026)
 
-Le workflow `.github/workflows/native_packaging_rehearsal.yml` assemble, sur un runner Windows, les sources setup, moteur et Control Center du `main` certifié au SHA `fcbabe0da38c22860e724f719d88ddfb1ea3742e`. Il compile les deux vrais exécutables, mesure leurs SHA-256, les embarque dans `AtlasHoldingSetup.exe` puis lance le self-test natif du setup et celui des deux composants. Les entrées sont épinglées à ce SHA immuable, leurs checkouts vérifiés et aucun artefact n'est publié comme release.
+Le workflow `.github/workflows/native_packaging_rehearsal.yml` assemble, sur un runner Windows, les sources setup, moteur et Control Center du `main` intégré au SHA `7813063b416ebaf945c0ededbfb8fdd448909a29` (candidat exact à **requalifier nativement** dans cette PR). Il compile les deux vrais exécutables, mesure leurs SHA-256, les embarque dans `AtlasHoldingSetup.exe` puis lance le self-test natif du setup et celui des deux composants. Les entrées sont épinglées à ce SHA immuable, leurs checkouts vérifiés et aucun artefact n'est publié comme release.
 
 Le label `ci:package-native` déclenche ce test séparé. Cette épreuve vérifie le **câblage d'emballage et l'extraction réelle**, mais **pas** l'installation complète sur un PC vierge, l'ACL native, le lancement des agents ou une roadmap autonome. La PR reste Draft et les gates de sortie demeurent obligatoires.
 
@@ -241,3 +241,14 @@ Le lot de reprise Git/SQLite a révélé une autre lacune de packaging : le mote
 **Comptabilité de la RAM de Holding :** nouveau module `holding/windows_tree_ram.py` comptant réellement les processus Windows sous les racines PID du moteur et du viewer, leurs sous-processus PyInstaller/IPC ainsi que les outils lancés, par snapshots Win32 natifs. Les noms d'exécutables d'inférence Ollama connus sont exclus du **budget Holding**, mais enregistrés séparément ; les autres enfants, même inconnus, restent imputés à Holding. Une erreur d'accès à une mémoire de descendant est bloquante, pas assimilée à zéro. `tests/native_windows_runtime_smoke.py` mesure la période où les deux vrais EXE communiquent avec une capacité authentifiée, et refuse l'absence d'échantillons des deux racines. Le reçu `native-frozen-ipc-ram.json`, signé par sa somme SHA256 dans les preuves nonrelease, est vérifié avant publication de l'artefact GitHub Actions.
 
 **Limites explicitement non couvertes :** fenêtre courte d'IPC plutôt qu'une longue mission de codage IA, échantillonnage de working set susceptible de rater des pics entre échantillons, compte des pages partagées potentiellement en double, pas de certification du plafond **400 Mo en codage ordinaire**, pas de bench cumulatif heures/Doctor/Graphify, pas de test machine Windows de l'utilisateur. Les seuils de production de `QUALITY_RELEASE_GATES.md` restent **à cocher uniquement après une vraie mission**. Le nouveau contrôle constitue l'instrumentation de preuve et une première mesure, pas une approbation RAM.
+
+## Actualisation du candidat natif après intégration Autonomie V2 (29 octobre 2026)
+
+Après fusion des PR Holding #58 et #51, les workflows Windows nonrelease
+`native_packaging_rehearsal.yml` et `native_three_binary_assembly.yml`
+utilisent un checkout immuable du nouveau `main@7813063b416ebaf945c0ededbfb8fdd448909a29`, plutôt que
+l'ancien `main@fcbabe0da38c22860e724f719d88ddfb1ea3742e`. L'actualisation de la référence ne constitue **pas**
+une nouvelle certification : il faut obtenir un PASS natif au dernier SHA de
+la PR #9 et conserver les preuves d'installateur en statut NONRELEASE.
+L'intégration du vrai Doctor DOFUS Atlas demeure séparément bloquée par
+les tests en échec suivis dans https://github.com/r9327/Dof-Atlas/issues/294.

@@ -24,16 +24,16 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
-      - name: Checkout exact certified main setup source
+      - name: Checkout exact integrated main candidate setup source
         uses: actions/checkout@v7
         with:
-          ref: fcbabe0da38c22860e724f719d88ddfb1ea3742e
+          ref: 7813063b416ebaf945c0ededbfb8fdd448909a29
           path: _native/bootstrap
           persist-credentials: false
-      - name: Checkout exact certified main integration source
+      - name: Checkout exact integrated main candidate integration source
         uses: actions/checkout@v7
         with:
-          ref: fcbabe0da38c22860e724f719d88ddfb1ea3742e
+          ref: 7813063b416ebaf945c0ededbfb8fdd448909a29
           path: _native/integration
           persist-credentials: false
       - name: Python 3.13
@@ -52,7 +52,7 @@ jobs:
         run: |
           $bootstrap = (Resolve-Path '_native/bootstrap').Path
           $integration = (Resolve-Path '_native/integration').Path
-          python -B -X utf8 -m holding.native_rehearsal --bootstrap "$bootstrap" --bootstrap-sha "fcbabe0da38c22860e724f719d88ddfb1ea3742e" --integration "$integration" --integration-sha "fcbabe0da38c22860e724f719d88ddfb1ea3742e"
+          python -B -X utf8 -m holding.native_rehearsal --bootstrap "$bootstrap" --bootstrap-sha "7813063b416ebaf945c0ededbfb8fdd448909a29" --integration "$integration" --integration-sha "7813063b416ebaf945c0ededbfb8fdd448909a29"
           if ($LASTEXITCODE -ne 0) { throw "Real cross-PR native packaging proof failed" }
       - name: Confirm pinned candidate source was not changed
         shell: pwsh
