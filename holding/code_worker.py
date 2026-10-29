@@ -14,7 +14,9 @@ import tempfile
 import time
 
 from .autonomy import Mission
+from dataclasses import asdict
 from .executor import AuthorizedGit
+from .existing_code import inspect_existing_code, ExistingCodeError
 from .git_worktree import GitSafetyError
 from .process_agent import LocalProcessAgent, AgentProcessError, AgentInterrupted
 
@@ -157,6 +159,20 @@ class LocalCodeWorker:
                    'acceptance': list(criteria)}
         if project_goal is not None:
             request['project_goal'] = project_goal
+        # The exact baseline tree is observed BEFORE model generation. This
+        # context is advisory and cannot waive independent QA or skip a task.
+        if self.git.git._git('rev-parse', 'HEAD', cwd=worktree.path) != worktree.base_sha:
+            raise CodePlanError('Worktree HEAD moved before existing-code discovery')
+        def read_git(*args: str) -> str:
+            return self.git.git._git(*args, cwd=worktree.path)
+        try:
+            existing = inspect_existing_code(
+                read_git, repository_sha=worktree.base_sha,
+                acceptance=criteria,
+            )
+        except ExistingCodeError as exc:
+            raise CodePlanError('Cannot establish exact-SHA existing-code inventory') from exc
+        request['existing_code'] = asdict(existing)
         # A failing independent QA SHA gives the coding agent explicit
         # correction context without passing it credentials, signatures,
         # arbitrary test commands, or a self-certification privilege.
