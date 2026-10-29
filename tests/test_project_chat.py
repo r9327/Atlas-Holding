@@ -61,6 +61,10 @@ class ProjectChatTests(unittest.TestCase):
         self.assertEqual(result.status, "READY")
         self.assertEqual(result.questions, ())
         self.assertEqual(result.concept, PROPOSAL["concept"])
+        self.assertEqual(result.research_brief, PROPOSAL)
+        self.assertIn("Créer le prototype logiciel", result.task_details[0])
+        self.assertIn("transmise au moteur", result.task_details[0])
+        self.assertIn("prérequis : tâches 1", result.task_details[1])
         self.assertEqual(len(result.proposal_sha256), 64)
         self.assertEqual(http.call_count, 3)
         self.assertEqual(self.store.db.execute(

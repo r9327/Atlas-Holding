@@ -243,21 +243,47 @@ class ProjectChatUiTests(unittest.TestCase):
 
     def test_deferred_tasks_can_be_resumed_without_closing_window(self):
         from dataclasses import replace
-        waiting = ChatView(SID, REPO, "Simuler un circuit", (), (), "READY", None,
-                           "chat-" + SID[:24], "1" * 64, "RC", "STAGED", 0, 2)
+        waiting = ChatView(
+            SID, REPO, "Simuler un circuit", (), (), "READY", None,
+            "chat-" + SID[:24], "1" * 64, "RC", "STAGED", 0, 2,
+            task_details=("Tâche 1 : RC — simulation RC en échec",))
         with patch.object(ProjectChatWindow, "_call", return_value=waiting):
             window = ProjectChatWindow(
                 database=self.database, repository=REPO, model_config=self.config)
             self.addCleanup(window.close)
             self.flush(window)
         self.assertFalse(window.retry.isHidden())
-        recovered = replace(waiting, queued_tasks=1, deferred_tasks=0)
+        self.assertIsNone(window._future)
+        recovered = replace(waiting, queued_tasks=1, deferred_tasks=0,
+                            task_details=("Tâche 1 : RC — calculé sur hypothèses",))
         with patch.object(window, "_call", return_value=recovered) as call:
             window.retry.click()
             self.flush(window)
             self.assertEqual(call.call_args.args, ("resume", None))
         self.assertTrue(window.retry.isHidden())
+        self.assertIn("calculé sur hypothèses", window.history.toPlainText())
         self.assertIn("1 tâches logicielles transmises", window.history.toPlainText())
+
+
+    def test_complete_research_brief_is_readable(self):
+        done = ChatView(
+            SID, REPO, "Étudier un prototype", (), (), "READY", None,
+            "chat-" + SID[:24], "1" * 64, "Concept",
+            research_brief={
+                "hypotheses": ["Hypothèse visible"],
+                "prototype_steps": ["Étape visible"],
+                "unknowns": ["Inconnue visible"],
+                "experiments": [{"name": "Essai visible", "method": "Méthode visible",
+                                 "success_measure": "Critère visible"}],
+            })
+        with patch.object(ProjectChatWindow, "_call", return_value=done):
+            window = ProjectChatWindow(
+                database=self.database, repository=REPO, model_config=self.config)
+            self.addCleanup(window.close)
+            self.flush(window)
+        for expected in ("Hypothèse visible", "Étape visible", "Inconnue visible",
+                         "Essai visible", "Méthode visible", "Critère visible"):
+            self.assertIn(expected, window.history.toPlainText())
 
 
 if __name__ == "__main__":

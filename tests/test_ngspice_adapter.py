@@ -291,6 +291,7 @@ class NgspiceAdapterTests(unittest.TestCase):
             view, _ = self.create(plan)
         execute.assert_called_once()
         self.assertEqual((view.queued_tasks, view.deferred_tasks), (1, 2))
+        self.assertIn("simulation RC en échec", view.task_details[2])
         stored_plan = ResearchWorkplanCoordinator(
             self.store, repository=REPO, config_path=self.model_config).inspect(view.session_id)
         failures = CircuitSimulationRunner(
@@ -311,6 +312,7 @@ class NgspiceAdapterTests(unittest.TestCase):
         with patch("holding.ngspice_adapter.subprocess.run", side_effect=success):
             recovered = self.chat().resume(view.session_id)
         self.assertEqual((recovered.queued_tasks, recovered.deferred_tasks), (2, 0))
+        self.assertNotIn("simulation RC en échec", recovered.task_details[2])
         self.assertEqual(len(recovered.circuit_results), 1)
 
     def test_invalid_or_injected_circuit_never_reaches_simulator(self):

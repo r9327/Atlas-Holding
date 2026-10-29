@@ -254,6 +254,18 @@ class ProjectChatWindow(QMainWindow):
             lines.append("Holding : Dossier R&D enregistré (proposition non vérifiée).")
             if view.concept:
                 lines.append("Concept : " + view.concept)
+            if view.research_brief:
+                brief = view.research_brief
+                for key, title in (("hypotheses", "Hypothèses"),
+                                   ("prototype_steps", "Étapes du prototype"),
+                                   ("unknowns", "Inconnues")):
+                    lines.append(title + " :\n" + "\n".join(
+                        "• " + text for text in brief[key]))
+                for experiment in brief["experiments"]:
+                    lines.append(
+                        "Expérience proposée : " + experiment["name"] +
+                        "\nMéthode : " + experiment["method"] +
+                        "\nCritère de réussite : " + experiment["success_measure"])
             work = (
                 f"{view.queued_tasks} tâches logicielles transmises, "
                 f"{view.deferred_tasks} tâches différées."
@@ -263,6 +275,7 @@ class ProjectChatWindow(QMainWindow):
             if view.simulated_tasks:
                 work += f" {view.simulated_tasks} simulations numériques calculées."
             lines.append("Holding : " + work)
+            lines.extend(view.task_details)
             for result in view.simulation_results:
                 lines.append("Calcul hypothétique : " + result)
             for result in view.circuit_results:
