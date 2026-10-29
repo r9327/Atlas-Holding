@@ -223,7 +223,8 @@ def inspect_existing_code(
         except ImportConsumerError as exc:
             raise ExistingCodeError("Exact-SHA consumer inventory failed") from exc
         import_scanned = consumers.parsed_files
-        consumer_status = consumers.status
+        consumer_status = (consumers.status if consumers.parsed_files
+                           else "NOT_VERIFIED")
         results = [
             ExistingCandidate(c.path, c.symbols, c.source,
                               consumers.importer_paths.get(c.path, ()))
