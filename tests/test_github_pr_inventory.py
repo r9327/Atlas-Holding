@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import json
 import unittest
 
 from holding.github_pr_inventory import (
@@ -29,7 +30,7 @@ class OpenPrInventoryTests(unittest.TestCase):
         self.assertEqual([p.same_repository for p in report.hints], [True, False])
         self.assertFalse(report.can_certify)
         self.assertFalse(report.can_skip_implementation)
-        copy = validate_open_pr_inventory(REPO, asdict(report))
+        copy = validate_open_pr_inventory(REPO, json.loads(json.dumps(asdict(report))))
         self.assertEqual(copy, report)
 
     def test_bounded_first_page_does_not_pretend_pagination_is_complete(self):
@@ -37,7 +38,7 @@ class OpenPrInventoryTests(unittest.TestCase):
         self.assertEqual(report.status, "PAGINATION_NOT_VERIFIED")
         self.assertEqual(len(report.hints), 20)
         self.assertEqual(report.observed_count, 100)
-        self.assertEqual(validate_open_pr_inventory(REPO, asdict(report)), report)
+        self.assertEqual(validate_open_pr_inventory(REPO, json.loads(json.dumps(asdict(report)))), report)
 
     def test_no_open_prs_means_only_no_pr_on_observed_api_page(self):
         report = parse_open_prs(REPO, [])
@@ -64,7 +65,7 @@ class OpenPrInventoryTests(unittest.TestCase):
             parse_open_prs(REPO, [pr(i + 1) for i in range(101)])
 
     def test_broker_result_cannot_forge_authority_or_completeness(self):
-        valid = asdict(parse_open_prs(REPO, [pr(3)]))
+        valid = json.loads(json.dumps(asdict(parse_open_prs(REPO, [pr(3)]))))
         variants = (
             {"can_skip_implementation": True},
             {"can_certify": True},
