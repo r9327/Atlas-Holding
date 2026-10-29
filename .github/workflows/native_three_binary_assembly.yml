@@ -1,0 +1,295 @@
+name: Native cross-PR three-binary assembly (nonrelease)
+
+on:
+  pull_request:
+    branches: [main]
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  native_assembly:
+    if: >-
+      github.head_ref == 'feat/09-exe-packaging-release' &&
+      github.event.label.name == 'ci:validate'
+    name: Frozen Engine + Qt + Setup on real Windows
+    runs-on: windows-latest
+    timeout-minutes: 35
+    outputs:
+      candidate_digest: ${{ steps.candidate_upload.outputs.artifact-digest }}
+    steps:
+      - name: Checkout exact release candidate implementation
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Checkout exact integrated main candidate engine and GUI source
+        uses: actions/checkout@v7
+        with:
+          repository: r9327/Atlas-Holding
+          ref: 7813063b416ebaf945c0ededbfb8fdd448909a29
+          path: upstream/integration
+          persist-credentials: false
+      - name: Python 3.13
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Pinned GUI and EXE packager dependencies
+        run: |
+          python -m pip install --disable-pip-version-check PySide6==6.12.0
+          python -m pip install --disable-pip-version-check --only-binary=:all: "pyinstaller==6.22.3"
+      - name: Native Git SQLite three-restart recovery fail-closed proof
+        shell: pwsh
+        timeout-minutes: 3
+        run: |
+          python -B -X utf8 -m unittest discover -s tests -p test_recovery_three_boots.py -v
+          if ($LASTEXITCODE -ne 0) { throw "Three restart recovery proof failed" }
+          python -B -X utf8 -m unittest discover -s tests -p test_recovery.py -v
+          if ($LASTEXITCODE -ne 0) { throw "Git journal recovery regression failed" }
+      - name: Derive exact runtime manifest from official publisher bytes
+        shell: pwsh
+        timeout-minutes: 12
+        run: |
+          $gitUrl = "https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.2/MinGit-2.56.0.2-64-bit.zip"
+          $gitSha = "da35e72aa21c005a5a0d298cfbae110bc1609a815730ea0dde84b01a1b3cd3be"
+          $codeUrl = "https://github.com/anomalyco/opencode/releases/download/v1.18.29/opencode-windows-x64.zip"
+          $codeSha = "b32618aa3d1415f6e4f473aec248edef25759203fb707d7d968359d86d4a35ee"
+          $gitZip = Join-Path $env:RUNNER_TEMP "Atlas-MinGit-$gitSha.zip"
+          $codeZip = Join-Path $env:RUNNER_TEMP "Atlas-OpenCode-$codeSha.zip"
+          $manifest = Join-Path $env:RUNNER_TEMP "Atlas-Holding-official-runtime-manifest.json"
+          Invoke-WebRequest -Uri $gitUrl -OutFile $gitZip -MaximumRedirection 5 -TimeoutSec 180
+          if ((Get-FileHash -Algorithm SHA256 $gitZip).Hash.ToLowerInvariant() -ne $gitSha) {
+            throw "Publisher MinGit SHA256 mismatch"
+          }
+          Invoke-WebRequest -Uri $codeUrl -OutFile $codeZip -MaximumRedirection 5 -TimeoutSec 180
+          if ((Get-FileHash -Algorithm SHA256 $codeZip).Hash.ToLowerInvariant() -ne $codeSha) {
+            throw "Publisher OpenCode SHA256 mismatch"
+          }
+          Push-Location (Join-Path $PWD "upstream/integration")
+          try {
+            python -B -X utf8 -m holding.portable_runtime --git-archive "$gitZip" --opencode-archive "$codeZip" --output "$manifest"
+            if ($LASTEXITCODE -ne 0) { throw "Official runtime manifest derivation failed" }
+          } finally {
+            Pop-Location
+            Remove-Item -Force -ErrorAction SilentlyContinue $gitZip, $codeZip
+          }
+          $winget = Get-Command winget.exe -ErrorAction Stop
+          & $winget.Source show --id Ollama.Ollama --exact --version 0.32.8 --source winget --scope user --architecture x64 --disable-interactivity --accept-source-agreements
+          if ($LASTEXITCODE -ne 0) { throw "Pinned Ollama installer unavailable" }
+          Write-Output "Official runtime manifest SHA256: $((Get-FileHash -Algorithm SHA256 $manifest).Hash.ToLowerInvariant())"
+      - name: Native Windows build and real two-frozen-process IPC
+        shell: pwsh
+        timeout-minutes: 22
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          $setup = $PWD.Path
+          $runtime = Join-Path $PWD "upstream/integration"
+          $dest = Join-Path $env:RUNNER_TEMP "atlas-nonrelease-cross-pr-${{ github.run_id }}"
+          $manifest = Join-Path $env:RUNNER_TEMP "Atlas-Holding-official-runtime-manifest.json"
+          python -B -X utf8 tests/native_windows_three_binary_assembly.py --setup-root "$setup" --runtime-root "$runtime" --setup-sha "${{ github.event.pull_request.head.sha }}" --runtime-sha 7813063b416ebaf945c0ededbfb8fdd448909a29 --manifest "$manifest" --candidate-sha "${{ github.event.pull_request.head.sha }}" --output-dir "$dest"
+          if ($LASTEXITCODE -ne 0) { throw "Native cross-PR frozen assembly failed" }
+          $evidence = Join-Path $dest "cross-pr-nonrelease-evidence.json"
+          if (!(Test-Path $evidence)) { throw "Native build evidence is missing" }
+          $record = Get-Content $evidence -Raw | ConvertFrom-Json
+          if ($record.release_ready -ne $false -or
+              $record.windows_clean_install_certified -ne $false -or
+              $record.manifest_kind -ne "OFFICIAL_PINNED_PORTABLE_AND_WINGET_CANDIDATE" -or
+              $record.native_acl_enrollment_smoke -ne "PASS" -or
+              $record.installed_agent_health_smoke -ne "PASS" -or
+              $record.local_three_lot_signed_qa_smoke -ne "PASS" -or
+              $record.native_frozen_ipc_ram.kind -ne "NONRELEASE_FROZEN_IPC_RAM_WINDOW" -or
+              $record.native_frozen_ipc_ram.root_pids_observed -ne 2 -or
+              $record.native_frozen_ipc_ram.samples -lt 1 -or
+              $record.native_frozen_ipc_ram.normal_coding_certified -ne $false) {
+            throw "Native nonrelease candidate falsely claims release certification"
+          }
+          $ramEvidence = Join-Path $dest "native-frozen-ipc-ram.json"
+          if (!(Test-Path -LiteralPath $ramEvidence -PathType Leaf) -or
+              (Get-FileHash -Algorithm SHA256 -LiteralPath $ramEvidence).Hash.ToLowerInvariant() -cne
+                $record.native_frozen_ipc_ram_receipt_sha256) {
+            throw "Actual GUI+engine process-tree RAM receipt is missing or altered"
+          }
+          Write-Output "NONRELEASE_FROZEN_PROCESS_TREE_RAM: $($record.native_frozen_ipc_ram.peak_holding_working_set_bytes) bytes, $($record.native_frozen_ipc_ram.samples) samples"
+          foreach ($binary in @("AtlasHoldingSetup.exe", "AtlasHoldingEngine.exe", "AtlasHoldingControlCenter.exe")) {
+            $exe = Join-Path $dest $binary
+            if (!(Test-Path $exe)) { throw "Cross-PR assembly missing $binary" }
+            Write-Output "$binary SHA256: $((Get-FileHash -Algorithm SHA256 $exe).Hash.ToLowerInvariant())"
+          }
+          Write-Output "CROSS_PR_WINDOWS_NONRELEASE_ASSEMBLY_PASS"
+          if (git status --porcelain --untracked-files=normal -- . ':!upstream') {
+            throw "Release checkout mutated during native packaging"
+          }
+      - name: Upload tested Windows candidate (NOT RELEASE)
+        id: candidate_upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: NONRELEASE-AtlasHolding-Windows-Candidate-${{ github.run_id }}
+          path: ${{ runner.temp }}/atlas-nonrelease-cross-pr-${{ github.run_id }}/
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+      - name: Log independently checkable candidate archive SHA256
+        shell: pwsh
+        run: |
+          $digest = '${{ steps.candidate_upload.outputs.artifact-digest }}'
+          if ($digest -cnotmatch '^[0-9a-f]{64}$') {
+            throw 'No valid candidate archive SHA256 emitted by GitHub'
+          }
+          Write-Output "NONRELEASE_WINDOWS_CANDIDATE_DIGEST=sha256:$digest"
+          Write-Output "NONRELEASE_WINDOWS_CANDIDATE_SOURCE_SHA=${{ github.event.pull_request.head.sha }}"
+
+  fresh-runner-download:
+    needs: native_assembly
+    name: Downloaded setup self-test on fresh Windows runner
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - name: Download exact tested candidate from preceding job
+        uses: actions/download-artifact@v4
+        with:
+          name: NONRELEASE-AtlasHolding-Windows-Candidate-${{ github.run_id }}
+          path: ${{ runner.temp }}/downloaded-atlas-candidate
+      - name: Reverify receipt and execute setup without Python environment
+        shell: pwsh
+        run: |
+          $candidate = (Resolve-Path (Join-Path $env:RUNNER_TEMP "downloaded-atlas-candidate")).Path
+          $evidencePath = Join-Path $candidate "cross-pr-nonrelease-evidence.json"
+          $record = Get-Content -Raw -LiteralPath $evidencePath | ConvertFrom-Json
+          if ($record.release_ready -ne $false -or
+              $record.windows_clean_install_certified -ne $false -or
+              $record.source_shas.release_candidate -ne "${{ github.event.pull_request.head.sha }}") {
+            throw "Downloaded candidate receipt has an invalid release claim or source SHA"
+          }
+          foreach ($artifact in $record.artifacts) {
+            $path = Join-Path $candidate $artifact.name
+            if (!(Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Downloaded candidate is missing $($artifact.name)"
+            }
+            $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
+            if ($actual -cne $artifact.sha256 -or
+                (Get-Item -LiteralPath $path).Length -ne $artifact.size_bytes) {
+              throw "Downloaded candidate bytes differ from the build receipt"
+            }
+          }
+          $setup = Join-Path $candidate "AtlasHoldingSetup.exe"
+          $info = [System.Diagnostics.ProcessStartInfo]::new()
+          $info.FileName = $setup
+          [void]$info.ArgumentList.Add("--self-test")
+          $info.UseShellExecute = $false
+          $info.Environment.Clear()
+          $info.Environment["SystemRoot"] = $env:SystemRoot
+          $info.Environment["TEMP"] = $env:RUNNER_TEMP
+          $info.Environment["TMP"] = $env:RUNNER_TEMP
+          $process = [System.Diagnostics.Process]::Start($info)
+          if (!$process.WaitForExit(60000)) {
+            $process.Kill($true)
+            throw "Downloaded standalone setup self-test timed out"
+          }
+          if ($process.ExitCode -ne 0) {
+            throw "Downloaded standalone setup self-test failed: $($process.ExitCode)"
+          }
+          $installRoot = Join-Path $env:RUNNER_TEMP "Atlas Holding Fresh Install é"
+          $cacheRoot = Join-Path $env:RUNNER_TEMP "Atlas Holding Cache é"
+          $modelsRoot = Join-Path $env:RUNNER_TEMP "Atlas Holding Models é"
+          foreach ($folder in @($installRoot, $cacheRoot, $modelsRoot)) {
+            New-Item -ItemType Directory -Path $folder -ErrorAction Stop | Out-Null
+          }
+          $installReceipt = Join-Path $env:RUNNER_TEMP "fresh-runner-install-receipt.json"
+          $install = [System.Diagnostics.ProcessStartInfo]::new()
+          $install.FileName = $setup
+          foreach ($argument in @(
+            "--noninteractive-acceptance",
+            "--install-root", $installRoot,
+            "--cache-root", $cacheRoot,
+            "--models-root", $modelsRoot,
+            "--receipt-json", $installReceipt
+          )) { [void]$install.ArgumentList.Add($argument) }
+          $install.UseShellExecute = $false
+          $install.WorkingDirectory = $candidate
+          $installerProcess = [System.Diagnostics.Process]::Start($install)
+          if (!$installerProcess.WaitForExit(1200000)) {
+            $installerProcess.Kill($true)
+            throw "Downloaded setup provisioning timed out"
+          }
+          if ($installerProcess.ExitCode -ne 0 -or !(Test-Path -LiteralPath $installReceipt)) {
+            throw "Downloaded setup provisioning failed: $($installerProcess.ExitCode)"
+          }
+          $installed = Get-Content -Raw -LiteralPath $installReceipt | ConvertFrom-Json
+          if ($installed.kind -ne "NONRELEASE_FRESH_WINDOWS_PROVISIONING" -or
+              $installed.execution_state -ne "RUNTIME_STAGED_ENGINE_CONFIG_PENDING" -or
+              $installed.windows_clean_install_certified -ne $false -or
+              $installed.interactive_wizard_certified -ne $false -or
+              $installed.reboot_certified -ne $false -or
+              $installed.release_ready -ne $false) {
+            throw "Fresh setup receipt has invalid provisioning evidence or claims"
+          }
+          foreach ($name in @("AtlasHoldingControlCenter.exe", "AtlasHoldingEngine.exe")) {
+            $observed = $installed.runtime_artifacts.$name
+            if ($null -eq $observed -or $observed.sha256 -cnotmatch '^[0-9a-f]{64}$' -or
+                [int64]$observed.size_bytes -lt 1000000) {
+              throw "Installed runtime receipt is incomplete for $name"
+            }
+          }
+          # Verify the chat is usable from the INSTALLED exact-hash GUI, not
+          # merely present in the checkout or staged pre-install archive.
+          # This test uses the frozen EXE with no Python, Ollama or private IPC.
+          $viewerPin = $installed.runtime_artifacts."AtlasHoldingControlCenter.exe".sha256
+          $enginePin = $installed.runtime_artifacts."AtlasHoldingEngine.exe".sha256
+          $runtimeVersion = $viewerPin.Substring(0, 16) + "-" + $enginePin.Substring(0, 16)
+          $installedViewer = Join-Path $installRoot "runtime\\$runtimeVersion\\AtlasHoldingControlCenter.exe"
+          if (!(Test-Path -LiteralPath $installedViewer -PathType Leaf) -or
+              (Get-FileHash -Algorithm SHA256 -LiteralPath $installedViewer).Hash.ToLowerInvariant() -cne $viewerPin) {
+            throw "Installed R&D Control Center binary differs from the pinned receipt"
+          }
+          if ($record.source_shas.release_candidate_viewer -ne "${{ github.event.pull_request.head.sha }}" -or
+              $record.source_shas.release_candidate_engine -ne "${{ github.event.pull_request.head.sha }}" -or
+              $record.source_shas.certified_main_agent -ne "7813063b416ebaf945c0ededbfb8fdd448909a29") {
+            throw "Frozen R&D GUI/engine provenance differs from exact candidate/main pins"
+          }
+          $chatInfo = [System.Diagnostics.ProcessStartInfo]::new()
+          $chatInfo.FileName = $installedViewer
+          [void]$chatInfo.ArgumentList.Add("--project-chat-self-test")
+          $chatInfo.UseShellExecute = $false
+          $chatInfo.Environment.Clear()
+          $chatInfo.Environment["SystemRoot"] = $env:SystemRoot
+          $chatInfo.Environment["TEMP"] = $env:RUNNER_TEMP
+          $chatInfo.Environment["TMP"] = $env:RUNNER_TEMP
+          $chatInfo.Environment["QT_QPA_PLATFORM"] = "offscreen"
+          $chatProcess = [System.Diagnostics.Process]::Start($chatInfo)
+          if (!$chatProcess.WaitForExit(90000)) {
+            $chatProcess.Kill($true)
+            throw "Installed frozen R&D chat smoke timed out"
+          }
+          if ($chatProcess.ExitCode -ne 0) {
+            throw "Installed frozen R&D chat smoke failed: $($chatProcess.ExitCode)"
+          }
+          $receipt = @{
+            schema = 1
+            candidate_sha = "${{ github.event.pull_request.head.sha }}"
+            candidate_archive_sha256 = "${{ needs.native_assembly.outputs.candidate_digest }}"
+            setup_sha256 = ($record.artifacts | Where-Object name -eq "AtlasHoldingSetup.exe").sha256
+            downloaded_candidate_self_test = "PASS"
+            downloaded_candidate_real_provisioning = "PASS"
+            installed_frozen_rd_chat = "PASS"
+            provisioning_receipt_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $installReceipt).Hash.ToLowerInvariant()
+            inherited_python_environment = $false
+            windows_clean_install_certified = $false
+            release_ready = $false
+          } | ConvertTo-Json -Compress
+          $receiptPath = Join-Path $env:RUNNER_TEMP "fresh-runner-nonrelease-receipt.json"
+          [System.IO.File]::WriteAllText($receiptPath, $receipt, [System.Text.UTF8Encoding]::new($false))
+          Write-Output "NONRELEASE_DOWNLOADED_SETUP_FRESH_RUNNER_SELFTEST_PASS"
+          Write-Output "NONRELEASE_DOWNLOADED_SETUP_REAL_PROVISIONING_PASS"
+          Write-Output "Fresh-runner receipt SHA256: $((Get-FileHash -Algorithm SHA256 $receiptPath).Hash.ToLowerInvariant())"
+      - name: Upload fresh-runner receipt (NOT RELEASE)
+        uses: actions/upload-artifact@v4
+        with:
+          name: NONRELEASE-AtlasHolding-Fresh-Runner-Receipt-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/fresh-runner-nonrelease-receipt.json
+            ${{ runner.temp }}/fresh-runner-install-receipt.json
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0

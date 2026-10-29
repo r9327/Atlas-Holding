@@ -2,7 +2,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
+from pathlib import Path
+import os
+import stat
 import re
 from typing import Any, Mapping
 
@@ -11,6 +15,23 @@ MAX_MANIFEST_BYTES = 512 * 1024
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _ARTIFACT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$")
+# A setup-only ZIP or a frozen GUI with no engine is never an installable
+# autonomous Holding. Observed bytes must include every runtime component.
+_REQUIRED_UPSTREAM = frozenset({
+    "pr1", "pr2", "pr3", "pr4", "pr5", "pr6", "pr7", "pr8",
+    "pr11", "pr12",
+})
+_REQUIRED_RUNTIME_FILES = frozenset({
+    "AtlasHoldingSetup.exe", "AtlasHoldingControlCenter.exe",
+    "AtlasHoldingEngine.exe",
+})
+_REQUIRED_NATIVE_GATES = frozenset({
+    "windows-clean-install",
+    "native-runtime-ipc",
+    "windows-acl-isolation",
+    "offline-after-provisioning",
+    "e2e-roadmap",
+})
 
 
 class ReleaseEvidenceError(ValueError):
@@ -40,6 +61,47 @@ class ReleaseCandidate:
     passed_gates: tuple[str, ...]
     signed: bool
     publishable: bool = True
+
+
+def observe_native_release_files(directory: Path) -> dict[str, ArtifactObservation]:
+    """Hash the *actual* three Windows release files, never manifest claims.
+
+    Intended for a trusted release runner after the build and native E2E
+    steps. Merely hashing files is not a substitute for test/ACL evidence.
+    """
+    if (not isinstance(directory, Path) or not directory.is_absolute()
+            or directory.is_symlink() or not directory.is_dir()):
+        raise ReleaseEvidenceError("Trusted absolute artifact directory required")
+    try:
+        if directory.resolve(strict=True) != directory:
+            raise ReleaseEvidenceError("Artifact directory has an unsafe alias")
+    except OSError as exc:
+        raise ReleaseEvidenceError("Artifact directory unavailable") from exc
+    observed = {}
+    for filename in sorted(_REQUIRED_RUNTIME_FILES):
+        file = directory / filename
+        try:
+            if file.is_symlink() or file.resolve(strict=True) != file:
+                raise ReleaseEvidenceError("Release artifact path uses a link")
+            with file.open("rb") as stream:
+                initial = os.fstat(stream.fileno())
+                if (not stat.S_ISREG(initial.st_mode)
+                        or not 0 < initial.st_size <= 20 * 1024**3):
+                    raise ReleaseEvidenceError("Invalid native artifact size/type")
+                digest = hashlib.sha256()
+                size = 0
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    size += len(chunk)
+                    if size > 20 * 1024**3:
+                        raise ReleaseEvidenceError("Release artifact exceeds size budget")
+                    digest.update(chunk)
+                final = os.fstat(stream.fileno())
+                if size != initial.st_size or final.st_size != initial.st_size:
+                    raise ReleaseEvidenceError("Release artifact changed during hashing")
+                observed[filename] = ArtifactObservation(digest.hexdigest(), size)
+        except (OSError, ValueError) as exc:
+            raise ReleaseEvidenceError("Native release artifact unavailable") from exc
+    return observed
 
 
 def _exact(value: Any, keys: set[str], label: str) -> dict[str, Any]:
@@ -73,7 +135,7 @@ def validate_release_manifest(
     expected_upstream = dict(expected_upstream_shas)
     observed = dict(observed_artifacts)
     gate_evidence = dict(observed_gate_evidence)
-    if (not expected_upstream or any(
+    if (not _REQUIRED_UPSTREAM.issubset(expected_upstream) or any(
             not isinstance(name, str) or not name or not isinstance(sha, str)
             or not _SHA.fullmatch(sha) for name, sha in expected_upstream.items())
             or any(not isinstance(name, str) or not _ARTIFACT.fullmatch(name)
@@ -83,6 +145,7 @@ def validate_release_manifest(
                    or not 0 < value.size_bytes <= 20 * 1024**3
                    for name, value in observed.items())
             or len(set(required_gates)) != len(required_gates)
+            or not _REQUIRED_NATIVE_GATES.issubset(set(required_gates))
             or any(not isinstance(name, str) or not name or len(name) > 100
                    for name in required_gates)
             or set(gate_evidence) != set(required_gates)
@@ -123,8 +186,9 @@ def validate_release_manifest(
         declared[name] = ArtifactObservation(
             _digest(item["sha256"], "artifact"), item["size_bytes"],
         )
-    if declared != observed or "AtlasHoldingSetup.exe" not in declared:
-        raise ReleaseEvidenceError("Declared artifacts differ from observed files")
+    if declared != observed or not _REQUIRED_RUNTIME_FILES.issubset(declared):
+        raise ReleaseEvidenceError(
+            "Release requires observed setup, Control Center and engine binaries")
 
     gates = data["gates"]
     if not isinstance(gates, list):

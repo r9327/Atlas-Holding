@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+import hashlib
+import json
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -10,8 +12,8 @@ from unittest.mock import Mock, patch
 from holding.atlas_doctor_evidence import LocalPassport
 from tests.native_real_atlas_candidate_doctor import (
     _candidate_summary, _verify_advisory, _same_canonical_checkout, _git,
-    _review_diagnostics,
-    LEVELS, SCOPE,
+    _review_diagnostics, _sync_disposable_context_index,
+    LEVELS, SCOPE, MODIFIED_PATHS,
 )
 
 SOURCE = "a" * 40
@@ -31,6 +33,22 @@ def passport(stage: str, *, state: str | None = None,
 
 
 class NativeCandidateDoctorTests(unittest.TestCase):
+    def test_real_doctor_runner_uses_exact_upstream_runtime_lock(self):
+        # Import/startup and resource guards must run with the exact Atlas
+        # runtime, not a Qt-only approximation; never waive failed guardians.
+        flow = (
+            Path(__file__).resolve().parents[1]
+            / ".github" / "workflows" / "windows_real_atlas_pr9_doctor.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            'Join-Path $atlas "requirements-pyside.txt"', flow
+        )
+        self.assertIn("--require-hashes --no-deps -r", flow)
+        self.assertIn('ref: 81cd7bec8b67ff2fdd29d412db52d7ed796c48a7', flow)
+        self.assertNotIn("pip install --disable-pip-version-check --only-binary", flow)
+        self.assertIn("if ($LASTEXITCODE -ne 0)", flow)
+        self.assertIn('throw "Required hashed Atlas Windows runtime is unavailable"', flow)
+
     def test_real_git_root_is_verified_as_resolved_path_not_raw_text(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp).resolve(strict=True)
@@ -39,6 +57,41 @@ class NativeCandidateDoctorTests(unittest.TestCase):
             self.assertFalse(_same_canonical_checkout(root, "../outside"))
             self.assertFalse(_same_canonical_checkout(root, ""))
             self.assertFalse(_same_canonical_checkout(root, str(root.parent)))
+
+    def test_trusted_ai_context_tracks_staged_readme_without_running_atlas_hooks(self):
+        from holding.atlas_context_index import render_atlas_context_index
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            (root / ".ai").mkdir()
+            (root / "README.md").write_text("old\n", encoding="utf-8")
+            (root / ".ai" / "context_index.json").write_text("{}\n", encoding="utf-8")
+            _git(root, "init")
+            _git(root, "add", "--", "README.md", ".ai/context_index.json")
+            _git(root, "-c", "user.name=CI", "-c", "user.email=ci@example.invalid",
+                 "commit", "-m", "fixture")
+            (root / "README.md").write_text("updated\n", encoding="utf-8")
+            _git(root, "add", "--", "README.md")
+            staged = _git(root, "ls-tree", _git(root, "write-tree"))
+            _sync_disposable_context_index(root)
+            expected = render_atlas_context_index(staged)
+            self.assertEqual((root / ".ai" / "context_index.json").read_text(
+                encoding="utf-8"), expected)
+            self.assertEqual(tuple(sorted(_git(
+                root, "diff", "--cached", "--name-only").splitlines())),
+                MODIFIED_PATHS)
+
+    def test_missing_or_untracked_context_index_is_not_silently_accepted(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            (root / ".ai").mkdir()
+            (root / "README.md").write_text("old\n", encoding="utf-8")
+            _git(root, "init")
+            _git(root, "add", "--", "README.md")
+            _git(root, "-c", "user.name=CI", "-c", "user.email=ci@example.invalid",
+                 "commit", "-m", "fixture")
+            (root / ".ai" / "context_index.json").write_text("{}\n", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "tracked Atlas AI Context"):
+                _sync_disposable_context_index(root)
 
     def test_local_git_disables_network_prompt_and_lfs_smudge(self):
         completed = Mock(returncode=0, stdout="safe", stderr="")
@@ -66,7 +119,7 @@ class NativeCandidateDoctorTests(unittest.TestCase):
             stages.append(row)
         summary = _candidate_summary(
             source_sha=SOURCE, candidate_sha=CANDIDATE, stages=stages)
-        self.assertEqual(summary["modified_paths"], ["README.md"])
+        self.assertEqual(summary["modified_paths"], [".ai/context_index.json", "README.md"])
         self.assertIs(summary["model_generated_candidate"], False)
         for claim in ("independent_qa_pass", "doctor_full_certified",
                       "github_push_permitted", "release_ready"):
@@ -123,6 +176,188 @@ class NativeCandidateDoctorTests(unittest.TestCase):
         envelope["status"] = "PASS"
         with self.assertRaises(RuntimeError):
             _review_diagnostics(envelope, stage="check")
+
+    def test_real_doctor_fail_diagnostics_are_bounded_and_never_a_pass(self):
+        envelope = {
+            "action": "check", "status": "FAIL",
+            "execution": {"status": "FAIL"},
+            "selected_checks": {"tests": ["tests.test_ai_context"]},
+            "next_actions": ["Focused tests failed; investigate independently."],
+        }
+        observed = _review_diagnostics(envelope, stage="check")
+        self.assertIn("execution=FAIL", observed)
+        self.assertIn("selected_test_modules=1", observed)
+        self.assertNotIn("PASS", " ".join(observed))
+        envelope["status"] = "PASS"
+        with self.assertRaises(RuntimeError):
+            _review_diagnostics(envelope, stage="check")
+        envelope["status"] = "FAIL"
+        envelope["next_actions"] = ["x" * 1600]
+        with self.assertRaises(RuntimeError):
+            _review_diagnostics(envelope, stage="check")
+
+    def test_validate_failure_exposes_only_bounded_guardian_and_test_id(self):
+        report = {
+            "action": "validate", "status": "FAIL",
+            "execution": {
+                "status": "FAIL",
+                "checks": [{
+                    "key": "atlas_integrity",
+                    "report": {"groups": {
+                        "ASYNC_LIFECYCLE": {
+                            "status": "BLOCKED",
+                            "commands": [{
+                                "exit_code": 2,
+                                "output_tail": (
+                                    "FAIL: test_session "
+                                    "(tests.test_async_suite.Suite.test_session)\\n"
+                                    "secret=never-print-this\\n"
+                                    "C:\\\\private\\\\token=secret"
+                                ),
+                            }],
+                        },
+                        "STARTUP": {"status": "PASS", "commands": []},
+                    }},
+                }],
+            },
+            "selected_checks": {"tests": ["tests.test_example"]},
+            "next_actions": ["ASYNC_LIFECYCLE_FAILED"],
+        }
+        observed = _review_diagnostics(report, stage="validate")
+        self.assertIn("guardian=ASYNC_LIFECYCLE:status=BLOCKED:exit=2", observed)
+        self.assertIn(
+            "failed_test=ASYNC_LIFECYCLE:tests.test_async_suite.Suite.test_session",
+            observed,
+        )
+        self.assertNotIn("never-print-this", " ".join(observed))
+        self.assertNotIn("C:\\\\private", " ".join(observed))
+        self.assertFalse(any("guardian=STARTUP" in line for line in observed))
+
+    def test_integrity_failure_diagnostics_do_not_echo_untrusted_names(self):
+        report = {
+            "action": "validate", "status": "FAIL",
+            "execution": {
+                "status": "FAIL",
+                "checks": [{
+                    "key": "atlas_integrity",
+                    "report": {"groups": {
+                        "TOKEN=must-not-leak": {
+                            "status": "BLOCKED",
+                            "commands": [{"exit_code": 1}],
+                        },
+                        "RESOURCE_BUDGETS": {
+                            "status": "BLOCKED",
+                            "commands": [{
+                                "exit_code": True,
+                                "output_tail": "garbage FAIL: TOKEN=must-not-leak",
+                            }],
+                        },
+                    }},
+                }],
+            },
+            "selected_checks": {"tests": []},
+            "next_actions": [],
+        }
+        observed = _review_diagnostics(report, stage="validate")
+        self.assertIn("guardian=RESOURCE_BUDGETS:status=BLOCKED", observed)
+        self.assertNotIn("must-not-leak", " ".join(observed))
+        self.assertFalse(any("exit=True" in line for line in observed))
+
+    def test_diagnostic_adapter_uses_verified_report_without_second_run(self):
+        from tests.native_real_atlas_candidate_doctor import (
+            _inspect_real_doctor_review,
+        )
+        report = {
+            "action": "validate", "status": "FAIL",
+            "exact_sha": CANDIDATE, "base_ref": SOURCE,
+            "worktree": {"dirty": False, "dirty_digest": ""},
+            "execution": {"status": "FAIL", "checks": []},
+            "selected_checks": {"tests": []},
+            "next_actions": ["Validating guardians failed."],
+        }
+        raw = json.dumps(report).encode()
+        digest = hashlib.sha256(raw).hexdigest()
+        runner = Mock()
+        runner.root = Path("C:/dummy")
+        runner._worktree_identity.return_value.dirty = False
+        runner.take_verified_diagnostic.return_value = raw
+        with patch("tests.native_real_atlas_candidate_doctor._git",
+                   return_value=CANDIDATE):
+            result = _inspect_real_doctor_review(
+                runner, stage="validate", candidate=CANDIDATE,
+                base=SOURCE, expected_digest=digest, expected_status="FAIL",
+            )
+        self.assertIn("stage=validate", result)
+        runner.take_verified_diagnostic.assert_called_once_with(
+            action="validate", candidate_sha=CANDIDATE,
+            report_sha256=digest,
+        )
+        runner._execute.assert_not_called()
+
+    def test_startup_probe_exposes_only_allowlisted_exception_and_module(self):
+        from holding.bounded_process import ProcessResult
+        from tests.native_real_atlas_candidate_doctor import _probe_main_import
+        runner = Mock()
+        runner.root = Path("C:/dummy")
+        runner.interpreter = Path("C:/Python/python.exe")
+        runner._worktree_identity.return_value.dirty = False
+        runner._execute.return_value = ProcessResult(
+            9,
+            b'ATLAS_IMPORT_PROBE={"kind":"FAIL",'
+            b'"exception":"ModuleNotFoundError","module":"app.example"}\n',
+            b"secret=do-not-print",
+        )
+        with patch("tests.native_real_atlas_candidate_doctor._git",
+                   side_effect=lambda root, command, *args: (
+                       CANDIDATE if command == "rev-parse" else ""
+                   )):
+            observed = _probe_main_import(runner, candidate=CANDIDATE)
+        self.assertEqual(
+            observed, "IMPORT_FAILED:ModuleNotFoundError:module=app.example"
+        )
+        self.assertEqual(runner._execute.call_count, 1)
+        self.assertEqual(runner._execute.call_args.kwargs["stdout_limit"], 4096)
+        self.assertNotIn("do-not-print", observed)
+
+    def test_startup_probe_rejects_unicode_and_pii_in_module_names(self):
+        from holding.bounded_process import ProcessResult
+        from tests.native_real_atlas_candidate_doctor import _probe_main_import
+        runner = Mock()
+        runner.root = Path("C:/dummy")
+        runner.interpreter = Path("C:/Python/python.exe")
+        runner._worktree_identity.return_value.dirty = False
+        runner._execute.return_value = ProcessResult(
+            9,
+            'ATLAS_IMPORT_PROBE={"kind":"FAIL","exception":"ImportError",'
+            '"module":"app.privateÉ"}\n'.encode("utf-8"),
+            b"private-data-should-not-appear",
+        )
+        with patch("tests.native_real_atlas_candidate_doctor._git",
+                   side_effect=lambda root, command, *args: (
+                       CANDIDATE if command == "rev-parse" else ""
+                   )):
+            observed = _probe_main_import(runner, candidate=CANDIDATE)
+        self.assertEqual(observed, "IMPORT_FAILED:ImportError")
+        self.assertNotIn("private", observed)
+
+    def test_startup_probe_never_treats_forged_status_as_a_pass(self):
+        from holding.bounded_process import ProcessResult
+        from tests.native_real_atlas_candidate_doctor import _probe_main_import
+        runner = Mock()
+        runner.root = Path("C:/dummy")
+        runner.interpreter = Path("C:/Python/python.exe")
+        runner._worktree_identity.return_value.dirty = False
+        runner._execute.return_value = ProcessResult(
+            9,
+            b'ATLAS_IMPORT_PROBE={"kind":"PASS"}\n',
+            b"",
+        )
+        with patch("tests.native_real_atlas_candidate_doctor._git",
+                   side_effect=lambda root, command, *args: (
+                       CANDIDATE if command == "rev-parse" else ""
+                   )):
+            observed = _probe_main_import(runner, candidate=CANDIDATE)
+        self.assertEqual(observed, "UNAVAILABLE")
 
     def test_review_diagnostics_reject_unbounded_or_incomplete_report(self):
         valid = {

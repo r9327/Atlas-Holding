@@ -80,6 +80,14 @@ class DownloadTests(unittest.TestCase):
         self.assertEqual(self.call().read_bytes(), DATA)
         self.assertEqual(self.call().read_bytes(), DATA)
 
+    def test_download_ignores_unusable_ambient_proxy_configuration(self):
+        with patch.object(downloads, "build_opener",
+                          wraps=downloads.build_opener) as opener:
+            self.assertEqual(self.call().read_bytes(), DATA)
+        handlers = opener.call_args.args
+        self.assertEqual(handlers[0].proxies, {})
+        self.assertIsInstance(handlers[1], downloads._SafeRedirect)
+
     def test_resume_after_drop_and_process_restart(self):
         Server.behavior = "drop_once"
         with self.assertRaises(DownloadError):

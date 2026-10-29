@@ -17,12 +17,14 @@ import sys
 
 from holding.atlas_doctor_evidence import LocalPassport
 from holding.atlas_doctor_runner import AtlasDoctorRunner
+from holding.atlas_context_index import INDEX_PATH, render_atlas_context_index
 from tests.native_real_atlas_doctor_probe import _git as inspect_git
 
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 SCOPE = ("README.md",)
 LEVELS = ("plan", "check", "validate")
+MODIFIED_PATHS = tuple(sorted((*SCOPE, INDEX_PATH)))
 
 
 def _runner_root() -> Path:
@@ -76,6 +78,34 @@ def _is_source_clean(root: Path, sha: str) -> None:
         raise RuntimeError("Pinned original Atlas checkout was modified")
 
 
+def _sync_disposable_context_index(destination: Path) -> None:
+    """Mirror Atlas's committed AI Context without repo hooks or model edits."""
+    target = destination / INDEX_PATH
+    if (not target.is_file() or target.is_symlink()
+            or target.parent.is_symlink() or target.stat().st_size > 512 * 1024):
+        raise RuntimeError("Canonical tracked Atlas AI Context index required")
+    try:
+        tracked = _git(destination, "ls-files", "--error-unmatch", "--",
+                       INDEX_PATH)
+    except RuntimeError as exc:
+        raise RuntimeError("Canonical tracked Atlas AI Context index required") from exc
+    if tracked != INDEX_PATH:
+        raise RuntimeError("Canonical tracked Atlas AI Context index required")
+    staged_tree = _git(destination, "write-tree")
+    if not _SHA.fullmatch(staged_tree):
+        raise RuntimeError("No exact staged Git tree for AI Context")
+    # Git-tree metadata, not content from the candidate/model.
+    rendered = render_atlas_context_index(
+        _git(destination, "ls-tree", staged_tree))
+    with target.open("w", encoding="utf-8", newline="\n") as out:
+        out.write(rendered)
+        out.flush()
+        os.fsync(out.fileno())
+    _git(destination, "add", "--", INDEX_PATH)
+    if target.read_text(encoding="utf-8") != rendered:
+        raise RuntimeError("AI Context changed during staged synchronization")
+
+
 def _prepare_candidate(source: Path, destination: Path, base_sha: str) -> str:
     """Clone independent Git objects, append one README test marker, commit."""
     if (not source.is_absolute() or not source.is_dir()
@@ -108,6 +138,9 @@ def _prepare_candidate(source: Path, destination: Path, base_sha: str) -> str:
         out.flush()
         os.fsync(out.fileno())
     _git(destination, "add", "--", SCOPE[0])
+    _sync_disposable_context_index(destination)
+    if sorted(_git(destination, "diff", "--cached", "--name-only").splitlines()) != list(MODIFIED_PATHS):
+        raise RuntimeError("Disposable candidate has missing/extra staged files")
     # Overrides prevent global repo identity or a local hook from taking over.
     _git(destination, "-c", "core.hooksPath=NUL",
          "-c", "user.name=Atlas Doctor Fixture",
@@ -117,7 +150,7 @@ def _prepare_candidate(source: Path, destination: Path, base_sha: str) -> str:
     candidate = _git(destination, "rev-parse", "HEAD")
     if (not _SHA.fullmatch(candidate) or candidate == base_sha
             or _git(destination, "rev-parse", "HEAD^") != base_sha
-            or _git(destination, "diff", "--name-only", base_sha, "HEAD") != SCOPE[0]
+            or tuple(sorted(_git(destination, "diff", "--name-only", base_sha, "HEAD").splitlines())) != MODIFIED_PATHS
             or _git(destination, "status", "--porcelain", "--untracked-files=all")):
         raise RuntimeError("Candidate is not an isolated one-file clean Git commit")
     _is_source_clean(source, base_sha)
@@ -174,7 +207,7 @@ def _candidate_summary(*, source_sha: str, candidate_sha: str,
         "source_repository": "r9327/Dof-Atlas",
         "source_sha": source_sha,
         "candidate_sha": candidate_sha,
-        "modified_paths": list(SCOPE),
+        "modified_paths": list(MODIFIED_PATHS),
         "stages": stages,
         "independent_qa_pass": False,
         "doctor_full_certified": False,
@@ -185,12 +218,73 @@ def _candidate_summary(*, source_sha: str, candidate_sha: str,
 
 
 
+def _integrity_failure_details(checks: object) -> tuple[str, ...]:
+    """Export bounded failure identities only; never expose raw Doctor output.
+
+    The Doctor envelope is authenticated separately. This adapter is NOT a
+    second certification authority, and diagnostic text cannot grant a PASS.
+    """
+    if not isinstance(checks, list) or len(checks) > 60:
+        return ()
+    findings: list[str] = []
+    for check in checks:
+        if not isinstance(check, dict) or check.get("key") != "atlas_integrity":
+            continue
+        report = check.get("report")
+        groups = report.get("groups") if isinstance(report, dict) else None
+        if not isinstance(groups, dict) or len(groups) > 100:
+            continue
+        for name, item in groups.items():
+            if len(findings) >= 16:
+                break
+            if (not isinstance(name, str)
+                    or not re.fullmatch(r"[A-Z][A-Z0-9_]{1,63}", name)
+                    or not isinstance(item, dict)):
+                continue
+            state = item.get("status")
+            if state not in {"BLOCKED", "FAIL", "REVIEW", "MEASURED_ONLY_FAILED"}:
+                continue
+            commands = item.get("commands")
+            if not isinstance(commands, list) or len(commands) > 20:
+                continue
+            codes = [
+                str(cmd["exit_code"])
+                for cmd in commands
+                if isinstance(cmd, dict)
+                and type(cmd.get("exit_code")) is int
+                and 0 <= cmd["exit_code"] <= 255
+            ]
+            finding = f"guardian={name}:status={state}"
+            if codes:
+                finding += ":exit=" + ",".join(codes[:4])
+            findings.append(finding)
+            # Extract real unittest case identities from existing bounded
+            # command tails, never echo arbitrary stdout/stderr or file paths.
+            seen: set[str] = set()
+            for cmd in commands[:4]:
+                if not isinstance(cmd, dict):
+                    continue
+                tail = cmd.get("output_tail")
+                if not isinstance(tail, str) or len(tail) > 20_000:
+                    continue
+                for case in re.findall(
+                    r"(?:FAIL|ERROR): [A-Za-z0-9_]+ "
+                    r"\((tests\.test_[A-Za-z0-9_.]{1,160})\)",
+                    tail,
+                ):
+                    if case not in seen and len(seen) < 3 and len(findings) < 16:
+                        seen.add(case)
+                        findings.append(f"failed_test={name}:{case}")
+    return tuple(findings)
+
+
 def _review_diagnostics(report: dict, *, stage: str) -> tuple[str, ...]:
     """Extract only bounded non-authorizing reasons from a verified envelope."""
     if not isinstance(report, dict) or stage not in {"check", "validate"}:
         raise RuntimeError("Unrecognized Doctor diagnostic envelope")
-    if report.get("action") != stage or report.get("status") != "REVIEW":
-        raise RuntimeError("Doctor review diagnostic status changed")
+    if (report.get("action") != stage
+            or report.get("status") not in {"REVIEW", "FAIL", "BLOCKED"}):
+        raise RuntimeError("Doctor refusal diagnostic status changed")
     execution = report.get("execution")
     if not isinstance(execution, dict):
         raise RuntimeError("Doctor review lacks execution evidence")
@@ -211,55 +305,114 @@ def _review_diagnostics(report: dict, *, stage: str) -> tuple[str, ...]:
         if not isinstance(item, str) or not 1 <= len(item) <= 1500:
             raise RuntimeError("Doctor review explanation is not bounded")
         reason.append(" ".join(item.split())[:180])
+    detail = (_integrity_failure_details(execution.get("checks"))
+              if stage == "validate" else ())
     return (
         "stage=" + stage,
         "execution=" + state,
         "selected_test_modules=" + str(len(selected)),
         *("reason=" + msg for msg in reason),
+        *detail,
     )
 
 
 def _inspect_real_doctor_review(runner: AtlasDoctorRunner, *,
                                 stage: str, candidate: str, base: str,
-                                expected_digest: str) -> tuple[str, ...]:
-    """Call actual Doctor twice, authenticate both before showing diagnostics.
+                                expected_digest: str,
+                                expected_status: str = "REVIEW") -> tuple[str, ...]:
+    """Explain the first verified refusal; do not execute expensive Doctor twice.
 
-    No raw JSON or model output is surfaced; any divergence fails closed.
+    AtlasDoctorRunner already authenticated the observed exit code, worktree,
+    exact source SHA, action, scope and digest before retaining these bytes.
+    Only bounded, allowlisted diagnostics may leave this function.
     """
-    from holding.atlas_doctor_evidence import consume_doctor_report
-    args = (
-        str(runner.interpreter), "-B", "-m", "tools.atlas_doctor",
-        "--json", "agent", stage, *SCOPE, "--base-ref", base,
-        "--max-tests", str(runner.max_tests),
-        "--timeout-seconds", str(runner.timeout_seconds),
+    if (stage not in {"check", "validate"}
+            or expected_status not in {"REVIEW", "FAIL", "BLOCKED"}
+            or not _SHA.fullmatch(candidate)
+            or not _SHA.fullmatch(base)
+            or not _DIGEST.fullmatch(expected_digest)):
+        raise RuntimeError("Invalid bounded Doctor refusal request")
+    if (_git(runner.root, "rev-parse", "HEAD") != candidate
+            or runner._worktree_identity().dirty):
+        raise RuntimeError("Doctor refusal checkout identity changed")
+    raw = runner.take_verified_diagnostic(
+        action=stage, candidate_sha=candidate,
+        report_sha256=expected_digest,
     )
-    if stage == "check":
-        args += ("--run-tests",)
-    before = runner._worktree_identity()
-    if before.dirty:
-        raise RuntimeError("Refuse Doctor diagnostics on dirty candidate")
-    raw = runner._execute(args, timeout=runner.timeout_seconds + 15)
-    after = runner._worktree_identity()
-    if after != before:
-        raise RuntimeError("Doctor diagnostic changed candidate worktree")
-    observed = consume_doctor_report(
-        raw.stdout, observed_exit_code=raw.returncode,
-        expected_sha=candidate, expected_action=stage,
-        expected_base_ref=base, expected_paths=SCOPE,
-        expected_dirty=False, expected_dirty_digest="",
-        structural=False,
-    )
-    if observed.status != "REVIEW":
-        raise RuntimeError("Doctor review verdict changed during diagnostic")
-    # Timestamps may change the raw digest between identical rechecks.
-    # Never substitute the second diagnostic for the first signed-by-nobody
-    # local advisory; it is explanatory only.
-    if not re.fullmatch(r"[0-9a-f]{64}", expected_digest):
-        raise RuntimeError("Original Doctor report digest was not exact")
-    if _git(runner.root, "rev-parse", "HEAD") != candidate:
-        raise RuntimeError("Doctor diagnostic changed candidate HEAD")
-    report = json.loads(raw.stdout)
+    report = json.loads(raw)
+    if (not isinstance(report, dict)
+            or report.get("action") != stage
+            or report.get("status") != expected_status
+            or report.get("exact_sha") != candidate
+            or report.get("base_ref") != base
+            or not isinstance(report.get("worktree"), dict)
+            or report["worktree"].get("dirty") is not False
+            or report["worktree"].get("dirty_digest") != ""):
+        raise RuntimeError("Verified Doctor refusal changed between stages")
     return _review_diagnostics(report, stage=stage)
+
+def _probe_main_import(runner: AtlasDoctorRunner, *, candidate: str) -> str:
+    """A bounded, non-authorizing startup probe when Doctor STARTUP fails.
+
+    Only an exception class and optional Python module identifier are emitted.
+    Real Doctor evidence is never replaced by this narrow diagnostic.
+    """
+    if not _SHA.fullmatch(candidate):
+        raise RuntimeError("Untrusted startup probe candidate SHA")
+    if (_git(runner.root, "rev-parse", "HEAD") != candidate
+            or runner._worktree_identity().dirty):
+        raise RuntimeError("Startup probe checkout identity changed")
+    script = (
+        'import json,os,sys\n'
+        'os.environ.setdefault("QT_QPA_PLATFORM","offscreen")\n'
+        'try:\n'
+        ' import main\n'
+        'except Exception as exc:\n'
+        ' print("ATLAS_IMPORT_PROBE="+json.dumps({"kind":"FAIL",'
+        '"exception":type(exc).__name__,'
+        '"module":getattr(exc,"name",None)}))\n'
+        ' sys.exit(9)\n'
+        'print("ATLAS_IMPORT_PROBE="+json.dumps({"kind":"PASS"}))\n'
+    )
+    try:
+        result = runner._execute(
+            (str(runner.interpreter), "-B", "-c", script),
+            timeout=25, stdout_limit=4096,
+        )
+        lines = result.stdout.decode("utf-8", errors="strict").splitlines()
+        records = [line.partition("ATLAS_IMPORT_PROBE=")[2]
+                   for line in lines if line.startswith("ATLAS_IMPORT_PROBE=")]
+        if len(records) != 1 or len(records[0]) > 320:
+            verdict = "UNAVAILABLE"
+        else:
+            record = json.loads(records[0])
+            if not isinstance(record, dict):
+                verdict = "UNAVAILABLE"
+            elif result.returncode == 0 and record == {"kind": "PASS"}:
+                verdict = "IMPORT_OK_STARTUP_GUARD_STILL_FAILED"
+            elif result.returncode == 9 and record.get("kind") == "FAIL":
+                exception = record.get("exception")
+                if exception not in {
+                    "ModuleNotFoundError", "ImportError", "OSError",
+                    "AttributeError", "RuntimeError", "TypeError", "ValueError",
+                }:
+                    exception = "OTHER_EXCEPTION"
+                missing = record.get("module")
+                if (type(missing) is str and len(missing) <= 100
+                        and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*", missing)):
+                    verdict = "IMPORT_FAILED:" + exception + ":module=" + missing
+                else:
+                    verdict = "IMPORT_FAILED:" + exception
+            else:
+                verdict = "UNAVAILABLE"
+    except (OSError, RuntimeError, ValueError, UnicodeError,
+            json.JSONDecodeError):
+        verdict = "UNAVAILABLE"
+    if (_git(runner.root, "rev-parse", "HEAD") != candidate
+            or _git(runner.root, "status", "--porcelain", "--untracked-files=all")
+            or runner._worktree_identity().dirty):
+        raise RuntimeError("Startup probe changed the disposable candidate")
+    return verdict
 
 
 def run(source: Path, sha: str) -> None:
@@ -277,7 +430,7 @@ def run(source: Path, sha: str) -> None:
         raise RuntimeError("Git CLI unavailable")
     runner = AtlasDoctorRunner(
         destination, Path(sys.executable).resolve(), Path(executable).resolve(),
-        timeout_seconds=180, max_tests=4,
+        timeout_seconds=180, max_tests=8,
     )
     collected = []
     for stage in LEVELS:
@@ -285,20 +438,27 @@ def run(source: Path, sha: str) -> None:
             stage, SCOPE, candidate_sha=candidate,
             base_ref=sha, structural=False,
             run_tests=(stage == "check"),
+            capture_verified_refusal=(stage in {"check", "validate"}),
         )
         observation = _verify_advisory(advice, stage=stage, sha=candidate)
         if (stage == "plan" and advice.status != "PLANNED_LOCAL"):
             raise RuntimeError("Doctor plan requested REVIEW: no further QA stages authorized")
-        if advice.status in ("BLOCKED", "FAIL"):
-            raise RuntimeError(f"Doctor {stage} blocked or failed: no QA continuation")
         collected.append(observation)
         print("NONRELEASE_REAL_ATLAS_CANDIDATE_STAGE="
               + stage + ":" + advice.status, flush=True)
-        if stage in ("check", "validate") and advice.status == "REVIEW":
-            for item in _inspect_real_doctor_review(
-                    runner, stage=stage, candidate=candidate, base=sha,
-                    expected_digest=advice.report_sha256):
-                print("NONRELEASE_DOCTOR_REVIEW_DETAIL=" + item, flush=True)
+        if stage in ("check", "validate") and advice.status in {"REVIEW", "FAIL", "BLOCKED"}:
+            details = _inspect_real_doctor_review(
+                runner, stage=stage, candidate=candidate, base=sha,
+                expected_digest=advice.report_sha256,
+                expected_status=advice.status)
+            for item in details:
+                print("NONRELEASE_DOCTOR_REFUSAL_DETAIL=" + item, flush=True)
+            if (stage == "validate" and
+                    any(item.startswith("guardian=STARTUP:") for item in details)):
+                probe = _probe_main_import(runner, candidate=candidate)
+                print("NONRELEASE_ATLAS_MAIN_IMPORT_PROBE=" + probe, flush=True)
+        if advice.status in ("BLOCKED", "FAIL"):
+            raise RuntimeError(f"Doctor {stage} blocked or failed: no QA continuation")
         if _git(destination, "rev-parse", "HEAD") != candidate:
             raise RuntimeError("Doctor modified local candidate HEAD")
         if _git(destination, "status", "--porcelain", "--untracked-files=all"):

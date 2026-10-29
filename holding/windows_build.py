@@ -176,8 +176,13 @@ def build_windows_installer(
             "    except (OSError, ValueError):",
             "        raise SystemExit(2)",
             "    raise SystemExit(0 if outcome.state == 'OWNED_SERVICE_RESUMED' else 2)",
+            "forwarded = []",
             "if len(sys.argv) > 1:",
-            "    raise SystemExit(2)",
+            "    if (len(sys.argv) != 10 or sys.argv[1] != '--noninteractive-acceptance'",
+            "            or sys.argv[2] != '--install-root' or sys.argv[4] != '--cache-root'",
+            "            or sys.argv[6] != '--models-root' or sys.argv[8] != '--receipt-json'):",
+            "        raise SystemExit(2)",
+            "    forwarded = sys.argv[1:]",
             "wizard_args = ['--manifest', str(manifest),",
             "               '--manifest-sha256', expected]",
             "if runtime_pins is not None:",
@@ -200,6 +205,7 @@ def build_windows_installer(
             "        '--mcp-source-pins-sha256', mcp_source_pin,",
             "        '--mcp-python-minor', str(mcp_minor),",
             "    ])",
+            "wizard_args.extend(forwarded)",
             "raise SystemExit(main(wizard_args))",
         ]
         shim.write_text("\n".join(shim_lines) + "\n", encoding="utf-8")

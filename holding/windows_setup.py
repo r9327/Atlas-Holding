@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shutil
+import sys
 from pathlib import Path
 from queue import Empty, Queue
 import threading
@@ -20,6 +21,7 @@ from typing import Callable
 from urllib.request import Request, build_opener, ProxyHandler
 
 from .bootstrap_assets_cli import read_pinned_manifest
+from .downloads import DownloadError
 from .inventory import Component, Inventory, scan
 from .provision_plan import make_plan
 from .provision_runtime import (ProvisionExecution, ProvisionStep,
@@ -585,11 +587,135 @@ def configure_and_launch_engine(
     return child.status, child.process.pid
 
 
+
+def launch_installed_project_chat(
+    *, install_root: Path, runtime_pins: dict[str, str], approved: bool,
+) -> int:
+    """Operator-click handoff to the separately scoped installed R&D GUI.
+
+    Reuses the exact viewer/model pins from the authorized Windows install.
+    Never transfers the private Control Center pipe or launches a shell.
+    A spawn is NOT evidence that a model, engine, or roadmap is healthy.
+    """
+    import subprocess
+    from .windows_engine_enrollment import _require_native_windows
+    from .ollama_protocol import _config
+
+    if approved is not True:
+        raise EngineEnrollmentError("Explicit operator action required for R&D chat")
+    if (not isinstance(install_root, Path) or not install_root.is_absolute()
+            or not isinstance(runtime_pins, dict)
+            or set(runtime_pins) != {
+                "AtlasHoldingControlCenter.exe", "AtlasHoldingEngine.exe",
+            } or any(type(v) is not str or _HEX64.fullmatch(v) is None
+                     for v in runtime_pins.values())):
+        raise EngineEnrollmentError("Exact installed runtime identity required")
+    _require_native_windows()
+    try:
+        if (install_root.is_symlink() or not install_root.is_dir()
+                or install_root.resolve(strict=True) != install_root):
+            raise EngineEnrollmentError("Unsafe installed root")
+        version = (
+            runtime_pins["AtlasHoldingControlCenter.exe"][:16] + "-" +
+            runtime_pins["AtlasHoldingEngine.exe"][:16])
+        runtime = install_root / "runtime" / version
+        verify_runtime_payload(runtime, runtime_pins)
+        viewer = runtime / "AtlasHoldingControlCenter.exe"
+        model = install_root / "agents" / "AtlasHoldingModel.json"
+        database = install_root / "data" / "engine.sqlite"
+        # Paths never come from a chat prompt. Reject symlinks, deleted
+        # settings and replaced DBs before starting a writable local GUI.
+        for path in (viewer, model, database):
+            if (path.is_symlink() or not path.is_file()
+                    or path.resolve(strict=True) != path):
+                raise EngineEnrollmentError("Installed project chat input unavailable")
+            validate_runtime_acl(path)
+        _config(model)
+        child = subprocess.Popen(
+            [str(viewer), "--project-chat",
+             "--chat-db", str(database),
+             "--chat-repo", "r9327/Dof-Atlas",
+             "--chat-model-config", str(model)],
+            cwd=runtime, stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            shell=False, close_fds=True,
+        )
+        return child.pid
+    except (OSError, ValueError, TypeError, RuntimePayloadError) as exc:
+        raise EngineEnrollmentError("Installed R&D chat unavailable") from exc
+
+
 def _local_default() -> Path:
     local = os.environ.get("LOCALAPPDATA")
     if local:
         return Path(local) / "Atlas Holding"
     return Path.home() / "Atlas Holding"
+
+
+def _publish_nonrelease_install_receipt(
+    target: Path, *, install_root: Path, summary: SetupSummary,
+    execution: ProvisionExecution | None,
+    runtime_pins: dict[str, str] | None,
+) -> str:
+    """Seal one unattended setup observation without certifying a release.
+
+    This path exists for a fresh Windows acceptance runner.  It invokes the
+    same provisioning boundary as the graphical consent button, but it is not
+    evidence of a human clicking the wizard, an OS reboot, model quality, or a
+    production Atlas roadmap.
+    """
+    if (not target.is_absolute() or target.suffix.lower() != ".json"
+            or target.exists() or target.is_symlink()
+            or not target.parent.is_dir() or target.parent.is_symlink()
+            or target.parent.resolve(strict=True) != target.parent):
+        raise ValueError("New canonical absolute receipt path required")
+    if (not install_root.is_absolute() or not install_root.is_dir()
+            or install_root.is_symlink()
+            or install_root.resolve(strict=True) != install_root):
+        raise ValueError("Canonical installed root required")
+    state = execution.state if execution is not None else "NOT_EXECUTED"
+    runtime_observations: dict[str, dict[str, int | str]] = {}
+    if runtime_pins is not None:
+        version = (runtime_pins["AtlasHoldingControlCenter.exe"][:16] + "-"
+                   + runtime_pins["AtlasHoldingEngine.exe"][:16])
+        runtime = install_root / "runtime" / version
+        if state == "RUNTIME_STAGED_ENGINE_CONFIG_PENDING":
+            verify_runtime_payload(runtime, runtime_pins)
+            for name, expected in sorted(runtime_pins.items()):
+                path = runtime / name
+                runtime_observations[name] = {
+                    "sha256": expected,
+                    "size_bytes": path.stat().st_size,
+                }
+    payload = {
+        "schema": 1,
+        "kind": "NONRELEASE_FRESH_WINDOWS_PROVISIONING",
+        "setup_phase": summary.phase,
+        "setup_status": summary.status,
+        "execution_state": state,
+        "runtime_artifacts": runtime_observations,
+        "windows_clean_install_certified": False,
+        "interactive_wizard_certified": False,
+        "reboot_certified": False,
+        "offline_after_provisioning_certified": False,
+        "e2e_roadmap_certified": False,
+        "release_ready": False,
+    }
+    encoded = (json.dumps(payload, sort_keys=True, separators=(",", ":"))
+               + "\n").encode("utf-8")
+    if len(encoded) > 16 * 1024:
+        raise ValueError("Install receipt exceeds size budget")
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0)
+    descriptor = os.open(target, flags, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(encoded)
+            output.flush()
+            os.fsync(output.fileno())
+    except BaseException:
+        target.unlink(missing_ok=True)
+        raise
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -612,6 +738,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mcp-source-pins", type=Path)
     parser.add_argument("--mcp-source-pins-sha256")
     parser.add_argument("--mcp-python-minor", type=int)
+    parser.add_argument("--noninteractive-acceptance", action="store_true",
+                        help=argparse.SUPPRESS)
+    parser.add_argument("--receipt-json", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if (args.adapter_root is None) != (args.adapter_sha256 is None):
         parser.error("Both bundled adapter path and its release pin are required")
@@ -680,6 +809,44 @@ def main(argv: list[str] | None = None) -> int:
             )
         except (ValueError, UnicodeError) as exc:
             parser.error("Invalid verified MCP module manifest")
+
+    if args.noninteractive_acceptance:
+        if (args.receipt_json is None or args.cache_root is None
+                or args.models_root is None or args.runtime_root is None
+                or bundled_runtime_pins is None):
+            parser.error("Fresh-runner acceptance requires explicit roots, receipt and runtime")
+        try:
+            summary, execution = execute_setup(
+                manifest=args.manifest,
+                manifest_sha256=args.manifest_sha256,
+                install_root=args.install_root.resolve(),
+                cache_root=args.cache_root.resolve(),
+                model_root=args.models_root.resolve(),
+                online=detect_online(), approved=True,
+                runtime_root=args.runtime_root,
+                runtime_pins=bundled_runtime_pins,
+                adapter_source=(args.adapter_root / "AtlasHoldingAgent.exe"
+                                if args.adapter_root is not None else None),
+                adapter_sha256=args.adapter_sha256,
+                embedded_python_archive=args.mcp_archive,
+                embedded_source_root=args.mcp_source_root,
+                embedded_python_pin=mcp_pin,
+            )
+            _publish_nonrelease_install_receipt(
+                args.receipt_json.resolve(),
+                install_root=args.install_root.resolve(), summary=summary,
+                execution=execution, runtime_pins=bundled_runtime_pins,
+            )
+        except (OSError, ValueError, TypeError, RuntimePayloadError) as exc:
+            # Do not print remote URLs, tokens or package-manager diagnostics
+            # from a privileged installation boundary.
+            print(type(exc).__name__, file=sys.stderr)
+            return 2
+        return (0 if execution is not None and
+                execution.state == "RUNTIME_STAGED_ENGINE_CONFIG_PENDING"
+                else 2)
+    if args.receipt_json is not None:
+        parser.error("A receipt is available only for noninteractive acceptance")
 
     # Do not import Tk/initialize a display during CLI parsing and unit tests.
     import tkinter as tk
@@ -771,12 +938,15 @@ def main(argv: list[str] | None = None) -> int:
     approve = ttk.Button(bottom, text="Installer les composants nécessaires")
     cancel = ttk.Button(bottom, text="Annuler le transfert")
     activate = ttk.Button(bottom, text="Configurer / lancer le moteur")
+    chat = ttk.Button(bottom, text="Ouvrir le chat R&D")
     check.pack(side=tk.LEFT)
     approve.pack(side=tk.LEFT, padx=8)
     activate.pack(side=tk.LEFT)
+    chat.pack(side=tk.LEFT, padx=8)
     cancel.pack(side=tk.RIGHT)
     approve.state(["disabled"])
     activate.state(["disabled"])
+    chat.state(["disabled"])
     cancel.state(["disabled"])
 
     def write(lines: str) -> None:
@@ -797,6 +967,7 @@ def main(argv: list[str] | None = None) -> int:
         busy = True
         runtime_staged = False
         activate.state(["disabled"])
+        chat.state(["disabled"])
         abort.clear()
         check.state(["disabled"])
         approve.state(["disabled"])
@@ -847,7 +1018,8 @@ def main(argv: list[str] | None = None) -> int:
                 except LocalModelEnrollmentError:
                     models = ()
                 events.put(("models", models))
-            except (OSError, ValueError, TypeError, EngineEnrollmentError) as exc:
+            except (OSError, ValueError, TypeError, EngineEnrollmentError,
+                    DownloadError) as exc:
                 # Never dump exception text: a URL or credential may occur in it.
                 events.put(("error", type(exc).__name__))
 
@@ -990,7 +1162,17 @@ def main(argv: list[str] | None = None) -> int:
                     # may explicitly approve starting the same pinned engine
                     # in a second operation.
                     activate.state(["!disabled"] if pid is None else ["disabled"])
+                    chat.state(["!disabled"] if pid is not None else ["disabled"])
+                elif event[0] == "chat_started":
+                    chat.state(["!disabled"])
+                    state_message.set(
+                        "Chat R&D ouvert — résultats et modèles non certifiés")
+                elif event[0] == "chat_failed":
+                    chat.state(["!disabled"])
+                    state_message.set(
+                        "Chat R&D indisponible : vérifier le moteur et les données installées")
                 elif event[0] == "engine_activation_failed":
+                    chat.state(["disabled"])
                     busy = False
                     check.state(["!disabled"])
                     cancel.state(["disabled"])
@@ -1092,8 +1274,27 @@ def main(argv: list[str] | None = None) -> int:
                 events.put(("engine_activation_failed", type(exc).__name__))
         threading.Thread(target=worker, daemon=True).start()
 
+    def open_chat() -> None:
+        if (busy or last_paths is None or not bundled_runtime_pins
+                or selected_paths() != last_paths):
+            return
+        # Hash/ACL checks can touch real EXE bytes; never block Tk's event loop.
+        chat.state(["disabled"])
+        def worker() -> None:
+            try:
+                launch_installed_project_chat(
+                    install_root=last_paths[0],
+                    runtime_pins=bundled_runtime_pins, approved=True)
+            except (OSError, ValueError, EngineEnrollmentError,
+                    RuntimePayloadError):
+                events.put(("chat_failed",))
+            else:
+                events.put(("chat_started",))
+        threading.Thread(target=worker, daemon=True).start()
+
     check.configure(command=lambda: start(False))
     activate.configure(command=activate_engine)
+    chat.configure(command=open_chat)
     approve.configure(command=approve_install)
     cancel.configure(command=abort.set)
     root.after(150, drain)
