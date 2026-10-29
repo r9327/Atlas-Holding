@@ -209,7 +209,11 @@ class ProjectChatWindow(QMainWindow):
                 if view.workplan_state == "STAGED"
                 else "Plan de développement non transféré ; reprise requise."
             )
+            if view.simulated_tasks:
+                work += f" {view.simulated_tasks} simulations numériques calculées."
             lines.append("Holding : " + work)
+            for result in view.simulation_results:
+                lines.append("Calcul hypothétique : " + result)
             self.status.setText(
                 "Étude R&D enregistrée. " + work +
                 " Exécution selon les autorisations du moteur.")

@@ -92,6 +92,24 @@ class ProjectChatUiTests(unittest.TestCase):
         self.assertNotIn("mission terminée", window.status.text().lower())
         window.close()
 
+    def test_completed_local_simulations_shown_as_computed_not_proven(self):
+        done = ChatView(SID, REPO, "Concevoir un modèle", (), (), "READY", None,
+                        "chat-" + SID[:24], "1" * 64,
+                        "Concept de simulation", "STAGED", 0, 1, 2,
+                        ("linear_discrete: résultat 22 ; preuve de calcul abc…",))
+        with patch.object(ProjectChatWindow, "_call", return_value=done):
+            window = ProjectChatWindow(
+                database=self.database, repository=REPO, model_config=self.config)
+            self.flush(window)
+        self.assertIn("2 simulations numériques calculées",
+                      window.history.toPlainText())
+        self.assertIn("linear_discrete: résultat 22",
+                      window.history.toPlainText())
+        self.assertIn("1 tâches hors code différées",
+                      window.history.toPlainText())
+        self.assertIn("non vérifiée", window.history.toPlainText())
+        window.close()
+
     def test_unverified_result_does_not_claim_prototype_complete(self):
         done = ChatView(SID, REPO, "Créer un outil innovant", (), (),
                         "READY", None, "chat-" + SID[:24],

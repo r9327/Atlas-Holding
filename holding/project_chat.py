@@ -105,6 +105,8 @@ class ChatView:
     workplan_state: str | None = None
     queued_tasks: int = 0
     deferred_tasks: int = 0
+    simulated_tasks: int = 0
+    simulation_results: tuple[str, ...] = ()
 
 
 class ProjectChatCoordinator:
@@ -161,13 +163,23 @@ class ProjectChatCoordinator:
             plan = ResearchWorkplanCoordinator(
                 self.store, repository=self.repository,
                 config_path=self.config_path).inspect(row["session_id"])
+        simulations = ()
+        if plan is not None and plan.state == "STAGED":
+            from .research_simulation import LocalSimulationRunner
+            simulations = LocalSimulationRunner(self.store).inspect(plan)
         return ChatView(
             row["session_id"], row["repository"], row["initial_goal"],
             questions, answers, status, next_question,
             row["mission_id"], row["proposal_sha256"], concept,
             plan.state if plan else None,
             len(plan.queued) if plan else 0,
-            len(plan.deferred) if plan else 0,
+            len(plan.deferred) - len(simulations) if plan else 0,
+            len(simulations),
+            tuple(
+                f"{item.model}: résultat {item.final} ; preuve de calcul "
+                f"{item.result_sha256[:12]}…"
+                for item in simulations
+            ),
         )
 
     def latest(self) -> ChatView | None:
