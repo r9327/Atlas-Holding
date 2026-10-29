@@ -167,6 +167,76 @@ else:
         self.assertEqual(captured[0]['github_pr_observation'], 'UNAVAILABLE')
         self.assertNotIn('github_open_prs', captured[0])
 
+    def test_one_relevant_pr_path_is_checked_before_model_patch(self):
+        from holding.github_pr_inventory import OpenPrHint, OpenPrInventory
+        from holding.github_pr_changed_paths import PrChangedPaths
+
+        (self.canonical / "feature.py").write_text(
+            "class ExistingFeature:\n    pass\n", encoding="utf-8")
+        git(self.canonical, "add", "feature.py")
+        git(self.canonical, "commit", "-m", "already exists")
+
+        class Broker:
+            calls = []
+            def observe_open_prs(self, repository):
+                self.calls.append("list")
+                return OpenPrInventory(
+                    repository, "OPEN_PRS_OBSERVED", 1,
+                    (OpenPrHint(17, "a"*40, "b"*40, "fix/works",
+                                False, True),))
+            def observe_pr_paths(self, repository, number, sha):
+                self.calls.append(("paths", number, sha))
+                return PrChangedPaths(
+                    repository, number, sha, "PR_PATHS_BOUNDED", 1,
+                    ("feature.py",))
+
+        broker = Broker()
+        worker = self.worker(self.plan())
+        worker.github_pr_observer = broker
+        original = worker.agent.request
+        observed = []
+        def capture(action, payload, *, cwd):
+            if action == "plan_patch":
+                observed.append(payload)
+            return original(action, payload, cwd=cwd)
+        worker.agent.request = capture
+        worker(Mission("job", REPO))
+        self.assertEqual(broker.calls, [
+            "list", ("paths", 17, "a"*40)])
+        self.assertEqual(observed[0]["github_pr_path_status"], "OBSERVED")
+        collision = observed[0]["github_pr_path_overlap"]
+        self.assertEqual(collision["matching_local_paths"], ["feature.py"])
+        self.assertEqual(collision["status"], "EXACT_PATH_OVERLAP")
+        self.assertFalse(collision["can_skip_implementation"])
+
+    def test_irrelevant_pr_branch_does_not_fetch_changed_files(self):
+        from holding.github_pr_inventory import OpenPrHint, OpenPrInventory
+        class Broker:
+            calls = []
+            def observe_open_prs(self, repository):
+                self.calls.append("list")
+                return OpenPrInventory(
+                    repository, "OPEN_PRS_OBSERVED", 1,
+                    (OpenPrHint(18, "a"*40, "b"*40,
+                                "chore/unrelated", False, True),))
+            def observe_pr_paths(self, *args):
+                raise AssertionError("Unrelated PR file read")
+
+        broker = Broker()
+        worker = self.worker(self.plan())
+        worker.github_pr_observer = broker
+        original = worker.agent.request
+        observed = []
+        def capture(action, payload, *, cwd):
+            if action == "plan_patch":
+                observed.append(payload)
+            return original(action, payload, cwd=cwd)
+        worker.agent.request = capture
+        worker(Mission("job", REPO))
+        self.assertEqual(broker.calls, ["list"])
+        self.assertEqual(observed[0]["github_pr_path_status"], "NOT_CHECKED")
+        self.assertNotIn("github_pr_path_overlap", observed[0])
+
     def test_original_roadmap_acceptance_reaches_local_agent(self):
         self.agent_path.write_text('''import json,sys
 req=json.load(sys.stdin)
