@@ -42,3 +42,32 @@ Le daemon et ses gates restent les autorités pour toute exécution. L'UI
 devra afficher la provenance de ces états sans transformer un préflight en PASS.
 La suite de F02 doit raccorder les contrôles effectifs au moteur et à ses
 consommateurs, puis tester la reprise après interruption.
+
+## Tableau de bord authentifié (F02 — raccordement v6)
+
+Le moteur expose `ControlPlane.mission_preflight(mission_id, now_epoch=...)`,
+puis `project_dashboard_snapshot` publie les diagnostics dans son **unique
+snapshot signé/authentifié**. Les calculs sont réalisés depuis la même
+transaction SQLite de lecture que les états des tâches : pas de requête
+réseau, aucun accès à SQLite depuis le processus Qt, pas de nouveau moteur.
+
+Le Control Center présente un onglet **Préflight** en lecture seule.
+Au maximum 20 missions `READY` sont détaillées, dans l'ordre de la
+roadmap visible ; `preflight_total_ready` donne le nombre réel de missions
+`READY` consultées, même quand toutes ne tiennent pas dans l'onglet.
+Le tableau affiche les grants présents et les blocages tels qu'observés,
+sans prétendre que la capacité de travail est disponible.
+
+Le protocole est passé à `schema_version=6` pour rendre les nouveaux champs
+explicites. Le lecteur conserve la compatibilité avec les snapshots v1–v5 ;
+les champs v6 ont un schéma strict, leurs missions doivent être `READY`
+et leurs identifiants correspondre exactement à l'ordre affiché. Les claims
+`executes_actions`, benchmark ou worker réussis sont rejetés. Les
+modifications de ce document et la PR ne constituent ni test natif Windows
+du produit installé, ni qualification de la release #9.
+
+**À développer ensuite** : contrôles de santé réels du worker et du hub MCP,
+benchmark modèle sur environnement actuel, liaison aux capacités de la
+mission, expiration des observations et éventuel détail/pagination pour
+plus de 20 missions. Le préflight reste consultatif ; aucune preuve CI
+ou permission n'est accordée automatiquement.
