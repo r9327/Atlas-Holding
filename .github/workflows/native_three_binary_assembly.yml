@@ -232,8 +232,10 @@ jobs:
               (Get-FileHash -Algorithm SHA256 -LiteralPath $installedViewer).Hash.ToLowerInvariant() -cne $viewerPin) {
             throw "Installed R&D Control Center binary differs from the pinned receipt"
           }
-          if ($record.source_shas.release_candidate_viewer -ne "${{ github.event.pull_request.head.sha }}") {
-            throw "Frozen R&D viewer was not built from exact release candidate SHA"
+          if ($record.source_shas.release_candidate_viewer -ne "${{ github.event.pull_request.head.sha }}" -or
+              $record.source_shas.release_candidate_engine -ne "${{ github.event.pull_request.head.sha }}" -or
+              $record.source_shas.certified_main_agent -ne "fcbabe0da38c22860e724f719d88ddfb1ea3742e") {
+            throw "Frozen R&D GUI/engine provenance differs from exact candidate/main pins"
           }
           $chatInfo = [System.Diagnostics.ProcessStartInfo]::new()
           $chatInfo.FileName = $installedViewer
