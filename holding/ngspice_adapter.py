@@ -19,6 +19,7 @@ import time
 from typing import Any
 
 from .state_store import StateStore
+from .schema import RESEARCH_CIRCUIT_SCHEMA, apply_schema
 
 _EXECUTABLE_LIMIT = 64 * 1024 * 1024
 _TRACE_LIMIT = 256 * 1024
@@ -26,17 +27,6 @@ _SPEC_FIELDS = {
     "resistance_ohms", "capacitance_microfarads", "supply_millivolts",
     "initial_millivolts", "duration_ms", "samples",
 }
-_TABLE = """CREATE TABLE IF NOT EXISTS research_circuit_runs (
- session_id TEXT NOT NULL REFERENCES project_workplans(session_id),
- task_index INTEGER NOT NULL CHECK(task_index >= 0 AND task_index < 8),
- plan_sha256 TEXT NOT NULL,
- circuit_sha256 TEXT NOT NULL,
- executable_sha256 TEXT NOT NULL,
- result_sha256 TEXT NOT NULL,
- result_json TEXT NOT NULL,
- computed_epoch INTEGER NOT NULL,
- PRIMARY KEY(session_id,task_index)
-)"""
 
 
 class CircuitSimulationError(ValueError):
@@ -328,7 +318,7 @@ class CircuitSimulationRunner:
                 if (active is None or active["plan_sha256"] != plan.plan_sha256
                         or active["state"] != "STAGED"):
                     raise CircuitSimulationError("Workplan changed during ngspice run")
-                self.store.db.execute(_TABLE)
+                apply_schema(self.store.db, RESEARCH_CIRCUIT_SCHEMA)
                 inserted = self.store.db.execute(
                     "INSERT OR IGNORE INTO research_circuit_runs "
                     "(session_id,task_index,plan_sha256,circuit_sha256,"
