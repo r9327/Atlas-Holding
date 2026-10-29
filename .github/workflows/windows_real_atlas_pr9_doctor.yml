@@ -1,4 +1,4 @@
-name: PR9 Nonrelease real Dof Atlas Doctor on exact public source
+name: PR9 Nonrelease real Dof Atlas Doctor candidate integration
 
 on:
   pull_request:
@@ -22,18 +22,19 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
-      - name: Checkout canonical public Atlas SHA without credentials
+      - name: Checkout exact Draft Atlas PR290 candidate SHA without credentials
         uses: actions/checkout@v7
         with:
           repository: r9327/Dof-Atlas
-          ref: 91608d6949af8c5d07c6535b0a6bfaaea3e9cbc9
+          ref: 85d5bc58faf19f09a2719a4c36d65ed94a194e7b
           path: atlas-target
           persist-credentials: false
-      - name: Verify exact public source and PR candidate identity
+      # This tests the upstream Draft PR290 candidate, not released/main Atlas.
+      - name: Verify exact upstream candidate and Holding PR identity
         shell: pwsh
         run: |
           $atlas = Join-Path $env:GITHUB_WORKSPACE "atlas-target"
-          if ((git -C "$atlas" rev-parse HEAD) -cne "91608d6949af8c5d07c6535b0a6bfaaea3e9cbc9" -or
+          if ((git -C "$atlas" rev-parse HEAD) -cne "85d5bc58faf19f09a2719a4c36d65ed94a194e7b" -or
               (git rev-parse HEAD) -cne "${{ github.event.pull_request.head.sha }}") {
             throw "Real Atlas Doctor source or Holding PR SHA differs from requested pins"
           }
@@ -59,7 +60,7 @@ jobs:
           $atlas = Join-Path $env:GITHUB_WORKSPACE "atlas-target"
           python -B -X utf8 -m tests.native_real_atlas_candidate_doctor `
             --atlas-root "$atlas" `
-            --expected-atlas-sha "91608d6949af8c5d07c6535b0a6bfaaea3e9cbc9"
+            --expected-atlas-sha "85d5bc58faf19f09a2719a4c36d65ed94a194e7b"
           if ($LASTEXITCODE -ne 0) { throw "Actual Atlas candidate Doctor refused this disposable exercise" }
       - name: Independent receipt gate and clean source check
         shell: pwsh
@@ -67,13 +68,13 @@ jobs:
           $proof = Join-Path $env:RUNNER_TEMP "atlas-candidate-doctor-$env:GITHUB_RUN_ID.json"
           python -B -X utf8 -m tests.native_real_atlas_candidate_evidence `
             --receipt "$proof" `
-            --expected-source-sha "91608d6949af8c5d07c6535b0a6bfaaea3e9cbc9"
+            --expected-source-sha "85d5bc58faf19f09a2719a4c36d65ed94a194e7b"
           if ($LASTEXITCODE -ne 0) { throw "Independent candidate Doctor receipt rejected" }
           $atlas = Join-Path $env:GITHUB_WORKSPACE "atlas-target"
           $dirty = git -C "$atlas" status --porcelain --untracked-files=all
           if ($dirty) { throw "Actual source Dof-Atlas checkout was changed" }
           $head = git -C "$atlas" rev-parse HEAD
-          if ($head -cne "91608d6949af8c5d07c6535b0a6bfaaea3e9cbc9") {
+          if ($head -cne "85d5bc58faf19f09a2719a4c36d65ed94a194e7b") {
             throw "Original public Atlas checkout SHA changed"
           }
           $holdingDirty = git status --porcelain --untracked-files=all -- ':!atlas-target'
