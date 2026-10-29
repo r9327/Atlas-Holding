@@ -17,6 +17,7 @@ from .autonomy import Mission
 from dataclasses import asdict
 from .executor import AuthorizedGit
 from .existing_code import inspect_existing_code, ExistingCodeError
+from .existing_consumers import inspect_static_import_consumers
 from .github_pr_inventory import OpenPrInventory
 from .github_full_evidence import GitHubEvidenceError
 from .git_worktree import GitSafetyError
@@ -179,6 +180,20 @@ class LocalCodeWorker:
         except ExistingCodeError as exc:
             raise CodePlanError('Cannot establish exact-SHA existing-code inventory') from exc
         request['existing_code'] = asdict(existing)
+        # A bounded follow-up search for real static imports; still advisory.
+        # Never infer missing consumers, active call paths, or compatibility.
+        if existing.candidates:
+            try:
+                consumers = inspect_static_import_consumers(
+                    read_git, repository_sha=worktree.base_sha,
+                    candidate_paths=tuple(
+                        candidate.path for candidate in existing.candidates
+                        if candidate.path.endswith('.py')),
+                )
+            except (OSError, RuntimeError, ValueError) as exc:
+                raise CodePlanError(
+                    'Cannot validate static consumer inventory') from exc
+            request['existing_consumers'] = asdict(consumers)
         request['github_pr_observation'] = 'NOT_CHECKED'
         if self.github_pr_observer is not None:
             try:
