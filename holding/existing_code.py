@@ -56,7 +56,10 @@ def _terms(criteria: tuple[str, ...]) -> tuple[str, ...]:
     for line in criteria:
         if not isinstance(line, str) or not 1 <= len(line) <= 1200:
             raise ExistingCodeError("Invalid acceptance criterion")
-        flat = unicodedata.normalize("NFKD", line.casefold())
+        # Split compound symbols (FeatureEngine -> Feature Engine) before
+        # case-folding so the existing feature.py remains discoverable.
+        expanded = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", line)
+        flat = unicodedata.normalize("NFKD", expanded.casefold())
         folded = "".join(x for x in flat if not unicodedata.combining(x))
         tokens.update(w for w in re.findall(r"[a-z][a-z0-9_]{3,}", folded)
                       if w not in _STOP)
