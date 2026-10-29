@@ -188,6 +188,10 @@ class ExistingCodeAdapterTests(unittest.TestCase):
 
         for invalid in (
             {"status": "NO_EXACT_PATH_MATCH"},
+            # A forged status + matching list must not conceal an
+            # overlap clearly visible in observed_paths.
+            {"status": "NO_EXACT_PATH_MATCH", "matching_local_paths": []},
+            {"status": "NO_MATCH_IN_PARTIAL_PR_SCAN", "matching_local_paths": []},
             {"head_sha": "c"*40},
             {"can_skip_implementation": True},
             {"matching_local_paths": ["app/unknown.py"]},
