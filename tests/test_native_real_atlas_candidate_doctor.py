@@ -159,6 +159,25 @@ class NativeCandidateDoctorTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             _review_diagnostics(envelope, stage="check")
 
+    def test_real_doctor_fail_diagnostics_are_bounded_and_never_a_pass(self):
+        envelope = {
+            "action": "check", "status": "FAIL",
+            "execution": {"status": "FAIL"},
+            "selected_checks": {"tests": ["tests.test_ai_context"]},
+            "next_actions": ["Focused tests failed; investigate independently."],
+        }
+        observed = _review_diagnostics(envelope, stage="check")
+        self.assertIn("execution=FAIL", observed)
+        self.assertIn("selected_test_modules=1", observed)
+        self.assertNotIn("PASS", " ".join(observed))
+        envelope["status"] = "PASS"
+        with self.assertRaises(RuntimeError):
+            _review_diagnostics(envelope, stage="check")
+        envelope["status"] = "FAIL"
+        envelope["next_actions"] = ["x" * 1600]
+        with self.assertRaises(RuntimeError):
+            _review_diagnostics(envelope, stage="check")
+
     def test_review_diagnostics_reject_unbounded_or_incomplete_report(self):
         valid = {
             "action": "validate", "status": "REVIEW",
