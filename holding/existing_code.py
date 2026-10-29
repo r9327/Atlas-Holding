@@ -92,19 +92,32 @@ def inspect_existing_code(
         raise ExistingCodeError("Trusted Git reader required")
     tokens = _terms(acceptance)
     try:
-        raw = git_read("ls-tree", "-r", "--name-only", "-z", repository_sha)
+        raw = git_read("ls-tree", "-r", "-z", repository_sha)
     except (OSError, RuntimeError) as exc:
         raise ExistingCodeError("Git inventory unavailable") from exc
     if not isinstance(raw, str) or len(raw.encode("utf-8", "surrogateescape")) > 4 * 1024 * 1024:
         raise ExistingCodeError("Git path inventory exceeds bound")
-    names = raw.split("\0")
-    if names[-1] == "":
-        names.pop()
-    # Do not claim a negative match based on a truncated repository.
-    if len(names) > 20_000 or len(set(names)) != len(names):
-        raise ExistingCodeError("Unbounded or duplicate Git inventory")
-    if any(not name or "\n" in name or "\r" in name for name in names):
-        raise ExistingCodeError("Unsafe Git path inventory")
+    records = raw.split("\\0")
+    if records[-1] == "":
+        records.pop()
+    if len(records) > 20_000:
+        raise ExistingCodeError("Unbounded Git inventory")
+    names: list[str] = []
+    seen = set()
+    for record in records:
+        try:
+            header, path = record.split("\\t", 1)
+            mode, kind, obj = header.split(" ")
+        except ValueError as exc:
+            raise ExistingCodeError("Malformed Git tree entry") from exc
+        if (not re.fullmatch(r"[0-9a-f]{40}", obj)
+                or path in seen or not path
+                or "\\n" in path or "\\r" in path):
+            raise ExistingCodeError("Unsafe or duplicate Git tree entry")
+        seen.add(path)
+        # Symlinks and submodule commits are never source candidates.
+        if mode in {"100644", "100755"} and kind == "blob":
+            names.append(path)
     matches = []
     for path in names:
         if not _candidate_path(path):
@@ -145,5 +158,5 @@ def inspect_existing_code(
     return ExistingCodeReport(
         repository_sha,
         "CANDIDATES_FOUND" if results else "NO_PATH_MATCH_IN_BOUNDED_SCAN",
-        tuple(results), len(names), inspected_py,
+        tuple(results), len(records), inspected_py,
     )
