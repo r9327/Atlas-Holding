@@ -9,8 +9,12 @@ sans exécuter le code du dépôt.
 
 - Recherches déterministes de chemins pertinents à partir des critères
   d'acceptation de la roadmap (limite de 24 termes).
-- Maximum de 20 000 entrées Git, 12 candidats et 48 Kio par source Python
-  inspectée. Les symlinks et sous-modules ne sont jamais des candidats.
+- Inventaire des racines de code depuis l'arbre Git du SHA exact, avec
+  **exclusion explicite des racines d'assets volumineux** (`data`, `images`,
+  `local_dofus_data`, etc.) : ne jamais dérouler les ~64 000 blobs du dépôt
+  DOF-Atlas pour une simple mission de code. Maximum de 20 000 entrées
+  inspectées dans les racines de source, 12 candidats et 48 Kio par source
+  Python. Les symlinks et sous-modules ne sont jamais des candidats.
 - Noms de fonctions/classes extraits de l'AST Python sans import ni exécution.
 - Transmission structurée dans `plan_patch.existing_code` avec le commit,
   les chemins et les symboles observés.
@@ -51,3 +55,9 @@ La certification indépendante GitHub et Doctor reste inchangée. La seule
 présence d'un ancien module ne provoque jamais un `DONE` ni une fusion.
 Ce lot est **une première intégration opérationnelle de F10**, pas la
 livraison complète de F10.
+
+L'inventaire est **partiel par conception** (racines d'assets exclues) :
+`NO_PATH_MATCH_IN_BOUNDED_SCAN` ne signifie jamais que le dépôt entier est vide
+ou qu'une fonctionnalité n'existe pas. Un projet comportant plus de 64 racines
+source ou plus de 20 000 entrées source est refusé plutôt que tronqué
+silencieusement ; il faudra adapter le périmètre avant de le lancer.
