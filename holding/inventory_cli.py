@@ -12,6 +12,8 @@ from pathlib import Path
 
 from .inventory import scan
 from .provision_plan import make_plan
+from .mission_preflight import inspect_mission
+from .state_store import StoreError
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -19,9 +21,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--install-target", required=True, type=Path)
     parser.add_argument("--plan", action="store_true",
                         help="Include the existing read-only provisioning plan")
+    parser.add_argument("--state-db", type=Path,
+                        help="Existing SQLite state database (mission preflight only)")
+    parser.add_argument("--mission-id",
+                        help="Inspect one tracked mission with --state-db and --plan")
     parser.add_argument("--online", action="store_true",
                         help="Trusted caller assumes network availability; requires --plan")
     args = parser.parse_args(argv)
+    if (args.state_db is None) != (args.mission_id is None):
+        parser.error("--state-db and --mission-id must be supplied together")
+    if args.mission_id is not None and not args.plan:
+        parser.error("Mission preflight requires --plan")
+    if args.state_db is not None and not args.state_db.is_absolute():
+        parser.error("--state-db must be an absolute path")
     if args.online and not args.plan:
         parser.error("--online requires --plan; it is not a network health check")
     if not args.install_target.is_absolute():
@@ -39,6 +51,12 @@ def main(argv: list[str] | None = None) -> int:
             "network_verification": "NOT_RUN",
             "executes_actions": False,
         }
+        if args.mission_id is not None:
+            try:
+                payload["mission_preflight"] = asdict(
+                    inspect_mission(args.state_db, args.mission_id))
+            except (StoreError, OSError, ValueError) as exc:
+                parser.error(f"Cannot inspect mission: {exc}")
     print(json.dumps(payload, ensure_ascii=False,
                      sort_keys=True, separators=(",", ":")))
     return 0
