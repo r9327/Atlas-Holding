@@ -118,6 +118,55 @@ else:
         self.assertEqual(calls, ["health"])
         self.assertFalse((self.root/'trees'/'job'/'src'/'feature.py').exists())
 
+    def test_github_broker_inventory_is_present_before_local_model_patch(self):
+        from holding.github_pr_inventory import OpenPrHint, OpenPrInventory
+
+        class Broker:
+            calls = []
+            def observe_open_prs(self, repo):
+                self.calls.append(repo)
+                return OpenPrInventory(
+                    repo, "OPEN_PRS_OBSERVED", 1, (
+                        OpenPrHint(17, "a" * 40, "b" * 40,
+                                   "holding/existing-code", True, True),))
+
+        broker = Broker()
+        worker = self.worker(self.plan())
+        worker.github_pr_observer = broker
+        run = worker.agent.request
+        observed = []
+        def capture(action, payload, *, cwd):
+            if action == 'plan_patch':
+                observed.append(payload)
+            return run(action, payload, cwd=cwd)
+        worker.agent.request = capture
+        worker(Mission('job', REPO))
+        self.assertEqual(broker.calls, [REPO])
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(observed[0]['github_pr_observation'], 'OBSERVED')
+        self.assertEqual(observed[0]['github_open_prs']['hints'][0]['number'], 17)
+        self.assertFalse(observed[0]['github_open_prs']['can_skip_implementation'])
+
+    def test_github_broker_failure_never_forges_empty_pr_inventory(self):
+        from holding.github_full_evidence import GitHubEvidenceError
+
+        class OfflineBroker:
+            def observe_open_prs(self, repository):
+                raise GitHubEvidenceError('Remote unavailable')
+
+        worker = self.worker(self.plan())
+        worker.github_pr_observer = OfflineBroker()
+        run = worker.agent.request
+        captured = []
+        def capture(action, payload, *, cwd):
+            if action == 'plan_patch':
+                captured.append(payload)
+            return run(action, payload, cwd=cwd)
+        worker.agent.request = capture
+        worker(Mission('job', REPO))
+        self.assertEqual(captured[0]['github_pr_observation'], 'UNAVAILABLE')
+        self.assertNotIn('github_open_prs', captured[0])
+
     def test_original_roadmap_acceptance_reaches_local_agent(self):
         self.agent_path.write_text('''import json,sys
 req=json.load(sys.stdin)
