@@ -57,6 +57,42 @@ class ExistingCodeTests(unittest.TestCase):
         self.assertEqual(result.github_pr_status, "NOT_CHECKED")
         self.assertFalse(result.can_skip_implementation)
 
+    def test_large_asset_repository_does_not_require_full_git_tree(self):
+        # A Dof-Atlas-sized data tree can contain tens of thousands of images.
+        # Inventory only source-like top-level trees; never ask Git to expand data.
+        events = []
+        object_sha = "b" * 40
+        root = (f"040000 tree {object_sha}\\tapp\\0"
+                f"040000 tree {object_sha}\\tdata\\0"
+                f"100644 blob {object_sha}\\tREADME.md\\0")
+        source = f"100644 blob {object_sha}\\tapp/feature.py\\0"
+        def read_git(*args):
+            events.append(args)
+            if args == ("ls-tree", "-z", self.sha):
+                return root
+            if args == ("ls-tree", "-r", "-z", self.sha, "--", "app"):
+                return source
+            if args == ("show", f"{self.sha}:app/feature.py"):
+                return "class FeatureEngine:\\n    pass\\n"
+            raise AssertionError("Unexpected broad or data inventory request")
+        report = inspect_existing_code(
+            read_git, repository_sha=self.sha,
+            acceptance=("FeatureEngine",))
+        self.assertEqual(report.state, "CANDIDATES_FOUND")
+        self.assertEqual(report.candidates[0].symbols, ("FeatureEngine",))
+        self.assertNotIn(("ls-tree", "-r", "-z", self.sha), events)
+        self.assertFalse(any("data" in a for args in events for a in args))
+
+    def test_many_source_roots_fail_closed_instead_of_truncating(self):
+        object_sha = "b" * 40
+        roots = "".join(
+            f"040000 tree {object_sha}\\tpackage{i}\\0"
+            for i in range(65))
+        with self.assertRaisesRegex(ExistingCodeError, "Too many Git source"):
+            inspect_existing_code(
+                lambda *_: roots, repository_sha=self.sha,
+                acceptance=("feature",))
+
     def test_latest_worktree_change_not_silently_mixed_with_base(self):
         (self.root / "app" / "feature.py").write_text(
             "class Replaced:\n    pass\n", encoding="utf-8")
