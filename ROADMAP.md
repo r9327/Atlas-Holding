@@ -88,3 +88,8 @@ Quand tous les lots sont réellement `DONE` au regard des critères et preuves �
 - [ ] Deux versions de roadmap dont une exigence a changé : invalider uniquement les validations affectées et conserver les autres avec leurs SHA.
 - [ ] Fin de tous les lots : arrêter la boucle de création de tâches, produire rapport final vérifiable et attendre une nouvelle directive.
 - [ ] Une tâche bloquée : ne pas afficher `100 % terminé` et ne pas relancer à l'infini, poursuivre ce qui reste possible.
+
+
+## Autonomie V2 — capacités retenues le 28/10/2026
+
+Voir [docs/roadmap/HOLDING_AUTONOMY_V2_2026-10-28.md](docs/roadmap/HOLDING_AUTONOMY_V2_2026-10-28.md) pour les 18 capacités, leurs propriétaires, dépendances, statuts et critères de sortie, ainsi que le [plan machine](docs/roadmap/HOLDING_AUTONOMY_V2_2026-10-28.plan.json). Cette extension ne remplace pas les contrats de fiabilité et de certification existants.
