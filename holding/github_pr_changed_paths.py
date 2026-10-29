@@ -57,7 +57,7 @@ def parse_pr_changed_paths(
         status = row.get("status")
         if (not isinstance(filename, str) or not filename
                 or len(filename) > 1024 or "\n" in filename or "\r" in filename
-                or status not in {
+                or not isinstance(status, str) or status not in {
                     "added", "modified", "removed", "renamed", "changed", "copied"}):
             raise PrChangedPathsError("Untrusted PR changed path")
         if filename in seen:
