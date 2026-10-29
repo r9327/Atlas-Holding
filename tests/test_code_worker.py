@@ -72,6 +72,52 @@ else:
         self.assertEqual((self.root/'trees'/'job'/'src'/'feature.py').read_text(),'answer=42\n')
         self.assertIn('Holding-Operation:',git(self.root/'trees'/'job','log','-1','--format=%B'))
 
+    def test_existing_code_hints_reach_agent_before_patch(self):
+        (self.canonical / "feature.py").write_text(
+            "class ExistingFeature:\n    pass\n", encoding="utf-8")
+        git(self.canonical, "add", "feature.py")
+        git(self.canonical, "commit", "-m", "Existing implementation")
+        self.agent_path.write_text('''import json,sys
+req=json.load(sys.stdin)
+if req['action']=='health':
+ print(json.dumps({'protocol':1,'action':'health','status':'ok','agent_ready':True}))
+else:
+ evidence=req['payload']['existing_code']
+ assert evidence['repository_sha']==req['payload']['base_sha']
+ assert evidence['github_pr_status']=='NOT_CHECKED'
+ assert evidence['functionality_status']=='NOT_VERIFIED'
+ assert evidence['can_skip_implementation'] is False
+ assert any(x['path']=='feature.py' and 'ExistingFeature' in x['symbols']
+            for x in evidence['candidates'])
+ print(json.dumps({'protocol':1,'action':'plan_patch','status':'ok',
+ 'plan':{'files':[{'path':'safe.py','content':'ok=True\\n'}],
+         'commit_message':'feat: reuse indexed module'}}))
+''', encoding="utf-8")
+        runner=LocalProcessAgent(AgentProgram(Path(sys.executable).resolve(),
+                (str(self.agent_path),), timeout_seconds=5))
+        worker=LocalCodeWorker(self.actor,runner,health_directory=self.root)
+        sha=worker(Mission('job',REPO))
+        self.assertEqual(len(sha),40)
+        self.assertEqual((self.root/'trees'/'job'/'safe.py').read_text(),
+                         'ok=True\n')
+
+    def test_failed_exact_tree_discovery_blocks_model_patch(self):
+        from unittest.mock import patch
+        from holding.existing_code import ExistingCodeError
+        worker=self.worker(self.plan())
+        original=worker.agent.request
+        calls=[]
+        def guarded_request(action,payload,*,cwd):
+            calls.append(action)
+            return original(action,payload,cwd=cwd)
+        worker.agent.request=guarded_request
+        with patch("holding.code_worker.inspect_existing_code",
+                   side_effect=ExistingCodeError("Git unavailable")):
+            with self.assertRaisesRegex(CodePlanError, "existing-code inventory"):
+                worker(Mission('job',REPO))
+        self.assertEqual(calls, ["health"])
+        self.assertFalse((self.root/'trees'/'job'/'src'/'feature.py').exists())
+
     def test_original_roadmap_acceptance_reaches_local_agent(self):
         self.agent_path.write_text('''import json,sys
 req=json.load(sys.stdin)
