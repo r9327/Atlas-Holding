@@ -244,6 +244,15 @@ class ControlCenterWindow(QMainWindow):
         self.project_status.setObjectName("projectGitStatus")
         self.project_status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.project_status)
+        self.mission_preflight_status = QLabel(
+            "Préflight : aucune observation authentifiée"
+        )
+        self.mission_preflight_status.setObjectName("missionPreflightStatus")
+        self.mission_preflight_status.setWordWrap(True)
+        self.mission_preflight_status.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        layout.addWidget(self.mission_preflight_status)
         layout.addWidget(self.status)
         layout.addWidget(tabs)
         self.setCentralWidget(root)
@@ -321,7 +330,10 @@ class ControlCenterWindow(QMainWindow):
         self.project_status.setText(view)
 
     def mark_local_hub_unverified(self) -> None:
-        """Never leave a historical hub heartbeat labeled as live on disconnect."""
+        """Historical observations must not stay labeled live on disconnect."""
+        self.mission_preflight_status.setText(
+            "Préflight : moteur non vérifié, dernière observation périmée"
+        )
         self.hub_status.setText(
             "Hub MCP interne : connexion moteur non vérifiée ; "
             "dernier statut historique seulement"
@@ -370,6 +382,39 @@ class ControlCenterWindow(QMainWindow):
             detail += f" · protocole {hub.protocol_version}"
         self.hub_status.setText(detail)
 
+    def _display_mission_preflight(self, state: DashboardState) -> None:
+        """Only render authenticated advisory data, never an execution control."""
+        report = state.mission_preflight
+        if report is None:
+            self.mission_preflight_status.setText(
+                "Préflight : aucune mission READY dans la vue du moteur"
+            )
+            return
+        messages = {
+            "NO_ACTIVE_SCOPED_GRANT": "autorisation absente ou expirée",
+            "PRODUCT_DECISION_REQUIRED": "décision produit nécessaire",
+            "RETRY_BUDGET_EXHAUSTED": "limite de tentatives atteinte",
+            "OPERATOR_SUSPENDED": "moteur en pause ou arrêté",
+            "OTHER_MISSION_RUNNING": "une autre mission utilise le moteur",
+            "EXTERNAL_HEALTH_NOT_VERIFIED": "réseau non vérifié",
+            "UNSUPPORTED_OPERATION": "opération non autorisée",
+        }
+        if report.status == "PRECHECK_PASSED":
+            detail = "contrôles locaux franchis (modèle et worker non vérifiés)"
+        elif report.status == "WAITING_FOR_DEPENDENCIES":
+            detail = "dépendances à terminer : " + ", ".join(report.waiting_for[:4])
+        else:
+            blockers = tuple(
+                messages.get(code, "dépendance inconnue" if code.startswith(
+                    "UNKNOWN_DEPENDENCY:") else "contrôle non satisfait")
+                for code in report.blockers
+            )
+            detail = "bloqué : " + ", ".join(blockers[:4])
+        self.mission_preflight_status.setText(
+            f"Préflight {report.mission_id} : {detail}. "
+            "Observation seulement, aucune permission accordée."
+        )
+
     def acknowledge_authenticated_state(self, state: DashboardState) -> bool:
         """Renew freshness only after a new MAC-verified IPC response."""
         if not isinstance(state, DashboardState):
@@ -382,6 +427,7 @@ class ControlCenterWindow(QMainWindow):
         # A signed same-sequence heartbeat can update independent supervisor
         # observations without implying a new durable mission transition.
         self._display_local_hub(state)
+        self._display_mission_preflight(state)
         self.status.setText(self._last_status_text)
         self._status_timer.start()
         return True
@@ -462,6 +508,7 @@ class ControlCenterWindow(QMainWindow):
         )
         _replace_rows(self.proofs, proof_rows)
         _replace_rows(self.tasks, task_rows)
+        self._display_mission_preflight(state)
         _replace_rows(self.agents, agent_rows)
         _replace_rows(self.plugins, plugin_rows)
         service_rows = tuple((
