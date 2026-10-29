@@ -63,6 +63,21 @@ class RecoveryCoordinator:
                                        "HEAD does not match a verified commit")
             self.store.recover_verified_commit(mission_id, head, lease_owner=self.lease.owner)
             return RecoveryOutcome(mission_id, "QA_PENDING", "Verified commit awaiting Doctor")
+        # Worktree creation alone is replayable ONLY when it still points
+        # exactly to the CREATE operation's journaled base. A clean working
+        # tree may hide an unjournaled commit (or a reset/foreign mutation).
+        # Never dispatch a second writer on that uncertain history.
+        creation_rows = self.store.db.execute(
+            "SELECT kind,result_sha FROM git_operations WHERE mission_id=?",
+            (mission_id,),
+        ).fetchall()
+        if (not creation_rows or any(
+                row["kind"] != "CREATE" or row["result_sha"] != head
+                for row in creation_rows)):
+            return RecoveryOutcome(
+                mission_id, "RECOVERY_REQUIRED",
+                "Clean Git HEAD differs from journaled worktree creation")
+        self.lease.assert_owned()
         # Worktree creation alone is a safe, replayable checkpoint once clean.
         self.store.acknowledge_recovery(mission_id, safe_worktree_confirmed=True,
                                         lease_owner=self.lease.owner)
