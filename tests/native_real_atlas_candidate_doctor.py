@@ -269,7 +269,7 @@ def _integrity_failure_details(checks: object) -> tuple[str, ...]:
                     continue
                 for case in re.findall(
                     r"(?:FAIL|ERROR): [A-Za-z0-9_]+ "
-                    r"\\((tests\\.test_[A-Za-z0-9_.]{1,160})\\)",
+                    r"\((tests\.test_[A-Za-z0-9_.]{1,160})\)",
                     tail,
                 ):
                     if case not in seen and len(seen) < 3 and len(findings) < 16:
