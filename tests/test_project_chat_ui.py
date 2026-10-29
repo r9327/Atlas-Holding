@@ -87,7 +87,7 @@ class ProjectChatUiTests(unittest.TestCase):
             self.flush(window)
         self.assertIn("2 tâches logicielles transmises",
                       window.history.toPlainText())
-        self.assertIn("3 tâches hors code différées",
+        self.assertIn("3 tâches différées",
                       window.history.toPlainText())
         self.assertNotIn("mission terminée", window.status.text().lower())
         window.close()
@@ -105,7 +105,7 @@ class ProjectChatUiTests(unittest.TestCase):
                       window.history.toPlainText())
         self.assertIn("linear_discrete: résultat 22",
                       window.history.toPlainText())
-        self.assertIn("1 tâches hors code différées",
+        self.assertIn("1 tâches différées",
                       window.history.toPlainText())
         self.assertIn("non vérifiée", window.history.toPlainText())
         window.close()
@@ -191,6 +191,25 @@ class ProjectChatUiTests(unittest.TestCase):
         self.assertEqual(window.entry.text(), "Objectif non enregistré")
         self.assertTrue(window.send.isEnabled())
 
+
+
+    def test_deferred_tasks_can_be_resumed_without_closing_window(self):
+        from dataclasses import replace
+        waiting = ChatView(SID, REPO, "Simuler un circuit", (), (), "READY", None,
+                           "chat-" + SID[:24], "1" * 64, "RC", "STAGED", 0, 2)
+        with patch.object(ProjectChatWindow, "_call", return_value=waiting):
+            window = ProjectChatWindow(
+                database=self.database, repository=REPO, model_config=self.config)
+            self.addCleanup(window.close)
+            self.flush(window)
+        self.assertFalse(window.retry.isHidden())
+        recovered = replace(waiting, queued_tasks=1, deferred_tasks=0)
+        with patch.object(window, "_call", return_value=recovered) as call:
+            window.retry.click()
+            self.flush(window)
+            self.assertEqual(call.call_args.args, ("resume", None))
+        self.assertTrue(window.retry.isHidden())
+        self.assertIn("1 tâches logicielles transmises", window.history.toPlainText())
 
 
 if __name__ == "__main__":
