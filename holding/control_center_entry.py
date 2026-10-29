@@ -128,6 +128,39 @@ def _self_test() -> int:
     return 0
 
 
+
+def _run_project_chat(argv: list[str]) -> int:
+    """Separate operator-facing R&D mode; never enroll in the dashboard IPC."""
+    from .project_chat_ui import main as chat_main
+    return chat_main(argv)
+
+
+def _project_chat_self_test() -> int:
+    """Exercise the actual packaged R&D Qt widgets without model or permissions."""
+    from tempfile import TemporaryDirectory
+    from PySide6.QtWidgets import QApplication
+    from .project_chat_ui import ProjectChatWindow
+
+    app = QApplication.instance() or QApplication([])
+    with TemporaryDirectory(prefix="atlas-chat-smoke-") as tmp:
+        window = ProjectChatWindow(
+            database=Path(tmp) / "state.sqlite",
+            repository="r9327/Atlas-Holding",
+            model_config=Path(tmp) / "unused-model.json",
+        )
+        try:
+            valid = (window.objectName() == "atlasProjectChat"
+                     and window.entry.objectName() == "projectChatEntry"
+                     and window.history.isReadOnly()
+                     and window.send.objectName() == "projectChatSend")
+        finally:
+            window.close()
+            # The constructor schedules a local DB read. Drain it before the
+            # temporary directory is removed, even if no Qt event loop runs.
+            window._executor.shutdown(wait=True, cancel_futures=True)
+        return 0 if valid else 2
+
+
 def main(argv: list[str] | None = None, *, input_stream: BinaryIO | None = None) -> int:
     parser = argparse.ArgumentParser(prog="atlas-holding-control-center")
     parser.add_argument("--port", type=int)
@@ -139,7 +172,45 @@ def main(argv: list[str] | None = None, *, input_stream: BinaryIO | None = None)
         "--update-root", type=Path,
         help="Display-only installation root, never authorizes a release",
     )
+    # Explicit separate GUI mode in the SAME frozen binary. It never receives
+    # or reads dashboard enrollment keys. The project and model paths are
+    # chosen by the operator, not accepted from generated R&D prompts.
+    parser.add_argument("--project-chat", action="store_true")
+    parser.add_argument("--project-chat-self-test", action="store_true")
+    parser.add_argument("--chat-db", type=Path)
+    parser.add_argument("--chat-repo")
+    parser.add_argument("--chat-model-config", type=Path)
+    parser.add_argument("--chat-circuit-config", type=Path)
     args = parser.parse_args(argv)
+    chat_fields = (args.chat_db, args.chat_repo, args.chat_model_config,
+                   args.chat_circuit_config)
+    if args.project_chat_self_test:
+        if (args.project_chat or args.self_test or args.probe
+                or args.port is not None or args.engine_id is not None
+                or args.readonly or args.update_root is not None
+                or any(x is not None for x in chat_fields)):
+            return 2
+        return _project_chat_self_test()
+    if args.project_chat:
+        if (args.self_test or args.probe or args.port is not None
+                or args.engine_id is not None or args.readonly
+                or args.update_root is not None
+                or any(x is None for x in chat_fields[:3])
+                or not args.chat_db.is_absolute()
+                or not args.chat_model_config.is_absolute()
+                or (args.chat_circuit_config is not None
+                    and not args.chat_circuit_config.is_absolute())):
+            return 2
+        chat_argv = [
+            "--db", str(args.chat_db), "--repo", args.chat_repo,
+            "--model-config", str(args.chat_model_config),
+        ]
+        if args.chat_circuit_config is not None:
+            chat_argv.extend([
+                "--circuit-config", str(args.chat_circuit_config)])
+        return _run_project_chat(chat_argv)
+    if any(x is not None for x in chat_fields):
+        return 2
     if args.self_test:
         if (args.port is not None or args.engine_id is not None
                 or args.readonly or args.probe or args.update_root is not None):
