@@ -17,12 +17,14 @@ import sys
 
 from holding.atlas_doctor_evidence import LocalPassport
 from holding.atlas_doctor_runner import AtlasDoctorRunner
+from holding.atlas_context_index import INDEX_PATH, render_atlas_context_index
 from tests.native_real_atlas_doctor_probe import _git as inspect_git
 
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 SCOPE = ("README.md",)
 LEVELS = ("plan", "check", "validate")
+MODIFIED_PATHS = tuple(sorted((*SCOPE, INDEX_PATH)))
 
 
 def _runner_root() -> Path:
@@ -76,6 +78,29 @@ def _is_source_clean(root: Path, sha: str) -> None:
         raise RuntimeError("Pinned original Atlas checkout was modified")
 
 
+def _sync_disposable_context_index(destination: Path) -> None:
+    """Mirror Atlas's committed AI Context without repo hooks or model edits."""
+    target = destination / INDEX_PATH
+    if (not target.is_file() or target.is_symlink()
+            or target.parent.is_symlink() or target.stat().st_size > 512 * 1024
+            or _git(destination, "ls-files", "--error-unmatch", "--",
+                    INDEX_PATH) != INDEX_PATH):
+        raise RuntimeError("Canonical tracked Atlas AI Context index required")
+    staged_tree = _git(destination, "write-tree")
+    if not _SHA.fullmatch(staged_tree):
+        raise RuntimeError("No exact staged Git tree for AI Context")
+    # Git-tree metadata, not content from the candidate/model.
+    rendered = render_atlas_context_index(
+        _git(destination, "ls-tree", staged_tree))
+    with target.open("w", encoding="utf-8", newline="\n") as out:
+        out.write(rendered)
+        out.flush()
+        os.fsync(out.fileno())
+    _git(destination, "add", "--", INDEX_PATH)
+    if target.read_text(encoding="utf-8") != rendered:
+        raise RuntimeError("AI Context changed during staged synchronization")
+
+
 def _prepare_candidate(source: Path, destination: Path, base_sha: str) -> str:
     """Clone independent Git objects, append one README test marker, commit."""
     if (not source.is_absolute() or not source.is_dir()
@@ -108,6 +133,9 @@ def _prepare_candidate(source: Path, destination: Path, base_sha: str) -> str:
         out.flush()
         os.fsync(out.fileno())
     _git(destination, "add", "--", SCOPE[0])
+    _sync_disposable_context_index(destination)
+    if sorted(_git(destination, "diff", "--cached", "--name-only").splitlines()) != list(MODIFIED_PATHS):
+        raise RuntimeError("Disposable candidate has missing/extra staged files")
     # Overrides prevent global repo identity or a local hook from taking over.
     _git(destination, "-c", "core.hooksPath=NUL",
          "-c", "user.name=Atlas Doctor Fixture",
@@ -117,7 +145,7 @@ def _prepare_candidate(source: Path, destination: Path, base_sha: str) -> str:
     candidate = _git(destination, "rev-parse", "HEAD")
     if (not _SHA.fullmatch(candidate) or candidate == base_sha
             or _git(destination, "rev-parse", "HEAD^") != base_sha
-            or _git(destination, "diff", "--name-only", base_sha, "HEAD") != SCOPE[0]
+            or tuple(sorted(_git(destination, "diff", "--name-only", base_sha, "HEAD").splitlines())) != MODIFIED_PATHS
             or _git(destination, "status", "--porcelain", "--untracked-files=all")):
         raise RuntimeError("Candidate is not an isolated one-file clean Git commit")
     _is_source_clean(source, base_sha)
@@ -174,7 +202,7 @@ def _candidate_summary(*, source_sha: str, candidate_sha: str,
         "source_repository": "r9327/Dof-Atlas",
         "source_sha": source_sha,
         "candidate_sha": candidate_sha,
-        "modified_paths": list(SCOPE),
+        "modified_paths": list(MODIFIED_PATHS),
         "stages": stages,
         "independent_qa_pass": False,
         "doctor_full_certified": False,
@@ -277,7 +305,7 @@ def run(source: Path, sha: str) -> None:
         raise RuntimeError("Git CLI unavailable")
     runner = AtlasDoctorRunner(
         destination, Path(sys.executable).resolve(), Path(executable).resolve(),
-        timeout_seconds=180, max_tests=4,
+        timeout_seconds=180, max_tests=8,
     )
     collected = []
     for stage in LEVELS:
