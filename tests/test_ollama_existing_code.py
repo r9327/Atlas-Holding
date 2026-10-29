@@ -69,6 +69,62 @@ class ExistingCodeAdapterTests(unittest.TestCase):
                         _plan(CONFIG, payload, Path(folder))
                     run.assert_not_called()
 
+    def test_privileged_open_pr_inventory_reaches_model_without_authority(self):
+        payload = self.payload()
+        payload["github_pr_observation"] = "OBSERVED"
+        payload["github_open_prs"] = {
+            "repository": payload["repository"],
+            "status": "OPEN_PRS_OBSERVED",
+            "observed_count": 1,
+            "hints": [{
+                "number": 8, "head_sha": SHA, "base_sha": "b" * 40,
+                "head_branch": "holding/existing-feature",
+                "draft": True, "same_repository": True,
+            }],
+            "can_certify": False,
+            "can_skip_implementation": False,
+        }
+        observed = []
+        def http(*args, **kwargs):
+            observed.append(kwargs["payload"])
+            return {"message": {"content": json.dumps(PATCH)}}
+        with tempfile.TemporaryDirectory() as folder, \
+             patch("holding.ollama_protocol._http", side_effect=http), \
+             patch("holding.ollama_protocol._snapshot", return_value=[]):
+            self.assertEqual(_plan(CONFIG, payload, Path(folder)), PATCH)
+        instructions = observed[0]["messages"][0]["content"]
+        data = json.loads(observed[0]["messages"][1]["content"])
+        self.assertIn("untrusted branch", instructions)
+        self.assertEqual(data["github_open_prs"]["hints"][0]["number"], 8)
+        self.assertEqual(data["github_pr_observation"], "OPEN_PRS_OBSERVED")
+
+    def test_missing_or_forged_github_pr_evidence_cannot_reach_model(self):
+        payload = self.payload()
+        payload["github_pr_observation"] = "OBSERVED"
+        payload["github_open_prs"] = {
+            "repository": payload["repository"],
+            "status": "OPEN_PRS_OBSERVED",
+            "observed_count": 0, "hints": [],
+            "can_certify": False, "can_skip_implementation": False,
+        }
+        variants = [
+            {**payload, "github_open_prs": {
+                **payload["github_open_prs"], "can_certify": True}},
+            {**payload, "github_open_prs": {
+                **payload["github_open_prs"], "status": "PAGINATION_NOT_VERIFIED"}},
+            {**payload, "github_pr_observation": "NOT_CHECKED"},
+            {**payload, "github_pr_observation": "MAY_SKIP_TASK"},
+        ]
+        for variant in variants:
+            with self.subTest(variant=variant["github_pr_observation"]), \
+                 tempfile.TemporaryDirectory() as folder, \
+                 patch("holding.ollama_protocol._http",
+                       side_effect=AssertionError("Inference ran")) as run, \
+                 patch("holding.ollama_protocol._snapshot", return_value=[]):
+                with self.assertRaises(AdapterError):
+                    _plan(CONFIG, variant, Path(folder))
+                run.assert_not_called()
+
     def test_old_agent_request_remains_compatible(self):
         payload = self.payload()
         del payload["existing_code"]
