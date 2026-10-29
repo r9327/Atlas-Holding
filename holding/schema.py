@@ -332,6 +332,23 @@ RESEARCH_CIRCUIT_SCHEMA = (
     )""",
 )
 
+RESEARCH_MEASUREMENT_SCHEMA = (
+    """CREATE TABLE IF NOT EXISTS research_measurement_comparisons (
+     session_id TEXT NOT NULL,
+     task_index INTEGER NOT NULL,
+     plan_sha256 TEXT NOT NULL,
+     simulation_sha256 TEXT NOT NULL,
+     source_sha256 TEXT NOT NULL,
+     observations_sha256 TEXT NOT NULL,
+     observations_json TEXT NOT NULL,
+     comparison_sha256 TEXT NOT NULL,
+     comparison_json TEXT NOT NULL,
+     created_epoch INTEGER NOT NULL,
+     PRIMARY KEY(session_id,task_index,source_sha256),
+     FOREIGN KEY(session_id,task_index)
+         REFERENCES research_circuit_runs(session_id,task_index)
+    )""",
+)
 def apply_schema(db: sqlite3.Connection, statements: Iterable[str]) -> None:
     """Apply canonical statements without the implicit commits of executescript."""
     for statement in statements:

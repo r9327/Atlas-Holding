@@ -108,6 +108,8 @@ class ChatView:
     simulated_tasks: int = 0
     simulation_results: tuple[str, ...] = ()
     circuit_results: tuple[str, ...] = ()
+    circuit_task_indices: tuple[int, ...] = ()
+    comparison_results: tuple[str, ...] = ()
 
 
 class ProjectChatCoordinator:
@@ -173,12 +175,17 @@ class ProjectChatCoordinator:
                 circuit_config_path=self.circuit_config_path).inspect(row["session_id"])
         simulations = ()
         circuits = ()
+        comparisons = ()
         if plan is not None and plan.state == "STAGED":
             from .research_simulation import LocalSimulationRunner
             from .ngspice_adapter import CircuitSimulationRunner
             simulations = LocalSimulationRunner(self.store).inspect(plan)
             circuits = CircuitSimulationRunner(
                 self.store, config_path=self.circuit_config_path).inspect(plan)
+            if circuits:
+                from .research_measurement import MeasurementComparisonService
+                comparisons = MeasurementComparisonService(
+                    self.store, repository=self.repository).inspect(row["session_id"])
         return ChatView(
             row["session_id"], row["repository"], row["initial_goal"],
             questions, answers, status, next_question,
@@ -196,6 +203,13 @@ class ProjectChatCoordinator:
                 f"RC ngspice: tension finale {item.final_voltage_volts:.6g} V ; "
                 f"empreinte {item.result_sha256[:12]}…"
                 for item in circuits
+            ),
+            tuple(item.task_index for item in circuits),
+            tuple(
+                f"Tâche {item.task_index + 1}: RMSE {item.rmse_volts:.6g} V, "
+                f"écart max {item.max_abs_volts:.6g} V sur {item.samples} points ; "
+                f"mesures non certifiées ; SHA {item.comparison_sha256[:12]}…"
+                for item in comparisons
             ),
         )
 
