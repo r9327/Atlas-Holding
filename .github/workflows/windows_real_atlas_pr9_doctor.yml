@@ -1,0 +1,88 @@
+name: PR9 Nonrelease real Dof Atlas Doctor on exact public source
+
+on:
+  pull_request:
+    branches: [main]
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  disposable-real-atlas-doctor:
+    if: >-
+      github.event.label.name == 'ci:atlas-disposable-doctor' &&
+      github.head_ref == 'feat/09-exe-packaging-release' &&
+      github.event.pull_request.head.repo.full_name == 'r9327/Atlas-Holding'
+    runs-on: windows-2025
+    timeout-minutes: 40
+    steps:
+      - name: Checkout exact Holding PR #9 SHA without credentials
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Checkout canonical public Atlas SHA without credentials
+        uses: actions/checkout@v7
+        with:
+          repository: r9327/Dof-Atlas
+          ref: 91608d6949af8c5d07c6535b0a6bfaaea3e9cbc9
+          path: atlas-target
+          persist-credentials: false
+      - name: Verify exact public source and PR candidate identity
+        shell: pwsh
+        run: |
+          $atlas = Join-Path $env:GITHUB_WORKSPACE "atlas-target"
+          if ((git -C "$atlas" rev-parse HEAD) -cne "91608d6949af8c5d07c6535b0a6bfaaea3e9cbc9" -or
+              (git rev-parse HEAD) -cne "${{ github.event.pull_request.head.sha }}") {
+            throw "Real Atlas Doctor source or Holding PR SHA differs from requested pins"
+          }
+      - name: Python 3.13
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Unit-test advisory stages and independently verified receipts
+        shell: pwsh
+        run: |
+          python -B -X utf8 -m unittest `
+            tests.test_native_real_atlas_candidate_doctor `
+            tests.test_native_real_atlas_candidate_evidence `
+            tests.test_atlas_doctor_evidence -v
+          if ($LASTEXITCODE -ne 0) { throw "Real Atlas candidate QA safety contracts failed" }
+      - name: Exercise genuine plan-check-validate on one disposable Git commit
+        shell: pwsh
+        timeout-minutes: 24
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+          PYTHONNOUSERSITE: "1"
+        run: |
+          $atlas = Join-Path $env:GITHUB_WORKSPACE "atlas-target"
+          python -B -X utf8 -m tests.native_real_atlas_candidate_doctor `
+            --atlas-root "$atlas" `
+            --expected-atlas-sha "91608d6949af8c5d07c6535b0a6bfaaea3e9cbc9"
+          if ($LASTEXITCODE -ne 0) { throw "Actual Atlas candidate Doctor refused this disposable exercise" }
+      - name: Independent receipt gate and clean source check
+        shell: pwsh
+        run: |
+          $proof = Join-Path $env:RUNNER_TEMP "atlas-candidate-doctor-$env:GITHUB_RUN_ID.json"
+          python -B -X utf8 -m tests.native_real_atlas_candidate_evidence `
+            --receipt "$proof" `
+            --expected-source-sha "91608d6949af8c5d07c6535b0a6bfaaea3e9cbc9"
+          if ($LASTEXITCODE -ne 0) { throw "Independent candidate Doctor receipt rejected" }
+          $atlas = Join-Path $env:GITHUB_WORKSPACE "atlas-target"
+          $dirty = git -C "$atlas" status --porcelain --untracked-files=all
+          if ($dirty) { throw "Actual source Dof-Atlas checkout was changed" }
+          $head = git -C "$atlas" rev-parse HEAD
+          if ($head -cne "91608d6949af8c5d07c6535b0a6bfaaea3e9cbc9") {
+            throw "Original public Atlas checkout SHA changed"
+          }
+          $holdingDirty = git status --porcelain --untracked-files=all -- ':!atlas-target'
+          if ($holdingDirty) { throw "Holding checkout was changed" }
+      - name: Archive advisory only, never a release or authorized Doctor receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: NONRELEASE-PR9-Real-Atlas-Candidate-${{ github.run_id }}
+          path: ${{ runner.temp }}/atlas-candidate-doctor-${{ github.run_id }}.json
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
