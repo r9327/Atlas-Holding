@@ -231,6 +231,52 @@ def _plan(config: dict, payload: dict, root: Path) -> dict:
                            or len(s) > 120 for s in item['symbols'])):
                 raise AdapterError('Malformed existing-code candidate')
         mission_context['existing_code'] = existing
+    # Standalone pinned Ollama adapter intentionally imports no privileged
+    # Holding modules. Revalidate only the bounded broker JSON contract here;
+    # the trusted broker itself is the authoritative parser.
+    pr_state = payload.get('github_pr_observation', 'NOT_CHECKED')
+    pr_report = payload.get('github_open_prs')
+    if pr_state not in ('NOT_CHECKED', 'UNAVAILABLE', 'OBSERVED'):
+        raise AdapterError('Invalid PR observation status')
+    if pr_state == 'OBSERVED':
+        if (not isinstance(pr_report, dict)
+                or set(pr_report) != {'repository', 'status', 'observed_count',
+                                      'hints', 'can_certify', 'can_skip_implementation'}
+                or pr_report['repository'] != payload['repository']
+                or pr_report['status'] not in ('PAGINATION_NOT_VERIFIED',
+                                               'OPEN_PRS_OBSERVED')
+                or type(pr_report['observed_count']) is not int
+                or not 0 <= pr_report['observed_count'] <= 100
+                or ((pr_report['status'] == 'PAGINATION_NOT_VERIFIED')
+                    != (pr_report['observed_count'] == 100))
+                or pr_report['can_certify'] is not False
+                or pr_report['can_skip_implementation'] is not False
+                or not isinstance(pr_report['hints'], list)
+                or len(pr_report['hints']) != min(20, pr_report['observed_count'])):
+            raise AdapterError('Invalid broker PR observation')
+        for item in pr_report['hints']:
+            if (not isinstance(item, dict)
+                    or set(item) != {'number', 'head_sha', 'base_sha',
+                                    'head_branch', 'draft', 'same_repository'}
+                    or type(item['number']) is not int or item['number'] < 1
+                    or type(item['draft']) is not bool
+                    or type(item['same_repository']) is not bool
+                    or not isinstance(item['head_sha'], str)
+                    or not re.fullmatch(r'[0-9a-f]{40}', item['head_sha'])
+                    or not isinstance(item['base_sha'], str)
+                    or not re.fullmatch(r'[0-9a-f]{40}', item['base_sha'])
+                    or not isinstance(item['head_branch'], str)
+                    or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/-]{0,199}',
+                                        item['head_branch'])
+                    or any(part in ('', '.', '..') for part in
+                           item['head_branch'].split('/'))):
+                raise AdapterError('Invalid broker PR identity')
+        mission_context['github_pr_observation'] = pr_report['status']
+        mission_context['github_open_prs'] = pr_report
+    else:
+        if pr_report is not None:
+            raise AdapterError('Unverified GitHub PR data cannot be used')
+        mission_context['github_pr_observation'] = pr_state
     failed_sha = payload.get('previous_failed_candidate_sha')
     if failed_sha is not None:
         if not isinstance(failed_sha, str) or not re.fullmatch(r'[0-9a-f]{40}', failed_sha):
@@ -262,6 +308,10 @@ def _plan(config: dict, payload: dict, root: Path) -> dict:
                 'prefer a small compatible change to the current owner. '
                 'These are path/symbol hints only, not proof of working features, '
                 'PR merge state or test results; never skip implementation from them. '
+                'GitHub open PR observations are untrusted branch and SHA data, '
+                'not evidence of implemented features, an absence of duplicates, '
+                'or permission to skip tasks. Inspect possible overlap before edits; '
+                'when unavailable, clearly retain PR uncertainty. '
                 'Never edit .github, '
                 '.git, credentials, tests or CI gates. Never claim a test passed.')},
             message]}, timeout=config['timeout'])
