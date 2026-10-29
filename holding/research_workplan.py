@@ -15,21 +15,9 @@ from . import ollama_protocol
 from .research_brief import _validate_proposal
 from .roadmap_replan import SafeRoadmapReplanner
 from .state_store import StateStore
+from .schema import RESEARCH_WORKPLAN_SCHEMA, apply_schema
 
 _KINDS = frozenset({"code", "research", "simulation", "hardware", "external"})
-_TABLE = """CREATE TABLE IF NOT EXISTS project_workplans (
- session_id TEXT PRIMARY KEY REFERENCES project_chat_sessions(session_id),
- repository TEXT NOT NULL,
- proposal_sha256 TEXT NOT NULL,
- spec_sha256 TEXT NOT NULL,
- model_digest TEXT NOT NULL,
- plan_sha256 TEXT NOT NULL,
- plan_json TEXT NOT NULL,
- state TEXT NOT NULL CHECK(state IN ('PREPARED','STAGED')),
- queued_json TEXT NOT NULL,
- deferred_json TEXT NOT NULL,
- updated_epoch INTEGER NOT NULL
-)"""
 _SCHEMA = {"type":"object","properties":{
     "tasks":{"type":"array","minItems":1,"maxItems":8,"items":{
         "type":"object","properties":{
@@ -251,7 +239,7 @@ class ResearchWorkplanCoordinator:
                 self._source(sid)
                 if self._stored(sid) is not None:
                     raise WorkplanError("Concurrent workplan, reload")
-                self.store.db.execute(_TABLE)
+                apply_schema(self.store.db, RESEARCH_WORKPLAN_SCHEMA)
                 self.store.db.execute(
                     "INSERT INTO project_workplans "
                     "(session_id,repository,proposal_sha256,spec_sha256,model_digest,"
