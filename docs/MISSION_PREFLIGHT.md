@@ -61,3 +61,13 @@ permission GitHub ; les contrôles indépendants du moteur restent obligatoires.
 Le bandeau indique uniquement le premier lot READY ; ce n'est pas encore un
 diagnostic exhaustif de toutes les missions ou de tous les outils. Aucune
 mutation du schéma SQLite ou du projet utilisateur n'est réalisée.
+
+## Vue multi-missions authentifiée (schéma v7)
+
+Le moteur conserve le `mission_preflight` v6 (premier READY), et ajoute
+`mission_preflights` pour 20 missions READY maximum ainsi que
+`preflight_total_ready`. Les observations partagent une seule transaction
+SQLite, sans réseau ni permission ajoutée. Le décodeur accepte v1–v6 et
+refuse les listes incohérentes avec l'ordre des tâches, les permissions ou
+le premier avis. Le Control Center affiche un tableau consultatif qui
+est périmé lors d'une coupure. Aucune conclusion de certification.

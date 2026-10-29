@@ -95,6 +95,17 @@ class ControlCenterWindow(QMainWindow):
             ("Tâche", "État", "Étape", "Progrès prouvé", "SHA", "Preuve"),
             "tasksTable",
         )
+        self.preflights = _table(
+            ("Mission", "Préflight", "Autorisation", "Blocages", "Dépendances"),
+            "missionPreflightTable",
+        )
+        self.preflight_summary = QLabel("Aucun préflight multi-missions reçu")
+        self.preflight_summary.setObjectName("missionPreflightSummary")
+        self.preflight_note = QLabel(
+            "Diagnostic consultatif : aucun préflight ne donne "
+            "une autorisation de lancement ou une certification."
+        )
+        self.preflight_note.setWordWrap(True)
         self.agents = _table(
             ("Agent", "Rôle", "État", "Objectif", "Tâche", "Profil"),
             "agentsTable",
@@ -144,6 +155,12 @@ class ControlCenterWindow(QMainWindow):
         tabs = QTabWidget()
         tabs.setObjectName("dashboardTabs")
         tabs.addTab(self.tasks, "Roadmap")
+        preflight_page = QWidget()
+        preflight_layout = QVBoxLayout(preflight_page)
+        preflight_layout.addWidget(self.preflight_note)
+        preflight_layout.addWidget(self.preflight_summary)
+        preflight_layout.addWidget(self.preflights)
+        tabs.addTab(preflight_page, "Préflight")
         self.agent_telemetry = QLabel(
             "Agents : télémétrie non renseignée par le moteur"
         )
@@ -334,6 +351,8 @@ class ControlCenterWindow(QMainWindow):
         self.mission_preflight_status.setText(
             "Préflight : moteur non vérifié, dernière observation périmée"
         )
+        self.preflight_summary.setText("Préflights : observation périmée")
+        _replace_rows(self.preflights, ())
         self.hub_status.setText(
             "Hub MCP interne : connexion moteur non vérifiée ; "
             "dernier statut historique seulement"
@@ -382,6 +401,28 @@ class ControlCenterWindow(QMainWindow):
             detail += f" · protocole {hub.protocol_version}"
         self.hub_status.setText(detail)
 
+    def _display_multi_preflights(self, state: DashboardState) -> None:
+        """Refresh the advisory page from the latest authenticated snapshot."""
+        preflight_rows = tuple((
+            x.mission_id,
+            {"BLOCKED": "Blocage détecté",
+             "WAITING_FOR_DEPENDENCIES": "Attend des tâches",
+             "PRECHECK_PASSED": "Prérequis observés"}[x.status],
+            "Grant existant" if x.permission == "SCOPED_GRANT_PRESENT"
+            else "Manquant ou expiré",
+            ", ".join(x.blockers) if x.blockers else "Aucun observé",
+            ", ".join(x.waiting_for[:5]) + (
+                f" (+{len(x.waiting_for) - 5} autres)"
+                if len(x.waiting_for) > 5 else "")
+            if x.waiting_for else "Aucune",
+        ) for x in state.mission_preflights)
+        _replace_rows(self.preflights, preflight_rows)
+        self.preflight_summary.setText(
+            f"Préflights affichés : {len(preflight_rows)} / "
+            f"{state.preflight_total_ready} missions READY"
+            " · worker, modèle, réseau non vérifiés ici"
+        )
+
     def _display_mission_preflight(self, state: DashboardState) -> None:
         """Only render authenticated advisory data, never an execution control."""
         report = state.mission_preflight
@@ -428,6 +469,7 @@ class ControlCenterWindow(QMainWindow):
         # observations without implying a new durable mission transition.
         self._display_local_hub(state)
         self._display_mission_preflight(state)
+        self._display_multi_preflights(state)
         self.status.setText(self._last_status_text)
         self._status_timer.start()
         return True
@@ -508,6 +550,7 @@ class ControlCenterWindow(QMainWindow):
         )
         _replace_rows(self.proofs, proof_rows)
         _replace_rows(self.tasks, task_rows)
+        self._display_multi_preflights(state)
         self._display_mission_preflight(state)
         _replace_rows(self.agents, agent_rows)
         _replace_rows(self.plugins, plugin_rows)

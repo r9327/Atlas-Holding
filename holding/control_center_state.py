@@ -141,6 +141,8 @@ class DashboardState:
     model_history: tuple[ModelUsageView, ...] = ()
     hub: LocalHubView | None = None
     mission_preflight: MissionPreflightView | None = None
+    mission_preflights: tuple[MissionPreflightView, ...] = ()
+    preflight_total_ready: int = 0
 
 
 def _object(value: Any, required: set[str]) -> dict[str, Any]:
@@ -478,21 +480,23 @@ def consume_dashboard_snapshot(
         "schema_version", "engine_id", "sequence", "generated_at", "network",
         "pending_external", "tasks", "agents", "plugins", "log_page",
     }
-    if type(version) is int and version in (2, 3, 4, 5, 6):
+    if type(version) is int and version in (2, 3, 4, 5, 6, 7):
         keys |= {"paused", "stop_requested"}
-    if type(version) is int and version in (3, 4, 5, 6):
+    if type(version) is int and version in (3, 4, 5, 6, 7):
         keys.add("services")
-    if type(version) is int and version in (4, 5, 6):
+    if type(version) is int and version in (4, 5, 6, 7):
         keys.add("model_history")
-    if type(version) is int and version in (5, 6):
+    if type(version) is int and version in (5, 6, 7):
         keys.add("hub")
-    if type(version) is int and version == 6:
+    if type(version) is int and version in (6, 7):
         keys.add("mission_preflight")
+    if type(version) is int and version == 7:
+        keys |= {"mission_preflights", "preflight_total_ready"}
     data = _object(payload, keys)
-    if (type(version) is not int or version not in (1, 2, 3, 4, 5, 6)
+    if (type(version) is not int or version not in (1, 2, 3, 4, 5, 6, 7)
             or data["engine_id"] != trusted_engine_id):
         raise ControlCenterStateError("Snapshot identity mismatch")
-    if version in (2, 3, 4, 5, 6) and (type(data["paused"]) is not bool
+    if version in (2, 3, 4, 5, 6, 7) and (type(data["paused"]) is not bool
                           or type(data["stop_requested"]) is not bool):
         raise ControlCenterStateError("Invalid durable operator control state")
     sequence = _integer(data["sequence"], "snapshot sequence", maximum=2**63 - 1)
@@ -530,7 +534,7 @@ def consume_dashboard_snapshot(
         raise ControlCenterStateError("Duplicate plugin name")
 
     services: tuple[ServiceView, ...] = ()
-    if version in (3, 4, 5, 6):
+    if version in (3, 4, 5, 6, 7):
         raw_services = data["services"]
         if not isinstance(raw_services, list) or len(raw_services) > 3:
             raise ControlCenterStateError("Invalid bounded service list")
@@ -539,7 +543,7 @@ def consume_dashboard_snapshot(
             raise ControlCenterStateError("Duplicate service identities")
 
     model_history: tuple[ModelUsageView, ...] = ()
-    if version in (4, 5, 6):
+    if version in (4, 5, 6, 7):
         raw_history = data["model_history"]
         if not isinstance(raw_history, list) or len(raw_history) > 20:
             raise ControlCenterStateError("Invalid bounded model usage history")
@@ -551,12 +555,29 @@ def consume_dashboard_snapshot(
             raise ControlCenterStateError("Model history order mismatch")
 
     hub = None
-    if version in (5, 6) and data["hub"] is not None:
+    if version in (5, 6, 7) and data["hub"] is not None:
         hub = _local_hub(data["hub"], generated_at)
 
     mission_preflight = None
-    if version == 6 and data["mission_preflight"] is not None:
+    if version in (6, 7) and data["mission_preflight"] is not None:
         mission_preflight = _mission_preflight(data["mission_preflight"], tasks)
+
+    mission_preflights: tuple[MissionPreflightView, ...] = ()
+    preflight_total_ready = 0
+    if version == 7:
+        ready = [task.task_id for task in tasks if task.state == "READY"]
+        preflight_total_ready = _integer(
+            data["preflight_total_ready"], "ready preflight count", maximum=1000)
+        if preflight_total_ready != len(ready):
+            raise ControlCenterStateError("Preflight READY count mismatch")
+        rows = data["mission_preflights"]
+        if not isinstance(rows, list) or len(rows) != min(20, preflight_total_ready):
+            raise ControlCenterStateError("Invalid bounded preflight page")
+        mission_preflights = tuple(_mission_preflight(item, tasks) for item in rows)
+        if ([x.mission_id for x in mission_preflights] != ready[:20]
+                or (mission_preflight is None) != (not mission_preflights)
+                or (mission_preflights and mission_preflight != mission_preflights[0])):
+            raise ControlCenterStateError("Primary and page preflight disagree")
 
     page = _object(data["log_page"], {"items", "next_cursor"})
     if not isinstance(page["items"], list) or len(page["items"]) > MAX_LOG_PAGE:
@@ -576,7 +597,8 @@ def consume_dashboard_snapshot(
         data["network"],
         _integer(data["pending_external"], "pending external count", maximum=100_000),
         tasks, agents, plugins, logs, cursor,
-        data["paused"] if version in (2, 3, 4, 5, 6) else None,
-        data["stop_requested"] if version in (2, 3, 4, 5, 6) else None,
+        data["paused"] if version in (2, 3, 4, 5, 6, 7) else None,
+        data["stop_requested"] if version in (2, 3, 4, 5, 6, 7) else None,
         services, model_history, hub, mission_preflight,
+        mission_preflights, preflight_total_ready,
     )

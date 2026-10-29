@@ -52,7 +52,7 @@ class MissionPreflightDashboardTests(unittest.TestCase):
 
     def test_missing_grant_is_visible_without_permission_escalation(self):
         payload, state = self.project()
-        self.assertEqual(payload["schema_version"], 6)
+        self.assertEqual(payload["schema_version"], 7)
         self.assertEqual(state.mission_preflight.status, "BLOCKED")
         self.assertEqual(state.mission_preflight.permission, "MISSING_OR_EXPIRED")
         self.assertEqual(state.mission_preflight.blockers,
@@ -107,6 +107,8 @@ class MissionPreflightDashboardTests(unittest.TestCase):
         payload, _ = self.project()
         payload["schema_version"] = 5
         del payload["mission_preflight"]
+        del payload["mission_preflights"]
+        del payload["preflight_total_ready"]
         state = self.consume(payload)
         self.assertIsNone(state.mission_preflight)
 
