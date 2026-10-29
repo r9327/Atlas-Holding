@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "status": "advisory_only",
+  "default_recommended_profile": "BALANCED_VERIFIED",
+  "model_profiles": [
+    "BALANCED_VERIFIED",
+    "QUALITY_FIRST"
+  ],
+  "task_profiles": {
+    "read_only": {
+      "recommended_profile": "BALANCED_VERIFIED",
+      "risk": "LOW",
+      "validation": "inspection"
+    },
+    "tiny_edit": {
+      "recommended_profile": "BALANCED_VERIFIED",
+      "risk": "LOW",
+      "validation": "targeted"
+    },
+    "localized_fix": {
+      "recommended_profile": "BALANCED_VERIFIED",
+      "risk": "MEDIUM",
+      "validation": "targeted"
+    },
+    "feature": {
+      "recommended_profile": "BALANCED_VERIFIED",
+      "risk": "MEDIUM",
+      "validation": "targeted_plus_integration"
+    },
+    "refactor": {
+      "recommended_profile": "QUALITY_FIRST",
+      "risk": "HIGH",
+      "validation": "consumers_architecture_tests"
+    },
+    "structural": {
+      "recommended_profile": "QUALITY_FIRST",
+      "risk": "HIGH",
+      "validation": "consumers_architecture_tests"
+    },
+    "certification": {
+      "recommended_profile": "QUALITY_FIRST",
+      "risk": "CRITICAL",
+      "validation": "exact_sha_evidence"
+    }
+  },
+  "selection_authority": "holding/model_selection.py",
+  "tool_authority": "config/tool_registry.json",
+  "certification_authority": "docs/HOLDING_CERTIFICATION.md"
+}
