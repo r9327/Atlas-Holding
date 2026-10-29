@@ -196,6 +196,11 @@ class ExistingCodeAdapterTests(unittest.TestCase):
             {"can_skip_implementation": True},
             {"matching_local_paths": ["app/unknown.py"]},
             {"observed_paths": ["../private.py"]},
+            # The privileged changed-path parser rejects token-like names;
+            # the isolated adapter must enforce the same policy.
+            {"status": "NO_EXACT_PATH_MATCH",
+             "observed_paths": ["config/access_token.json"],
+             "matching_local_paths": []},
         ):
             forged = json.loads(json.dumps(payload))
             forged["github_pr_path_overlap"].update(invalid)
