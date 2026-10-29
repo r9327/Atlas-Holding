@@ -222,8 +222,9 @@ def _review_diagnostics(report: dict, *, stage: str) -> tuple[str, ...]:
     """Extract only bounded non-authorizing reasons from a verified envelope."""
     if not isinstance(report, dict) or stage not in {"check", "validate"}:
         raise RuntimeError("Unrecognized Doctor diagnostic envelope")
-    if report.get("action") != stage or report.get("status") != "REVIEW":
-        raise RuntimeError("Doctor review diagnostic status changed")
+    if (report.get("action") != stage
+            or report.get("status") not in {"REVIEW", "FAIL", "BLOCKED"}):
+        raise RuntimeError("Doctor refusal diagnostic status changed")
     execution = report.get("execution")
     if not isinstance(execution, dict):
         raise RuntimeError("Doctor review lacks execution evidence")
@@ -254,7 +255,8 @@ def _review_diagnostics(report: dict, *, stage: str) -> tuple[str, ...]:
 
 def _inspect_real_doctor_review(runner: AtlasDoctorRunner, *,
                                 stage: str, candidate: str, base: str,
-                                expected_digest: str) -> tuple[str, ...]:
+                                expected_digest: str,
+                                expected_status: str = "REVIEW") -> tuple[str, ...]:
     """Call actual Doctor twice, authenticate both before showing diagnostics.
 
     No raw JSON or model output is surfaced; any divergence fails closed.
@@ -282,8 +284,9 @@ def _inspect_real_doctor_review(runner: AtlasDoctorRunner, *,
         expected_dirty=False, expected_dirty_digest="",
         structural=False,
     )
-    if observed.status != "REVIEW":
-        raise RuntimeError("Doctor review verdict changed during diagnostic")
+    if (expected_status not in {"REVIEW", "FAIL", "BLOCKED"}
+            or observed.status != expected_status):
+        raise RuntimeError("Doctor refusal verdict changed during diagnostic")
     # Timestamps may change the raw digest between identical rechecks.
     # Never substitute the second diagnostic for the first signed-by-nobody
     # local advisory; it is explanatory only.
@@ -322,16 +325,17 @@ def run(source: Path, sha: str) -> None:
         observation = _verify_advisory(advice, stage=stage, sha=candidate)
         if (stage == "plan" and advice.status != "PLANNED_LOCAL"):
             raise RuntimeError("Doctor plan requested REVIEW: no further QA stages authorized")
-        if advice.status in ("BLOCKED", "FAIL"):
-            raise RuntimeError(f"Doctor {stage} blocked or failed: no QA continuation")
         collected.append(observation)
         print("NONRELEASE_REAL_ATLAS_CANDIDATE_STAGE="
               + stage + ":" + advice.status, flush=True)
-        if stage in ("check", "validate") and advice.status == "REVIEW":
+        if stage in ("check", "validate") and advice.status in {"REVIEW", "FAIL", "BLOCKED"}:
             for item in _inspect_real_doctor_review(
                     runner, stage=stage, candidate=candidate, base=sha,
-                    expected_digest=advice.report_sha256):
-                print("NONRELEASE_DOCTOR_REVIEW_DETAIL=" + item, flush=True)
+                    expected_digest=advice.report_sha256,
+                    expected_status=advice.status):
+                print("NONRELEASE_DOCTOR_REFUSAL_DETAIL=" + item, flush=True)
+        if advice.status in ("BLOCKED", "FAIL"):
+            raise RuntimeError(f"Doctor {stage} blocked or failed: no QA continuation")
         if _git(destination, "rev-parse", "HEAD") != candidate:
             raise RuntimeError("Doctor modified local candidate HEAD")
         if _git(destination, "status", "--porcelain", "--untracked-files=all"):
