@@ -75,13 +75,20 @@ else:
     def test_existing_code_hints_reach_agent_before_patch(self):
         (self.canonical / "feature.py").write_text(
             "class ExistingFeature:\n    pass\n", encoding="utf-8")
-        git(self.canonical, "add", "feature.py")
+        (self.canonical / "consumer.py").write_text(
+            "from feature import ExistingFeature\n", encoding="utf-8")
+        git(self.canonical, "add", "feature.py", "consumer.py")
         git(self.canonical, "commit", "-m", "Existing implementation")
         self.agent_path.write_text('''import json,sys
 req=json.load(sys.stdin)
 if req['action']=='health':
  print(json.dumps({'protocol':1,'action':'health','status':'ok','agent_ready':True}))
 else:
+ imports=req['payload']['existing_consumers']
+ assert imports['consumers_exhaustive'] is False
+ assert imports['can_skip_implementation'] is False
+ assert any(x['module_path']=='feature.py' and x['importer_path']=='consumer.py'
+            for x in imports['imports'])
  evidence=req['payload']['existing_code']
  assert evidence['repository_sha']==req['payload']['base_sha']
  assert evidence['github_pr_status']=='NOT_CHECKED'
