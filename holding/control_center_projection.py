@@ -1,11 +1,13 @@
 """Fail-closed projection of durable engine state into the UI wire schema."""
 from __future__ import annotations
 
+from dataclasses import asdict
 import json
 import re
 from typing import Any
 
 from .control import ControlPlane
+from .mission_preflight import inspect_mission_connection
 from .control_center_state import MAX_LOG_PAGE, MAX_SNAPSHOT_BYTES
 
 
@@ -302,6 +304,13 @@ def project_dashboard_snapshot(
         if len(mission_rows) > 1000:
             raise DashboardProjectionError("Dashboard mission bound exceeded")
         tasks = [_task(control, row, now_epoch) for row in mission_rows]
+        ready_ids = [row['id'] for row in mission_rows if row['state'] == 'READY']
+        # The current authenticated SQLite read transaction keeps the status,
+        # permissions and dependencies consistent with the task list. Bound
+        # inspection cost independently of roadmap size; report omissions.
+        preflight_total_ready = len(ready_ids)
+        preflights = [asdict(inspect_mission_connection(
+            database, mid, now_epoch=now_epoch)) for mid in ready_ids[:20]]
         model_history = _model_history(
             control, {item["id"] for item in tasks}, now_epoch)
         events = list(control.store.db.execute(
@@ -323,7 +332,7 @@ def project_dashboard_snapshot(
     else:
         database.execute("COMMIT")
     payload = {
-        "schema_version": 5,
+        "schema_version": 6,
         "engine_id": engine_id,
         "paused": paused,
         "stop_requested": stop_requested,
@@ -332,6 +341,8 @@ def project_dashboard_snapshot(
         "network": network,
         "pending_external": pending_external,
         "tasks": tasks,
+        "mission_preflights": preflights,
+        "preflight_total_ready": preflight_total_ready,
         "agents": [],
         "plugins": [],
         "services": services,
