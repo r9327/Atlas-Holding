@@ -222,3 +222,13 @@ Cette correction ne vaut pas à elle seule PASS : reconstruire puis revalider in
 La validation native du candidat prend désormais en charge le **fichier `AtlasHoldingControlCenter.exe` effectivement installé**, et non seulement les octets gelés dans le répertoire de build. Sur le runner Windows distinct, sans Python transmis par le setup, elle : (1) installe les vrais fichiers de la candidate depuis l'artefact GitHub Actions, (2) recalcule l'identité du viewer depuis les empreintes reçues, (3) vérifie sa provenance explicite sur le SHA exact du candidat et les octets SHA-256 installés, (4) exécute `--project-chat-self-test` en environnement Qt hors écran sans modèle Ollama, sans capacité IPC, puis (5) inscrit `installed_frozen_rd_chat: PASS` **uniquement** si le processus se termine avec succès. Ce contrôle est ajouté par `338b88c3060c`.
 
 Il reste une **preuve nonrelease** de présence et d'initialisation Qt du chat installé. Il ne certifie pas un nouveau projet R&D, le choix automatique d'un modèle, un redémarrage Windows réel, le contrôle RAM complet ou un installateur signé. Les résultats d'une ancienne CI ne sont pas transférables au nouveau commit.
+
+
+## Audit de provenance du moteur installé — 29 octobre 2026
+
+Le lot de reprise Git/SQLite a révélé une autre lacune de packaging : le moteur `AtlasHoldingEngine.exe` était jusqu'ici construit sur `main@fcbabe0da38c22860e724f719d88ddfb1ea3742e`, tandis que la correction `holding/recovery.py` n'existait **que sur le candidat PR #9**. Une suite Python verte ne garantit pas que le correctif soit effectivement distribué.
+
+- `fee4401f98e0` : moteur **et** Control Center gelés depuis le candidat exact-SHA. L'adaptateur `AtlasHoldingAgent.exe` et l'acceptance runner restent construits depuis `main` épinglé. Les hashes des binaires finaux sont toujours mesurés sur les octets réels.
+- `a84097f3d53c` : le reçu doit porter `release_candidate_viewer == release_candidate_engine == head_sha` et `certified_main_agent == fcbabe0da38c22860e724f719d88ddfb1ea3742e`. Le runner Windows rejette toute autre provenance lors de la réinstallation.
+
+**Portée :** les tests Windows natifs doivent de nouveau être exécutés avant de déclarer le nouveau moteur réellement testé. Aucune ancienne preuve d'assemblage n'est transférée au nouveau SHA. La sécurité des permissions et le gate final de release restent inchangés ; le reboot machine, le modèle réel, l'autonomie complète et la RAM ne sont pas certifiés par ces deux commits.
