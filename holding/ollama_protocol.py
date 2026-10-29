@@ -315,6 +315,7 @@ def _plan(config: dict, payload: dict, root: Path) -> dict:
                     or not any(hint['number'] == number and
                                hint['head_sha'] == sha
                                for hint in prs['hints'])
+                    or not isinstance(overlap['status'], str)
                     or overlap['status'] not in {
                         'EXACT_PATH_OVERLAP', 'NO_MATCH_IN_PARTIAL_PR_SCAN',
                         'NO_EXACT_PATH_MATCH'}
@@ -330,7 +331,13 @@ def _plan(config: dict, payload: dict, root: Path) -> dict:
                         and re.fullmatch(
                             r'[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*', path)
                         and all(part not in ('', '.', '..') for part in
-                                path.split('/')))
+                                path.split('/'))
+                        and not any(token in part.lower()
+                                    for part in path.split('/')
+                                    for token in (
+                                        'secret', 'password', 'credential',
+                                        'private', 'apikey', 'api_key',
+                                        '.env', '.pem', '.p12', 'id_rsa')))
             if (not isinstance(observed, list) or len(observed) > 20
                     or any(not safe_path(p) for p in observed)
                     or len(set(observed)) != len(observed)
