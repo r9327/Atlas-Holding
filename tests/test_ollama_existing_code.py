@@ -88,8 +88,8 @@ class ExistingCodeAdapterTests(unittest.TestCase):
         def http(*args, **kwargs):
             observed.append(kwargs["payload"])
             return {"message": {"content": json.dumps(PATCH)}}
-        with tempfile.TemporaryDirectory() as folder, \\
-             patch("holding.ollama_protocol._http", side_effect=http), \\
+        with tempfile.TemporaryDirectory() as folder, \
+             patch("holding.ollama_protocol._http", side_effect=http), \
              patch("holding.ollama_protocol._snapshot", return_value=[]):
             self.assertEqual(_plan(CONFIG, payload, Path(folder)), PATCH)
         instructions = observed[0]["messages"][0]["content"]
@@ -116,10 +116,10 @@ class ExistingCodeAdapterTests(unittest.TestCase):
             {**payload, "github_pr_observation": "MAY_SKIP_TASK"},
         ]
         for variant in variants:
-            with self.subTest(variant=variant["github_pr_observation"]), \\
-                 tempfile.TemporaryDirectory() as folder, \\
+            with self.subTest(variant=variant["github_pr_observation"]), \
+                 tempfile.TemporaryDirectory() as folder, \
                  patch("holding.ollama_protocol._http",
-                       side_effect=AssertionError("Inference ran")) as run, \\
+                       side_effect=AssertionError("Inference ran")) as run, \
                  patch("holding.ollama_protocol._snapshot", return_value=[]):
                 with self.assertRaises(AdapterError):
                     _plan(CONFIG, variant, Path(folder))
