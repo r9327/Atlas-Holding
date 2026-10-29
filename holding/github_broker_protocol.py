@@ -14,6 +14,8 @@ from typing import Any
 from .github_full_evidence import FullEvidence, GitHubEvidenceError
 from .github_mutation_gate import GitHubMutationIntent
 from .github_pr_inventory import OpenPrInventory, PrInventoryError, validate_open_pr_inventory
+from .github_pr_changed_paths import (PrChangedPaths, PrChangedPathsError,
+                                     validate_pr_changed_paths)
 from .git_push import GitPushState
 from .sync_coordinator import LiveGitHubState, MutationFailure
 
@@ -23,7 +25,7 @@ MAX_MESSAGE_BYTES = 64 * 1024
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _REQUEST_ACTIONS = frozenset({
     "observe_account", "observe_pr", "observe_full", "observe_git",
-    "observe_open_prs",
+    "observe_open_prs", "observe_pr_paths",
     "mutate", "push_git",
 })
 _ACCOUNT = re.compile(
@@ -272,6 +274,25 @@ class GitHubBrokerProcessControl:
         if not isinstance(response["result"], dict):
             raise GitHubEvidenceError("Invalid privileged broker result")
         return response["result"]
+
+    def observe_pr_paths(self, repository: str, pr_number: int,
+                         head_sha: str) -> PrChangedPaths:
+        """Expose only revalidated changed paths for one fixed PR SHA."""
+        if (not isinstance(head_sha, str) or not re.fullmatch(
+                r"[0-9a-f]{40}", head_sha)
+                or type(pr_number) is not int or pr_number < 1):
+            raise GitHubEvidenceError("Invalid PR path observer identity")
+        result = self._invoke("observe_pr_paths", {
+            "repository": repository, "pr_number": pr_number,
+            "head_sha": head_sha,
+        }, mutation=False)
+        try:
+            report = validate_pr_changed_paths(repository, result)
+        except PrChangedPathsError as exc:
+            raise GitHubEvidenceError("Invalid privileged PR path evidence") from exc
+        if report.pr_number != pr_number or report.head_sha != head_sha:
+            raise GitHubEvidenceError("Privileged PR path evidence head mismatch")
+        return report
 
     def observe_open_prs(self, repository: str) -> OpenPrInventory:
         """Read-only, bounded PR hints; deliberately no authority to certify."""
