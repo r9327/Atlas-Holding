@@ -492,7 +492,7 @@ def consume_dashboard_snapshot(
     if (type(version) is not int or version not in (1, 2, 3, 4, 5, 6)
             or data["engine_id"] != trusted_engine_id):
         raise ControlCenterStateError("Snapshot identity mismatch")
-    if version in (2, 3, 4, 5) and (type(data["paused"]) is not bool
+    if version in (2, 3, 4, 5, 6) and (type(data["paused"]) is not bool
                           or type(data["stop_requested"]) is not bool):
         raise ControlCenterStateError("Invalid durable operator control state")
     sequence = _integer(data["sequence"], "snapshot sequence", maximum=2**63 - 1)
@@ -530,7 +530,7 @@ def consume_dashboard_snapshot(
         raise ControlCenterStateError("Duplicate plugin name")
 
     services: tuple[ServiceView, ...] = ()
-    if version in (3, 4, 5):
+    if version in (3, 4, 5, 6):
         raw_services = data["services"]
         if not isinstance(raw_services, list) or len(raw_services) > 3:
             raise ControlCenterStateError("Invalid bounded service list")
@@ -539,7 +539,7 @@ def consume_dashboard_snapshot(
             raise ControlCenterStateError("Duplicate service identities")
 
     model_history: tuple[ModelUsageView, ...] = ()
-    if version in (4, 5):
+    if version in (4, 5, 6):
         raw_history = data["model_history"]
         if not isinstance(raw_history, list) or len(raw_history) > 20:
             raise ControlCenterStateError("Invalid bounded model usage history")
@@ -588,7 +588,7 @@ def consume_dashboard_snapshot(
         data["network"],
         _integer(data["pending_external"], "pending external count", maximum=100_000),
         tasks, agents, plugins, logs, cursor,
-        data["paused"] if version in (2, 3, 4, 5) else None,
-        data["stop_requested"] if version in (2, 3, 4, 5) else None,
+        data["paused"] if version in (2, 3, 4, 5, 6) else None,
+        data["stop_requested"] if version in (2, 3, 4, 5, 6) else None,
         services, model_history, hub, mission_preflights, preflight_total_ready,
     )
