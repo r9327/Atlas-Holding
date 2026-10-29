@@ -100,7 +100,7 @@ def handle_request(
                 or any(character not in "0123456789abcdef" for character in request_id)
                 or action not in {
                     "observe_account", "observe_pr", "observe_full",
-                    "observe_git", "mutate", "push_git"}
+                    "observe_git", "observe_open_prs", "mutate", "push_git"}
                 or not isinstance(payload, dict)):
             raise ValueError("invalid request")
         expected_id = hashlib.sha256(_canonical({
@@ -126,6 +126,14 @@ def handle_request(
                 if action == "observe_pr"
                 else transport.observe_full(payload["repository"], payload["pr_number"])
             )
+            response = {
+                "schema_version": SCHEMA_VERSION, "request_id": request_id,
+                "status": "OK", "result": asdict(result),
+            }
+        elif action == "observe_open_prs":
+            if set(payload) != {"repository"} or payload["repository"] != transport.repository:
+                raise ValueError("Cross-repository PR inventory request")
+            result = transport.observe_open_prs(payload["repository"])
             response = {
                 "schema_version": SCHEMA_VERSION, "request_id": request_id,
                 "status": "OK", "result": asdict(result),

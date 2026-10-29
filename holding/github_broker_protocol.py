@@ -13,6 +13,7 @@ from typing import Any
 
 from .github_full_evidence import FullEvidence, GitHubEvidenceError
 from .github_mutation_gate import GitHubMutationIntent
+from .github_pr_inventory import OpenPrInventory, PrInventoryError, validate_open_pr_inventory
 from .git_push import GitPushState
 from .sync_coordinator import LiveGitHubState, MutationFailure
 
@@ -22,6 +23,7 @@ MAX_MESSAGE_BYTES = 64 * 1024
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _REQUEST_ACTIONS = frozenset({
     "observe_account", "observe_pr", "observe_full", "observe_git",
+    "observe_open_prs",
     "mutate", "push_git",
 })
 _ACCOUNT = re.compile(
@@ -270,6 +272,15 @@ class GitHubBrokerProcessControl:
         if not isinstance(response["result"], dict):
             raise GitHubEvidenceError("Invalid privileged broker result")
         return response["result"]
+
+    def observe_open_prs(self, repository: str) -> OpenPrInventory:
+        """Read-only, bounded PR hints; deliberately no authority to certify."""
+        raw = self._invoke("observe_open_prs", {"repository": repository},
+                           mutation=False)
+        try:
+            return validate_open_pr_inventory(repository, raw)
+        except PrInventoryError as exc:
+            raise GitHubEvidenceError("Invalid privileged PR inventory") from exc
 
     def observe_pr(self, repository: str, pr_number: int) -> LiveGitHubState:
         result = self._invoke(

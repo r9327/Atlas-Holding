@@ -17,6 +17,7 @@ from .github_full_evidence import (
     observe_full_pr,
 )
 from .github_mutation_gate import GitHubMutationIntent
+from .github_pr_inventory import OpenPrInventory, PrInventoryError, parse_open_prs
 from .sync_coordinator import LiveGitHubState, MutationFailure
 
 
@@ -102,7 +103,8 @@ class GitHubPrivilegedTransport:
     def _request(
         self, method: str, url: str, *, payload: dict[str, Any] | None = None,
         expected: frozenset[int] = frozenset({200}), mutation: bool = False,
-    ) -> dict[str, Any] | None:
+        response_array: bool = False,
+    ) -> dict[str, Any] | list[Any] | None:
         body = None
         headers = self._headers
         if payload is not None:
@@ -160,11 +162,11 @@ class GitHubPrivilegedTransport:
                 raise MutationFailure(
                     "REJECTED", retryable=False, outcome_known=False) from None
             raise GitHubEvidenceError("GitHub response is not valid JSON") from None
-        if not isinstance(value, dict):
+        if not isinstance(value, list if response_array else dict):
             if mutation:
                 raise MutationFailure(
                     "REJECTED", retryable=False, outcome_known=False)
-            raise GitHubEvidenceError("GitHub response must be a JSON object")
+            raise GitHubEvidenceError("Unexpected GitHub response type")
         return value
 
     def _pull(self, pr_number: int) -> dict[str, Any]:
@@ -220,6 +222,18 @@ class GitHubPrivilegedTransport:
             pull["draft"], True, merged=pull["merged"],
             ci_run_id=run_id, ci_head_sha=run_sha,
         )
+
+    def observe_open_prs(self, repository: str) -> OpenPrInventory:
+        """Read a bounded API page with the existing credential-isolated broker."""
+        if repository != self.repository:
+            raise GitHubEvidenceError("GitHub PR inventory repository mismatch")
+        rows = self._request("GET", self._url(
+            "pulls?state=open&per_page=100&sort=updated&direction=desc"),
+            response_array=True)
+        try:
+            return parse_open_prs(repository, rows)
+        except PrInventoryError as exc:
+            raise GitHubEvidenceError("Malformed GitHub PR inventory") from exc
 
     def observe_pr(self, repository: str, pr_number: int) -> LiveGitHubState:
         if repository != self.repository:
