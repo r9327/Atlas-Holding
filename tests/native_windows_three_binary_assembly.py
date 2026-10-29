@@ -103,11 +103,11 @@ def assemble(
         temp = Path(workspace).resolve()
         viewer_dir = temp / "frozen"
         setup_dir = temp / "installer"
-        # The certified main supplies the durable engine, agent and local
-        # acceptance runner. The CURRENT release candidate supplies the GUI:
-        # otherwise new UI features can pass source tests yet be absent from
-        # the exact bytes shipped in Setup.exe.
-        for kind in ("engine", "agent", "acceptance"):
+        # Release-specific fixes to the GUI AND durable engine must be in
+        # the shipped bytes. Freeze BOTH from the exact current PR candidate;
+        # the independent pinned-main tree still supplies the agent and
+        # acceptance harness, and remains an integration cross-check.
+        for kind in ("agent", "acceptance"):
             _run([
                 sys.executable, "-B", "-m",
                 "holding.windows_control_center_build",
@@ -116,7 +116,7 @@ def assemble(
         _run([
             sys.executable, "-B", "-m",
             "holding.windows_control_center_build",
-            "--kind", "viewer", "--output-dir", str(viewer_dir),
+            "--kind", "both", "--output-dir", str(viewer_dir),
         ], cwd=setup_root)
         engine = viewer_dir / "AtlasHoldingEngine.exe"
         viewer = viewer_dir / "AtlasHoldingControlCenter.exe"
@@ -200,7 +200,8 @@ def assemble(
                     "release_candidate": candidate_sha,
                     "release_candidate_setup": setup_sha,
                     "release_candidate_viewer": setup_sha,
-                    "certified_main_runtime": runtime_sha,
+                    "release_candidate_engine": setup_sha,
+                    "certified_main_agent": runtime_sha,
                 },
                 "manifest_kind": (
                     "OFFICIAL_PINNED_PORTABLE_AND_WINGET_CANDIDATE"
