@@ -91,43 +91,89 @@ def inspect_existing_code(
     if not callable(git_read):
         raise ExistingCodeError("Trusted Git reader required")
     tokens = _terms(acceptance)
+    # Git repositories can contain 60k+ image or generated asset objects.
+    # Listing the whole repository is neither a bounded nor an efficient
+    # preflight. First inspect the root tree, then only source-like top-level
+    # directories, skipping known bulk data roots. This intentionally cannot
+    # prove that a feature is absent.
+    skipped_roots = frozenset({
+        "data", "assets", "images", "img", "media", "fonts", "textures",
+        "local_dofus_data", "node_modules", "dist", "build", "venv",
+        "tests", "test", "fixtures", "__pycache__", ".github",
+    })
+
+    def parse_tree(raw: str, *, prefix: str = "") -> list[tuple[str, str, str]]:
+        if (not isinstance(raw, str) or not raw
+                or len(raw.encode("utf-8", "surrogateescape")) > 4 * 1024 * 1024):
+            raise ExistingCodeError("Git inventory absent or exceeds bound")
+        records = raw.split("\0")
+        if records[-1] == "":
+            records.pop()
+        if not records or len(records) > 20_000:
+            raise ExistingCodeError("Unbounded Git inventory")
+        result = []
+        seen = set()
+        for record in records:
+            try:
+                header, name = record.split("\t", 1)
+                mode, kind, obj = header.split(" ")
+            except ValueError as exc:
+                raise ExistingCodeError("Malformed Git tree entry") from exc
+            path = prefix + name
+            if (not re.fullmatch(r"[0-9a-f]{40}", obj)
+                    or name in seen or not name or "\n" in name or "\r" in name
+                    or "\0" in name):
+                raise ExistingCodeError("Unsafe or duplicate Git tree entry")
+            seen.add(name)
+            result.append((path, mode, kind))
+        return result
+
     try:
-        raw = git_read("ls-tree", "-r", "-z", repository_sha)
+        root = parse_tree(git_read("ls-tree", "-z", repository_sha))
     except (OSError, RuntimeError) as exc:
         raise ExistingCodeError("Git inventory unavailable") from exc
-    if not isinstance(raw, str) or not raw or len(raw.encode("utf-8", "surrogateescape")) > 4 * 1024 * 1024:
-        raise ExistingCodeError("Git path inventory exceeds bound")
-    records = raw.split("\0")
-    if records[-1] == "":
-        records.pop()
-    if len(records) > 20_000:
-        raise ExistingCodeError("Unbounded Git inventory")
-    names: list[str] = []
-    seen = set()
-    for record in records:
-        try:
-            header, path = record.split("\t", 1)
-            mode, kind, obj = header.split(" ")
-        except ValueError as exc:
-            raise ExistingCodeError("Malformed Git tree entry") from exc
-        if (not re.fullmatch(r"[0-9a-f]{40}", obj)
-                or path in seen or not path
-                or "\n" in path or "\r" in path):
-            raise ExistingCodeError("Unsafe or duplicate Git tree entry")
-        seen.add(path)
-        # Symlinks and submodule commits are never source candidates.
-        if mode in {"100644", "100755"} and kind == "blob":
-            names.append(path)
-    matches = []
-    for path in names:
+
+    matches: list[tuple[int, str]] = []
+    checked = 0
+    scopes = sorted(
+        path for path, mode, kind in root
+        if mode == "040000" and kind == "tree"
+        and _SAFE.fullmatch(path) and not path.startswith(".")
+        and path.casefold() not in skipped_roots
+        and not any(p in path.casefold() for p in _PRIVATE)
+    )
+    # An extraordinary number of top-level directories cannot silently
+    # truncate the search; it must be reported as an unsupported inventory.
+    if len(scopes) > 64:
+        raise ExistingCodeError("Too many Git source roots for bounded scan")
+
+    def collect(path: str, mode: str, kind: str) -> None:
+        nonlocal checked
+        checked += 1
+        if mode not in {"100644", "100755"} or kind != "blob":
+            return  # No symlink or gitlink data may become a source.
         if not _candidate_path(path):
-            continue
+            return
         normalized = path.casefold()
         stem = path.rsplit("/", 1)[-1].rsplit(".", 1)[0].casefold()
         score = sum(4 if token in stem else 2 if token in normalized else 0
                     for token in tokens)
         if score > 0:
             matches.append((-score, path))
+
+    for path, mode, kind in root:
+        collect(path, mode, kind)
+    for directory in scopes:
+        try:
+            entries = parse_tree(git_read(
+                "ls-tree", "-r", "-z", repository_sha, "--", directory,
+            ))
+        except (OSError, RuntimeError) as exc:
+            raise ExistingCodeError("Cannot inventory Git source root") from exc
+        for path, mode, kind in entries:
+            collect(path, mode, kind)
+        if checked > 20_000:
+            raise ExistingCodeError("Git source scan exceeds bounded budget")
     # A bounded, deterministic shortlist, not an exhaustive semantic search.
     matches.sort()
     results: list[ExistingCandidate] = []
@@ -158,5 +204,5 @@ def inspect_existing_code(
     return ExistingCodeReport(
         repository_sha,
         "CANDIDATES_FOUND" if results else "NO_PATH_MATCH_IN_BOUNDED_SCAN",
-        tuple(results), len(records), inspected_py,
+        tuple(results), checked, inspected_py,
     )
