@@ -7,7 +7,6 @@ import re
 from typing import Any
 
 from .control import ControlPlane
-from .mission_preflight import inspect_mission_connection
 from .control_center_state import MAX_LOG_PAGE, MAX_SNAPSHOT_BYTES
 
 
@@ -309,8 +308,7 @@ def project_dashboard_snapshot(
         # permissions and dependencies consistent with the task list. Bound
         # inspection cost independently of roadmap size; report omissions.
         preflight_total_ready = len(ready_ids)
-        preflights = [asdict(inspect_mission_connection(
-            database, mid, now_epoch=now_epoch)) for mid in ready_ids[:20]]
+        preflights = [asdict(control.mission_preflight(mid, now_epoch=now_epoch)) for mid in ready_ids[:20]]
         model_history = _model_history(
             control, {item["id"] for item in tasks}, now_epoch)
         events = list(control.store.db.execute(
