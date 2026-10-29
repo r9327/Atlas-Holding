@@ -34,3 +34,16 @@ de fichiers, et rejet d'une fausse preuve d'exhaustivité dans Ollama.
 La phase suivante devra réutiliser Graphify et les analyses multi-langages
 disponibles pour approfondir les dépendances avant d'en tirer un verdict
 automatique. Ce lot ne déclare pas F10 intégralement terminé.
+
+## Correctifs de portée de l'échantillonnage
+
+- Les imports relatifs exécutés dans `app/__init__.py` sont résolus à partir
+  du paquet `app` (et non du répertoire parent).
+- Lorsqu'il existe plus de 24 sources possibles, un unique `git grep -l -F`
+  au **même SHA immuable** préclasse les fichiers susceptibles d'importer
+  les candidats. Les résultats bruts de grep ne suffisent jamais : seuls les
+  vrais imports AST sont retenus.
+- Une panne de cette préselection revient au scan borné précédent ; elle ne
+  constitue **pas une preuve de non-utilisation**.
+- La limite de 24 fichiers AST et de 12 importeurs par module reste inchangée.
+  Un consommateur absent du rapport peut encore exister hors de l'échantillon.

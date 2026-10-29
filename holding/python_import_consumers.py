@@ -35,7 +35,10 @@ def _module(path: str) -> str:
 
 
 def _imports(tree: ast.AST, importer: str, target: str) -> bool:
-    package = _module(importer).split(".")[:-1]
+    # A package __init__.py is itself the package: "from . import child"
+    # resolves against that package, not against its parent.
+    parts = _module(importer).split(".")
+    package = parts if importer.endswith("/__init__.py") else parts[:-1]
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             if any(alias.name == target for alias in node.names):
@@ -79,7 +82,38 @@ def inspect_python_import_consumers(
         raise ImportConsumerError("Candidate not contained in verified source tree")
     sources = sorted(set(source_paths) - set(targets))
     target_dirs = {p.rpartition("/")[0] for p in targets}
+    # Candidate-sensitive preselection avoids spending the entire 24-file
+    # AST budget on alphabetically early, unrelated same-folder sources.
+    # This is one fixed read-only Git grep at the *same* exact commit.
+    # It is ONLY a scheduling hint: every match is AST-checked below.
+    highlighted: set[str] = set()
+    if len(sources) > _MAX_FILES:
+        leaves = sorted({
+            p.rsplit("/", 1)[-1][:-3] for p in targets
+            if not p.endswith("/__init__.py")
+        })
+        if leaves:
+            args = ["grep", "-l", "-F"]
+            for leaf in leaves:
+                args.extend(("-e", leaf))
+            try:
+                raw = git_read(*args, repository_sha, "--", "*.py")
+            except (OSError, RuntimeError):
+                # No-match and unavailable Git grep cannot safely be
+                # distinguished by the existing fixed Git runner. Fall back
+                # to the old bounded source ordering, not a negative verdict.
+                raw = ""
+            if (isinstance(raw, str)
+                    and len(raw.encode("utf-8", "surrogateescape")) <= 65536):
+                prefix = repository_sha + ":"
+                valid_sources = set(sources)
+                highlighted = {
+                    line[len(prefix):] for line in raw.splitlines()
+                    if line.startswith(prefix)
+                    and line[len(prefix):] in valid_sources
+                }
     sources.sort(key=lambda p: (
+        0 if p in highlighted else 1,
         0 if p.rpartition("/")[0] in target_dirs else 1,
         p,
     ))
