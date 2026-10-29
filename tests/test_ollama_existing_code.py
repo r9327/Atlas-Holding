@@ -125,6 +125,60 @@ class ExistingCodeAdapterTests(unittest.TestCase):
                     _plan(CONFIG, variant, Path(folder))
                 run.assert_not_called()
 
+    def test_static_import_hints_are_advisory_and_reach_ollama(self):
+        payload = self.payload()
+        payload["existing_consumers"] = {
+            "repository_sha": SHA, "status": "PARTIAL_STATIC_IMPORT_HINTS",
+            "candidates_checked": 1, "python_files_read": 2,
+            "imports": [{"module_path": "app/feature.py",
+                         "importer_path": "app/consumer.py"}],
+            "functionality_verified": False,
+            "consumers_exhaustive": False,
+            "can_skip_implementation": False,
+        }
+        observed = []
+        def http(*args, **kwargs):
+            observed.append(kwargs["payload"])
+            return {"message": {"content": json.dumps(PATCH)}}
+        with tempfile.TemporaryDirectory() as folder, \
+             patch("holding.ollama_protocol._http", side_effect=http), \
+             patch("holding.ollama_protocol._snapshot", return_value=[]):
+            self.assertEqual(_plan(CONFIG, payload, Path(folder)), PATCH)
+        data = json.loads(observed[0]["messages"][1]["content"])
+        self.assertEqual(data["existing_consumers"], payload["existing_consumers"])
+        self.assertIn("partial", observed[0]["messages"][0]["content"])
+
+    def test_static_import_hints_cannot_forge_execution_or_consumer_proof(self):
+        valid = {
+            "repository_sha": SHA, "status": "PARTIAL_STATIC_IMPORT_HINTS",
+            "candidates_checked": 1, "python_files_read": 1,
+            "imports": [{"module_path": "app/feature.py",
+                         "importer_path": "app/consumer.py"}],
+            "functionality_verified": False, "consumers_exhaustive": False,
+            "can_skip_implementation": False,
+        }
+        variants = [
+            {**valid, "can_skip_implementation": True},
+            {**valid, "consumers_exhaustive": True},
+            {**valid, "repository_sha": "b" * 40},
+            {**valid, "status": "COMPLETE"},
+            {**valid, "imports": [{"module_path": "app/feature.py",
+                                  "importer_path": "../secret.py"}]},
+            {**valid, "imports": [{"module_path": [],
+                                  "importer_path": "app/consumer.py"}]},
+        ]
+        for forged in variants:
+            payload = self.payload()
+            payload["existing_consumers"] = forged
+            with self.subTest(forged=forged), \
+                 tempfile.TemporaryDirectory() as folder, \
+                 patch("holding.ollama_protocol._http",
+                       side_effect=AssertionError("Inference ran")) as run, \
+                 patch("holding.ollama_protocol._snapshot", return_value=[]):
+                with self.assertRaises(AdapterError):
+                    _plan(CONFIG, payload, Path(folder))
+                run.assert_not_called()
+
     def test_old_agent_request_remains_compatible(self):
         payload = self.payload()
         del payload["existing_code"]
