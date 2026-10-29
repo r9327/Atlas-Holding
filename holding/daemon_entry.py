@@ -369,11 +369,16 @@ class Installation:
             timeout_seconds=self.timeout_seconds,
             pinned_executable_sha256=self.executable_sha256,
             pinned_arguments=tuple((arg, self.argument_sha256[arg]) for arg in self.arguments))
+        # One existing credential-isolated broker serves both read-only PR
+        # discovery and privileged push observation; never create a second
+        # network client or move the token into the code worker.
+        control = (GitHubBrokerProcessControl(self.github.broker)
+                   if self.github is not None else None)
         service = HoldingService.from_local_agent(
             ServiceSettings(self.database), program=program, git=git,
-            health_directory=self.health_directory, online=lambda: False)
-        if self.github is not None:
-            control = GitHubBrokerProcessControl(self.github.broker)
+            health_directory=self.health_directory, online=lambda: False,
+            github_pr_observer=control)
+        if control is not None:
             service.enable_git_push(
                 expected_account_id=self.github.account_id,
                 expected_policy_sha=self.github.policy_sha,
