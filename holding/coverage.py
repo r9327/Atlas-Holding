@@ -7,6 +7,7 @@ materializing the entire DAG, and export a fail-closed closure assessment.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 from typing import Iterator
 
@@ -22,6 +23,8 @@ class Requirement:
     candidate_sha: str
     proof_sha: str
     status: str
+    criterion_id: str = ""
+    proof_contract: str = "SIGNED_EXACT_SHA_PASS"
 
 
 @dataclass(frozen=True)
@@ -87,6 +90,17 @@ class RequirementCoverage:
         return criteria
 
     @staticmethod
+    def _criterion_id(mission_id: str, criterion: str, occurrence: int) -> str:
+        """Deterministic identity stable across reorder, never a proof token.
+
+        If acceptance text changes, the ID changes rather than carrying an
+        obsolete verdict into the revised product contract. Identical repeated
+        criteria are disambiguated in their original relative order.
+        """
+        digest = hashlib.sha256(criterion.encode("utf-8")).hexdigest()
+        return f"{mission_id}:{digest}:{occurrence}"
+
+    @staticmethod
     def _status(row) -> str:
         if row["state"] == "DONE":
             if (row["candidate_sha"] and row["candidate_sha"] == row["evidence_sha"]
@@ -137,13 +151,17 @@ class RequirementCoverage:
             mid = row["id"]
             if mid < after_mission_id:
                 continue
+            occurrences: dict[str, int] = {}
             for index, criterion in enumerate(self._criteria(row)):
+                seen = occurrences.get(criterion, 0)
+                occurrences[criterion] = seen + 1
                 if mid == after_mission_id and index <= after_criterion:
                     continue
                 result.append(Requirement(
                     mid, index, criterion, row["state"], row["candidate_sha"],
                     row["evidence_sha"] if self._status(row) == "PROVEN" else "",
-                    self._status(row)))
+                    self._status(row),
+                    self._criterion_id(mid, criterion, seen)))
                 if len(result) == limit:
                     return tuple(result)
         return tuple(result)
