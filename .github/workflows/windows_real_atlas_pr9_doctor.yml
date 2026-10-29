@@ -26,7 +26,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: r9327/Dof-Atlas
-          ref: 85d5bc58faf19f09a2719a4c36d65ed94a194e7b
+          ref: 13cf6c39c79dbc56e858a47408e025531c5679b8
           path: atlas-target
           persist-credentials: false
       # This tests the upstream Draft PR290 candidate, not released/main Atlas.
@@ -34,7 +34,7 @@ jobs:
         shell: pwsh
         run: |
           $atlas = Join-Path $env:GITHUB_WORKSPACE "atlas-target"
-          if ((git -C "$atlas" rev-parse HEAD) -cne "85d5bc58faf19f09a2719a4c36d65ed94a194e7b" -or
+          if ((git -C "$atlas" rev-parse HEAD) -cne "13cf6c39c79dbc56e858a47408e025531c5679b8" -or
               (git rev-parse HEAD) -cne "${{ github.event.pull_request.head.sha }}") {
             throw "Real Atlas Doctor source or Holding PR SHA differs from requested pins"
           }
@@ -60,7 +60,7 @@ jobs:
           $atlas = Join-Path $env:GITHUB_WORKSPACE "atlas-target"
           python -B -X utf8 -m tests.native_real_atlas_candidate_doctor `
             --atlas-root "$atlas" `
-            --expected-atlas-sha "85d5bc58faf19f09a2719a4c36d65ed94a194e7b"
+            --expected-atlas-sha "13cf6c39c79dbc56e858a47408e025531c5679b8"
           if ($LASTEXITCODE -ne 0) { throw "Actual Atlas candidate Doctor refused this disposable exercise" }
       - name: Independent receipt gate and clean source check
         shell: pwsh
@@ -68,13 +68,13 @@ jobs:
           $proof = Join-Path $env:RUNNER_TEMP "atlas-candidate-doctor-$env:GITHUB_RUN_ID.json"
           python -B -X utf8 -m tests.native_real_atlas_candidate_evidence `
             --receipt "$proof" `
-            --expected-source-sha "85d5bc58faf19f09a2719a4c36d65ed94a194e7b"
+            --expected-source-sha "13cf6c39c79dbc56e858a47408e025531c5679b8"
           if ($LASTEXITCODE -ne 0) { throw "Independent candidate Doctor receipt rejected" }
           $atlas = Join-Path $env:GITHUB_WORKSPACE "atlas-target"
           $dirty = git -C "$atlas" status --porcelain --untracked-files=all
           if ($dirty) { throw "Actual source Dof-Atlas checkout was changed" }
           $head = git -C "$atlas" rev-parse HEAD
-          if ($head -cne "85d5bc58faf19f09a2719a4c36d65ed94a194e7b") {
+          if ($head -cne "13cf6c39c79dbc56e858a47408e025531c5679b8") {
             throw "Original public Atlas checkout SHA changed"
           }
           $holdingDirty = git status --porcelain --untracked-files=all -- ':!atlas-target'
