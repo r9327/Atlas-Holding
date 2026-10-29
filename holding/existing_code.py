@@ -141,6 +141,7 @@ def inspect_existing_code(
         raise ExistingCodeError("Git inventory unavailable") from exc
 
     matches: list[tuple[int, str]] = []
+    names: list[str] = []  # verified regular source blobs only
     checked = 0
     scopes = sorted(
         path for path, mode, kind in root
@@ -161,6 +162,7 @@ def inspect_existing_code(
             return  # No symlink or gitlink data may become a source.
         if not _candidate_path(path):
             return
+        names.append(path)
         normalized = path.casefold()
         stem = path.rsplit("/", 1)[-1].rsplit(".", 1)[0].casefold()
         score = sum(4 if token in stem else 2 if token in normalized else 0
