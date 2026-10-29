@@ -51,6 +51,11 @@ class ExistingCodeTests(unittest.TestCase):
         self.assertEqual(result.consumers_status, "NOT_VERIFIED")
         self.assertFalse(result.can_skip_implementation)
 
+    def test_camel_case_symbol_matches_existing_snake_case_file(self):
+        report = self.report("Use FeatureEngine for the new capability")
+        self.assertEqual(report.state, "CANDIDATES_FOUND")
+        self.assertIn("app/feature.py", [x.path for x in report.candidates])
+
     def test_no_match_never_claims_absence(self):
         result = self.report("Need calendar scheduling widget")
         self.assertEqual(result.state, "NO_PATH_MATCH_IN_BOUNDED_SCAN")
