@@ -273,7 +273,6 @@ MCP_HUB_JOURNAL_SCHEMA = (
 )
 
 
-
 PROJECT_CHAT_SCHEMA = (
     """CREATE TABLE IF NOT EXISTS project_chat_sessions (
         session_id TEXT PRIMARY KEY,
@@ -319,7 +318,6 @@ RESEARCH_SIMULATION_SCHEMA = (
     )""",
 )
 
-
 RESEARCH_CIRCUIT_SCHEMA = (
     """CREATE TABLE IF NOT EXISTS research_circuit_runs (
      session_id TEXT NOT NULL REFERENCES project_workplans(session_id),
@@ -333,7 +331,6 @@ RESEARCH_CIRCUIT_SCHEMA = (
      PRIMARY KEY(session_id,task_index)
     )""",
 )
-
 
 RESEARCH_MEASUREMENT_SCHEMA = (
     """CREATE TABLE IF NOT EXISTS research_measurement_comparisons (
@@ -352,8 +349,6 @@ RESEARCH_MEASUREMENT_SCHEMA = (
          REFERENCES research_circuit_runs(session_id,task_index)
     )""",
 )
-
-
 def apply_schema(db: sqlite3.Connection, statements: Iterable[str]) -> None:
     """Apply canonical statements without the implicit commits of executescript."""
     for statement in statements:
