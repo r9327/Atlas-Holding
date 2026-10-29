@@ -320,46 +320,36 @@ def _inspect_real_doctor_review(runner: AtlasDoctorRunner, *,
                                 stage: str, candidate: str, base: str,
                                 expected_digest: str,
                                 expected_status: str = "REVIEW") -> tuple[str, ...]:
-    """Call actual Doctor twice, authenticate both before showing diagnostics.
+    """Explain the first verified refusal; do not execute expensive Doctor twice.
 
-    No raw JSON or model output is surfaced; any divergence fails closed.
+    AtlasDoctorRunner already authenticated the observed exit code, worktree,
+    exact source SHA, action, scope and digest before retaining these bytes.
+    Only bounded, allowlisted diagnostics may leave this function.
     """
-    from holding.atlas_doctor_evidence import consume_doctor_report
-    args = (
-        str(runner.interpreter), "-B", "-m", "tools.atlas_doctor",
-        "--json", "agent", stage, *SCOPE, "--base-ref", base,
-        "--max-tests", str(runner.max_tests),
-        "--timeout-seconds", str(runner.timeout_seconds),
+    if (stage not in {"check", "validate"}
+            or expected_status not in {"REVIEW", "FAIL", "BLOCKED"}
+            or not _SHA.fullmatch(candidate)
+            or not _SHA.fullmatch(base)
+            or not _DIGEST.fullmatch(expected_digest)):
+        raise RuntimeError("Invalid bounded Doctor refusal request")
+    if (_git(runner.root, "rev-parse", "HEAD") != candidate
+            or runner._worktree_identity().dirty):
+        raise RuntimeError("Doctor refusal checkout identity changed")
+    raw = runner.take_verified_diagnostic(
+        action=stage, candidate_sha=candidate,
+        report_sha256=expected_digest,
     )
-    if stage == "check":
-        args += ("--run-tests",)
-    before = runner._worktree_identity()
-    if before.dirty:
-        raise RuntimeError("Refuse Doctor diagnostics on dirty candidate")
-    raw = runner._execute(args, timeout=runner.timeout_seconds + 15)
-    after = runner._worktree_identity()
-    if after != before:
-        raise RuntimeError("Doctor diagnostic changed candidate worktree")
-    observed = consume_doctor_report(
-        raw.stdout, observed_exit_code=raw.returncode,
-        expected_sha=candidate, expected_action=stage,
-        expected_base_ref=base, expected_paths=SCOPE,
-        expected_dirty=False, expected_dirty_digest="",
-        structural=False,
-    )
-    if (expected_status not in {"REVIEW", "FAIL", "BLOCKED"}
-            or observed.status != expected_status):
-        raise RuntimeError("Doctor refusal verdict changed during diagnostic")
-    # Timestamps may change the raw digest between identical rechecks.
-    # Never substitute the second diagnostic for the first signed-by-nobody
-    # local advisory; it is explanatory only.
-    if not re.fullmatch(r"[0-9a-f]{64}", expected_digest):
-        raise RuntimeError("Original Doctor report digest was not exact")
-    if _git(runner.root, "rev-parse", "HEAD") != candidate:
-        raise RuntimeError("Doctor diagnostic changed candidate HEAD")
-    report = json.loads(raw.stdout)
+    report = json.loads(raw)
+    if (not isinstance(report, dict)
+            or report.get("action") != stage
+            or report.get("status") != expected_status
+            or report.get("exact_sha") != candidate
+            or report.get("base_ref") != base
+            or not isinstance(report.get("worktree"), dict)
+            or report["worktree"].get("dirty") is not False
+            or report["worktree"].get("dirty_digest") != ""):
+        raise RuntimeError("Verified Doctor refusal changed between stages")
     return _review_diagnostics(report, stage=stage)
-
 
 def run(source: Path, sha: str) -> None:
     temp = _runner_root()
@@ -384,6 +374,7 @@ def run(source: Path, sha: str) -> None:
             stage, SCOPE, candidate_sha=candidate,
             base_ref=sha, structural=False,
             run_tests=(stage == "check"),
+            capture_verified_refusal=(stage in {"check", "validate"}),
         )
         observation = _verify_advisory(advice, stage=stage, sha=candidate)
         if (stage == "plan" and advice.status != "PLANNED_LOCAL"):

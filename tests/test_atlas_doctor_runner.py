@@ -82,6 +82,70 @@ class AtlasDoctorRunnerTests(unittest.TestCase):
         self.assertNotIn("GITHUB_TOKEN", execute.call_args.kwargs["environment"])
         self.assertEqual(execute.call_args.kwargs["stdout_limit"], 1024 * 1024)
 
+    def test_refusal_report_consumed_once_without_rerunning_process(self):
+        refusal = doctor_report()
+        refusal["status"] = "FAIL"
+        refusal["exit_code"] = 2
+        refusal["certification"]["status"] = "NOT_RUN"
+        refusal["execution"]["status"] = "FAIL"
+        raw = json.dumps(refusal).encode()
+        with patch("holding.atlas_doctor_runner.run_bounded",
+                   return_value=ProcessResult(2, raw, b"")) as execute:
+            passport = self.runner.run(
+                "validate", PATHS, candidate_sha=SHA,
+                capture_verified_refusal=True,
+            )
+        self.assertEqual(passport.status, "FAIL")
+        self.assertEqual(execute.call_count, 1)
+        observed = self.runner.take_verified_diagnostic(
+            action="validate", candidate_sha=SHA,
+            report_sha256=passport.report_sha256,
+        )
+        self.assertEqual(observed, raw)
+        with self.assertRaises(DoctorRunnerError):
+            self.runner.take_verified_diagnostic(
+                action="validate", candidate_sha=SHA,
+                report_sha256=passport.report_sha256,
+            )
+
+    def test_wrong_diagnostic_identity_clears_cached_bytes(self):
+        refusal = doctor_report()
+        refusal["status"] = "FAIL"
+        refusal["exit_code"] = 2
+        refusal["certification"]["status"] = "NOT_RUN"
+        refusal["execution"]["status"] = "FAIL"
+        raw = json.dumps(refusal).encode()
+        with patch("holding.atlas_doctor_runner.run_bounded",
+                   return_value=ProcessResult(2, raw, b"")):
+            passport = self.runner.run(
+                "validate", PATHS, candidate_sha=SHA,
+                capture_verified_refusal=True,
+            )
+        with self.assertRaises(DoctorRunnerError):
+            self.runner.take_verified_diagnostic(
+                action="check", candidate_sha=SHA,
+                report_sha256=passport.report_sha256,
+            )
+        with self.assertRaises(DoctorRunnerError):
+            self.runner.take_verified_diagnostic(
+                action="validate", candidate_sha=SHA,
+                report_sha256=passport.report_sha256,
+            )
+
+    def test_success_does_not_retain_report(self):
+        raw = json.dumps(doctor_report()).encode()
+        with patch("holding.atlas_doctor_runner.run_bounded",
+                   return_value=ProcessResult(0, raw, b"")):
+            passport = self.runner.run(
+                "validate", PATHS, candidate_sha=SHA,
+                capture_verified_refusal=True,
+            )
+        with self.assertRaises(DoctorRunnerError):
+            self.runner.take_verified_diagnostic(
+                action="validate", candidate_sha=SHA,
+                report_sha256=passport.report_sha256,
+            )
+
     def test_checkout_sha_and_state_are_rechecked(self):
         self.runner._git.side_effect = [(SHA + "\n").encode(), ("c" * 40 + "\n").encode()]
         with patch("holding.atlas_doctor_runner.run_bounded",

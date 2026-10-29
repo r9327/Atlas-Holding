@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+import hashlib
+import json
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -260,6 +262,37 @@ class NativeCandidateDoctorTests(unittest.TestCase):
         self.assertIn("guardian=RESOURCE_BUDGETS:status=BLOCKED", observed)
         self.assertNotIn("must-not-leak", " ".join(observed))
         self.assertFalse(any("exit=True" in line for line in observed))
+
+    def test_diagnostic_adapter_uses_verified_report_without_second_run(self):
+        from tests.native_real_atlas_candidate_doctor import (
+            _inspect_real_doctor_review,
+        )
+        report = {
+            "action": "validate", "status": "FAIL",
+            "exact_sha": CANDIDATE, "base_ref": SOURCE,
+            "worktree": {"dirty": False, "dirty_digest": ""},
+            "execution": {"status": "FAIL", "checks": []},
+            "selected_checks": {"tests": []},
+            "next_actions": ["Validating guardians failed."],
+        }
+        raw = json.dumps(report).encode()
+        digest = hashlib.sha256(raw).hexdigest()
+        runner = Mock()
+        runner.root = Path("C:/dummy")
+        runner._worktree_identity.return_value.dirty = False
+        runner.take_verified_diagnostic.return_value = raw
+        with patch("tests.native_real_atlas_candidate_doctor._git",
+                   return_value=CANDIDATE):
+            result = _inspect_real_doctor_review(
+                runner, stage="validate", candidate=CANDIDATE,
+                base=SOURCE, expected_digest=digest, expected_status="FAIL",
+            )
+        self.assertIn("stage=validate", result)
+        runner.take_verified_diagnostic.assert_called_once_with(
+            action="validate", candidate_sha=CANDIDATE,
+            report_sha256=digest,
+        )
+        runner._execute.assert_not_called()
 
     def test_review_diagnostics_reject_unbounded_or_incomplete_report(self):
         valid = {

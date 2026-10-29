@@ -55,6 +55,7 @@ class AtlasDoctorRunner:
         self.git_executable = git_executable.resolve()
         self.timeout_seconds = timeout_seconds
         self.max_tests = max_tests
+        self._verified_diagnostic: tuple[str, str, str, bytes] | None = None
 
     @staticmethod
     def _environment() -> dict[str, str]:
@@ -121,10 +122,30 @@ class AtlasDoctorRunner:
                     digest.update(chunk)
         return WorktreeIdentity(True, digest.hexdigest())
 
+    def take_verified_diagnostic(self, *, action: str, candidate_sha: str,
+                                 report_sha256: str) -> bytes:
+        """One-shot, exact-SHA and digest-bound report; never executes Doctor."""
+        saved, self._verified_diagnostic = self._verified_diagnostic, None
+        if (saved is None or action not in {"check", "validate"}
+                or not isinstance(candidate_sha, str)
+                or not _SHA.fullmatch(candidate_sha)
+                or not isinstance(report_sha256, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", report_sha256)):
+            raise DoctorRunnerError("No matching verified Doctor refusal")
+        recorded_action, recorded_sha, digest, raw = saved
+        if (recorded_action != action or recorded_sha != candidate_sha
+                or digest != report_sha256
+                or hashlib.sha256(raw).hexdigest() != digest):
+            raise DoctorRunnerError("Stale or mismatched Doctor refusal evidence")
+        return raw
+
     def run(self, action: str, paths: tuple[str, ...], *, candidate_sha: str,
             base_ref: str = "HEAD", structural: bool = False,
-            level: str | None = None, run_tests: bool = False) -> LocalPassport:
+            level: str | None = None, run_tests: bool = False,
+            capture_verified_refusal: bool = False) -> LocalPassport:
+        self._verified_diagnostic = None
         if (action not in _ACTIONS or type(paths) is not tuple
+                or type(capture_verified_refusal) is not bool
                 or not isinstance(candidate_sha, str) or not _SHA.fullmatch(candidate_sha)
                 or not isinstance(base_ref, str) or not _REF.fullmatch(base_ref)
                 or ".." in base_ref or "//" in base_ref
@@ -160,7 +181,7 @@ class AtlasDoctorRunner:
         if after_head != candidate_sha or after != before:
             raise DoctorRunnerError("Atlas checkout changed during Doctor execution")
         try:
-            return consume_doctor_report(
+            passport = consume_doctor_report(
                 result.stdout, observed_exit_code=result.returncode,
                 expected_sha=candidate_sha, expected_action=action,
                 expected_base_ref=base_ref, expected_paths=safe_paths,
@@ -168,5 +189,11 @@ class AtlasDoctorRunner:
                 expected_dirty_digest=before.dirty_digest,
                 structural=structural,
             )
+            if (capture_verified_refusal and action in {"check", "validate"}
+                    and passport.status in {"REVIEW", "FAIL", "BLOCKED"}):
+                self._verified_diagnostic = (
+                    action, candidate_sha, passport.report_sha256, result.stdout,
+                )
+            return passport
         except ValueError as exc:
             raise DoctorRunnerError("Doctor returned invalid evidence") from exc
