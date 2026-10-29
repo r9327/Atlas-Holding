@@ -20,7 +20,7 @@ def good() -> dict:
         "source_repository": "r9327/Dof-Atlas",
         "source_sha": BASE,
         "candidate_sha": HEAD,
-        "modified_paths": ["README.md"],
+        "modified_paths": [".ai/context_index.json", "README.md"],
         "stages": [
             {"stage": "plan", "state": "PLANNED_LOCAL",
              "doctor_report_sha256": "c" * 64,
