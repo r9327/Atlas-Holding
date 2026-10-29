@@ -587,6 +587,64 @@ def configure_and_launch_engine(
     return child.status, child.process.pid
 
 
+
+def launch_installed_project_chat(
+    *, install_root: Path, runtime_pins: dict[str, str], approved: bool,
+) -> int:
+    """Operator-click handoff to the separately scoped installed R&D GUI.
+
+    Reuses the exact viewer/model pins from the authorized Windows install.
+    Never transfers the private Control Center pipe or launches a shell.
+    A spawn is NOT evidence that a model, engine, or roadmap is healthy.
+    """
+    import subprocess
+    from .windows_engine_enrollment import _require_native_windows
+    from .ollama_protocol import _config
+
+    if approved is not True:
+        raise EngineEnrollmentError("Explicit operator action required for R&D chat")
+    if (not isinstance(install_root, Path) or not install_root.is_absolute()
+            or not isinstance(runtime_pins, dict)
+            or set(runtime_pins) != {
+                "AtlasHoldingControlCenter.exe", "AtlasHoldingEngine.exe",
+            } or any(type(v) is not str or _HEX64.fullmatch(v) is None
+                     for v in runtime_pins.values())):
+        raise EngineEnrollmentError("Exact installed runtime identity required")
+    _require_native_windows()
+    try:
+        if (install_root.is_symlink() or not install_root.is_dir()
+                or install_root.resolve(strict=True) != install_root):
+            raise EngineEnrollmentError("Unsafe installed root")
+        version = (
+            runtime_pins["AtlasHoldingControlCenter.exe"][:16] + "-" +
+            runtime_pins["AtlasHoldingEngine.exe"][:16])
+        runtime = install_root / "runtime" / version
+        verify_runtime_payload(runtime, runtime_pins)
+        viewer = runtime / "AtlasHoldingControlCenter.exe"
+        model = install_root / "agents" / "AtlasHoldingModel.json"
+        database = install_root / "data" / "engine.sqlite"
+        # Paths never come from a chat prompt. Reject symlinks, deleted
+        # settings and replaced DBs before starting a writable local GUI.
+        for path in (viewer, model, database):
+            if (path.is_symlink() or not path.is_file()
+                    or path.resolve(strict=True) != path):
+                raise EngineEnrollmentError("Installed project chat input unavailable")
+            validate_runtime_acl(path)
+        _config(model)
+        child = subprocess.Popen(
+            [str(viewer), "--project-chat",
+             "--chat-db", str(database),
+             "--chat-repo", "r9327/Dof-Atlas",
+             "--chat-model-config", str(model)],
+            cwd=runtime, stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            shell=False, close_fds=True,
+        )
+        return child.pid
+    except (OSError, ValueError, TypeError, RuntimePayloadError) as exc:
+        raise EngineEnrollmentError("Installed R&D chat unavailable") from exc
+
+
 def _local_default() -> Path:
     local = os.environ.get("LOCALAPPDATA")
     if local:
@@ -880,12 +938,15 @@ def main(argv: list[str] | None = None) -> int:
     approve = ttk.Button(bottom, text="Installer les composants nécessaires")
     cancel = ttk.Button(bottom, text="Annuler le transfert")
     activate = ttk.Button(bottom, text="Configurer / lancer le moteur")
+    chat = ttk.Button(bottom, text="Ouvrir le chat R&D")
     check.pack(side=tk.LEFT)
     approve.pack(side=tk.LEFT, padx=8)
     activate.pack(side=tk.LEFT)
+    chat.pack(side=tk.LEFT, padx=8)
     cancel.pack(side=tk.RIGHT)
     approve.state(["disabled"])
     activate.state(["disabled"])
+    chat.state(["disabled"])
     cancel.state(["disabled"])
 
     def write(lines: str) -> None:
@@ -906,6 +967,7 @@ def main(argv: list[str] | None = None) -> int:
         busy = True
         runtime_staged = False
         activate.state(["disabled"])
+        chat.state(["disabled"])
         abort.clear()
         check.state(["disabled"])
         approve.state(["disabled"])
@@ -1100,7 +1162,17 @@ def main(argv: list[str] | None = None) -> int:
                     # may explicitly approve starting the same pinned engine
                     # in a second operation.
                     activate.state(["!disabled"] if pid is None else ["disabled"])
+                    chat.state(["!disabled"] if pid is not None else ["disabled"])
+                elif event[0] == "chat_started":
+                    chat.state(["!disabled"])
+                    state_message.set(
+                        "Chat R&D ouvert — résultats et modèles non certifiés")
+                elif event[0] == "chat_failed":
+                    chat.state(["!disabled"])
+                    state_message.set(
+                        "Chat R&D indisponible : vérifier le moteur et les données installées")
                 elif event[0] == "engine_activation_failed":
+                    chat.state(["disabled"])
                     busy = False
                     check.state(["!disabled"])
                     cancel.state(["disabled"])
@@ -1202,8 +1274,27 @@ def main(argv: list[str] | None = None) -> int:
                 events.put(("engine_activation_failed", type(exc).__name__))
         threading.Thread(target=worker, daemon=True).start()
 
+    def open_chat() -> None:
+        if (busy or last_paths is None or not bundled_runtime_pins
+                or selected_paths() != last_paths):
+            return
+        # Hash/ACL checks can touch real EXE bytes; never block Tk's event loop.
+        chat.state(["disabled"])
+        def worker() -> None:
+            try:
+                launch_installed_project_chat(
+                    install_root=last_paths[0],
+                    runtime_pins=bundled_runtime_pins, approved=True)
+            except (OSError, ValueError, EngineEnrollmentError,
+                    RuntimePayloadError):
+                events.put(("chat_failed",))
+            else:
+                events.put(("chat_started",))
+        threading.Thread(target=worker, daemon=True).start()
+
     check.configure(command=lambda: start(False))
     activate.configure(command=activate_engine)
+    chat.configure(command=open_chat)
     approve.configure(command=approve_install)
     cancel.configure(command=abort.set)
     root.after(150, drain)
