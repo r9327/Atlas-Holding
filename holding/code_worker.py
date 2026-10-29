@@ -14,7 +14,13 @@ import tempfile
 import time
 
 from .autonomy import Mission
+from dataclasses import asdict
 from .executor import AuthorizedGit
+from .existing_code import inspect_existing_code, ExistingCodeError
+from .github_pr_inventory import OpenPrInventory
+from .github_pr_changed_paths import PrChangedPaths
+from .pr_overlap import choose_relevant_pr, compare_pr_paths
+from .github_full_evidence import GitHubEvidenceError
 from .git_worktree import GitSafetyError
 from .process_agent import LocalProcessAgent, AgentProcessError, AgentInterrupted
 
@@ -44,7 +50,11 @@ class LocalCodeWorker:
     """Call a preinstalled local agent, validate patch files, commit via leased Git."""
 
     def __init__(self, authorized_git: AuthorizedGit, agent: LocalProcessAgent,
-                 *, health_directory: Path):
+                 *, health_directory: Path, github_pr_observer=None):
+        if (github_pr_observer is not None
+                and not callable(getattr(github_pr_observer, "observe_open_prs", None))):
+            raise CodePlanError("Invalid trusted GitHub PR observer")
+        self.github_pr_observer = github_pr_observer
         self.git = authorized_git
         self.agent = agent
         self.health_directory = health_directory.resolve(strict=True)
@@ -157,6 +167,59 @@ class LocalCodeWorker:
                    'acceptance': list(criteria)}
         if project_goal is not None:
             request['project_goal'] = project_goal
+        # The exact baseline tree is observed BEFORE model generation. This
+        # context is advisory and cannot waive independent QA or skip a task.
+        if self.git.git._git('rev-parse', 'HEAD', cwd=worktree.path) != worktree.base_sha:
+            raise CodePlanError('Worktree HEAD moved before existing-code discovery')
+        def read_git(*args: str) -> str:
+            return self.git.git._git(*args, cwd=worktree.path)
+        try:
+            existing = inspect_existing_code(
+                read_git, repository_sha=worktree.base_sha,
+                acceptance=criteria,
+            )
+        except ExistingCodeError as exc:
+            raise CodePlanError('Cannot establish exact-SHA existing-code inventory') from exc
+        request['existing_code'] = asdict(existing)
+        request['github_pr_observation'] = 'NOT_CHECKED'
+        if self.github_pr_observer is not None:
+            try:
+                report = self.github_pr_observer.observe_open_prs(mission.repo)
+            except GitHubEvidenceError:
+                # No network/credential verification is NOT evidence of no PRs.
+                request['github_pr_observation'] = 'UNAVAILABLE'
+            else:
+                if (not isinstance(report, OpenPrInventory)
+                        or report.repository != mission.repo
+                        or report.can_certify or report.can_skip_implementation):
+                    raise CodePlanError('GitHub PR observation is untrusted')
+                request['github_pr_observation'] = 'OBSERVED'
+                request['github_open_prs'] = asdict(report)
+                request['github_pr_path_status'] = 'NOT_CHECKED'
+                selected = choose_relevant_pr(
+                    report, acceptance=criteria,
+                    candidate_paths=tuple(c.path for c in existing.candidates))
+                inspect_paths = getattr(self.github_pr_observer,
+                                        'observe_pr_paths', None)
+                if selected is not None and callable(inspect_paths):
+                    request['github_pr_path_status'] = 'UNAVAILABLE'
+                    try:
+                        paths = inspect_paths(
+                            mission.repo, selected.number, selected.head_sha)
+                    except GitHubEvidenceError:
+                        pass  # Never misrepresent an offline broker as no overlap.
+                    else:
+                        if (not isinstance(paths, PrChangedPaths)
+                                or paths.repository != mission.repo):
+                            raise CodePlanError('Untrusted GitHub PR changed-path evidence')
+                        try:
+                            comparison = compare_pr_paths(
+                                selected, paths,
+                                tuple(c.path for c in existing.candidates))
+                        except ValueError as exc:
+                            raise CodePlanError('PR changed-path head mismatch') from exc
+                        request['github_pr_path_status'] = 'OBSERVED'
+                        request['github_pr_path_overlap'] = asdict(comparison)
         # A failing independent QA SHA gives the coding agent explicit
         # correction context without passing it credentials, signatures,
         # arbitrary test commands, or a self-certification privilege.

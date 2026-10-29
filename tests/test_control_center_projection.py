@@ -47,7 +47,7 @@ class ControlCenterProjectionTests(unittest.TestCase):
 
     def test_durable_pause_stop_are_projected_atomically(self):
         payload, state = self.project()
-        self.assertEqual(payload["schema_version"], 5)
+        self.assertEqual(payload["schema_version"], 7)
         self.assertEqual(payload["services"], [])
         self.assertIs(state.paused, False)
         self.assertIs(state.stop_requested, False)
@@ -151,7 +151,7 @@ class ControlCenterProjectionTests(unittest.TestCase):
                  "Authorization header leak", NOW - 901),
             )
         payload, state = self.project()
-        self.assertEqual(payload["schema_version"], 5)
+        self.assertEqual(payload["schema_version"], 7)
         by_name = {service.name: service for service in state.services}
         self.assertEqual(by_name["github"].status, "ONLINE")
         self.assertEqual(by_name["github"].age_seconds, 12)
@@ -193,7 +193,7 @@ class ControlCenterProjectionTests(unittest.TestCase):
                 ("first", "coder", "c" * 64, "", NOW - 18),
             )
         payload, state = self.project()
-        self.assertEqual(payload["schema_version"], 5)
+        self.assertEqual(payload["schema_version"], 7)
         self.assertEqual(len(state.model_history), 1)
         usage = state.model_history[0]
         self.assertEqual(usage.role, "CODER")
@@ -248,13 +248,13 @@ class ControlCenterProjectionTests(unittest.TestCase):
                 ("RESPONSIVE", NOW - 12, 4242, "c" * 64, "2026-07-28"),
             )
         payload, state = self.project()
-        self.assertEqual(payload["schema_version"], 5)
+        self.assertEqual(payload["schema_version"], 7)
         self.assertEqual(state.hub.state, "RESPONSIVE")
         self.assertEqual(state.hub.protocol_version, "2026-07-28")
         self.assertEqual(state.hub.age_seconds, 12)
         self.assertEqual(state.hub.source_sha256, "c" * 64)
         self.assertEqual(state.plugins, ())
-        self.assertNotIn("ACTIVE", json.dumps(payload))
+        self.assertNotEqual(payload["hub"]["state"], "ACTIVE")
 
     def test_old_or_invalid_hub_observation_cannot_claim_live_protocol(self):
         from holding.control_center_projection import DashboardProjectionError

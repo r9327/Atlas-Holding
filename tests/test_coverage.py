@@ -86,6 +86,58 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual([r.status for r in rows], ["PROVEN", "PROVEN"])
         self.assertEqual([r.criterion_number for r in rows], [0, 1])
 
+    def test_acceptance_ids_stay_stable_when_reordered_but_not_rewritten(self):
+        from holding.roadmap_replan import SafeRoadmapReplanner
+
+        initial = RequirementCoverage(self.store).page()
+        by_text = {r.criterion: r.criterion_id for r in initial}
+        self.assertEqual(len(by_text), len(initial))
+        self.assertTrue(all(r.criterion_id.startswith(r.mission_id + ":")
+                            and r.proof_contract == "SIGNED_EXACT_SHA_PASS"
+                            for r in initial))
+
+        revision = json.dumps({"repo": REPO, "missions": [
+            {"id": "step-a", "operation": "code",
+             "acceptance": ["No regression", "Generate module"]},
+            {"id": "step-b", "operation": "code",
+             "depends_on": ["step-a"],
+             "acceptance": ["Demonstrate result"]},
+        ]})
+        SafeRoadmapReplanner(self.store).apply(revision, source="reordered")
+        reordered = RequirementCoverage(self.store).page()
+        self.assertEqual(
+            {r.criterion: r.criterion_id for r in reordered}, by_text)
+        self.assertEqual([r.criterion for r in reordered[:2]],
+                         ["No regression", "Generate module"])
+
+        revised = json.dumps({"repo": REPO, "missions": [
+            {"id": "step-a", "operation": "code",
+             "acceptance": ["No regression", "Generate module with tests"]},
+            {"id": "step-b", "operation": "code",
+             "depends_on": ["step-a"],
+             "acceptance": ["Demonstrate result"]},
+        ]})
+        SafeRoadmapReplanner(self.store).apply(revised, source="wording")
+        latest = RequirementCoverage(self.store).page()
+        self.assertNotEqual(latest[1].criterion_id, by_text["Generate module"])
+        self.assertEqual(latest[0].criterion_id, by_text["No regression"])
+        self.assertEqual(latest[2].criterion_id, by_text["Demonstrate result"])
+
+    def test_duplicate_acceptance_text_never_shares_identity(self):
+        from holding.roadmap_replan import SafeRoadmapReplanner
+
+        revised = json.dumps({"repo": REPO, "missions": [
+            {"id": "step-a", "operation": "code",
+             "acceptance": ["No regression", "No regression"]},
+            {"id": "step-b", "operation": "code",
+             "depends_on": ["step-a"],
+             "acceptance": ["Demonstrate result"]},
+        ]})
+        SafeRoadmapReplanner(self.store).apply(revised, source="duplicates")
+        entries = RequirementCoverage(self.store).page(limit=2)
+        self.assertNotEqual(entries[0].criterion_id, entries[1].criterion_id)
+        self.assertEqual(entries[0].criterion, entries[1].criterion)
+
     def test_pagination_can_resume_in_middle_of_mission(self):
         audit = RequirementCoverage(self.store)
         first = audit.page(limit=1)[0]
