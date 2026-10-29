@@ -66,7 +66,7 @@ class NativeCandidateDoctorTests(unittest.TestCase):
             stages.append(row)
         summary = _candidate_summary(
             source_sha=SOURCE, candidate_sha=CANDIDATE, stages=stages)
-        self.assertEqual(summary["modified_paths"], ["README.md"])
+        self.assertEqual(summary["modified_paths"], [".ai/context_index.json", "README.md"])
         self.assertIs(summary["model_generated_candidate"], False)
         for claim in ("independent_qa_pass", "doctor_full_certified",
                       "github_push_permitted", "release_ready"):
