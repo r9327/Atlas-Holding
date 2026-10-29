@@ -95,6 +95,18 @@ class ControlCenterWindow(QMainWindow):
             ("Tâche", "État", "Étape", "Progrès prouvé", "SHA", "Preuve"),
             "tasksTable",
         )
+        self.preflights = _table(
+            ("Mission", "Préflight", "Autorisation", "Blocages", "Dépendances"),
+            "missionPreflightTable",
+        )
+        self.preflight_note = QLabel(
+            "Diagnostic en lecture seule : un préflight favorable ne donne "
+            "aucune autorisation de lancement, de modèle ou de certification."
+        )
+        self.preflight_note.setWordWrap(True)
+        self.preflight_note.setObjectName("missionPreflightDisclaimer")
+        self.preflight_summary = QLabel("Aucun préflight reçu")
+        self.preflight_summary.setObjectName("missionPreflightSummary")
         self.agents = _table(
             ("Agent", "Rôle", "État", "Objectif", "Tâche", "Profil"),
             "agentsTable",
@@ -144,6 +156,12 @@ class ControlCenterWindow(QMainWindow):
         tabs = QTabWidget()
         tabs.setObjectName("dashboardTabs")
         tabs.addTab(self.tasks, "Roadmap")
+        preflight_page = QWidget()
+        preflight_layout = QVBoxLayout(preflight_page)
+        preflight_layout.addWidget(self.preflight_note)
+        preflight_layout.addWidget(self.preflight_summary)
+        preflight_layout.addWidget(self.preflights)
+        tabs.addTab(preflight_page, "Préflight")
         self.agent_telemetry = QLabel(
             "Agents : télémétrie non renseignée par le moteur"
         )
@@ -408,6 +426,21 @@ class ControlCenterWindow(QMainWindow):
             ("Aucune" if task.completion_evidence is None else
              f"{task.completion_evidence.kind} {task.completion_evidence.scope}"),
         ) for task in state.tasks)
+        preflight_rows = tuple((
+            item.mission_id,
+            {
+                "PRECHECK_PASSED": "Prérequis observés",
+                "BLOCKED": "Blocage détecté",
+                "WAITING_FOR_DEPENDENCIES": "Attend des tâches",
+            }[item.status],
+            ("Grant existant" if item.permission == "SCOPED_GRANT_PRESENT"
+             else "Manquant ou expiré"),
+            ", ".join(item.blockers) if item.blockers else "Aucun observé",
+            ", ".join(item.waiting_for[:5]) +
+            (f" (+{len(item.waiting_for) - 5} autres)"
+             if len(item.waiting_for) > 5 else "")
+            if item.waiting_for else "Aucune",
+        ) for item in state.mission_preflights)
         agent_rows = tuple((
             agent.agent_id,
             agent.role,
@@ -462,6 +495,12 @@ class ControlCenterWindow(QMainWindow):
         )
         _replace_rows(self.proofs, proof_rows)
         _replace_rows(self.tasks, task_rows)
+        _replace_rows(self.preflights, preflight_rows)
+        count = state.preflight_total_ready
+        self.preflight_summary.setText(
+            f"Préflights affichés : {len(preflight_rows)} / {count} missions READY"
+            " · réseau, modèle et worker non vérifiés ici"
+        )
         _replace_rows(self.agents, agent_rows)
         _replace_rows(self.plugins, plugin_rows)
         service_rows = tuple((
