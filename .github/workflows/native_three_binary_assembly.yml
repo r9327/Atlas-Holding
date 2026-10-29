@@ -98,9 +98,20 @@ jobs:
               $record.manifest_kind -ne "OFFICIAL_PINNED_PORTABLE_AND_WINGET_CANDIDATE" -or
               $record.native_acl_enrollment_smoke -ne "PASS" -or
               $record.installed_agent_health_smoke -ne "PASS" -or
-              $record.local_three_lot_signed_qa_smoke -ne "PASS") {
+              $record.local_three_lot_signed_qa_smoke -ne "PASS" -or
+              $record.native_frozen_ipc_ram.kind -ne "NONRELEASE_FROZEN_IPC_RAM_WINDOW" -or
+              $record.native_frozen_ipc_ram.root_pids_observed -ne 2 -or
+              $record.native_frozen_ipc_ram.samples -lt 1 -or
+              $record.native_frozen_ipc_ram.normal_coding_certified -ne $false) {
             throw "Native nonrelease candidate falsely claims release certification"
           }
+          $ramEvidence = Join-Path $dest "native-frozen-ipc-ram.json"
+          if (!(Test-Path -LiteralPath $ramEvidence -PathType Leaf) -or
+              (Get-FileHash -Algorithm SHA256 -LiteralPath $ramEvidence).Hash.ToLowerInvariant() -cne
+                $record.native_frozen_ipc_ram_receipt_sha256) {
+            throw "Actual GUI+engine process-tree RAM receipt is missing or altered"
+          }
+          Write-Output "NONRELEASE_FROZEN_PROCESS_TREE_RAM: $($record.native_frozen_ipc_ram.peak_holding_working_set_bytes) bytes, $($record.native_frozen_ipc_ram.samples) samples"
           foreach ($binary in @("AtlasHoldingSetup.exe", "AtlasHoldingEngine.exe", "AtlasHoldingControlCenter.exe")) {
             $exe = Join-Path $dest $binary
             if (!(Test-Path $exe)) { throw "Cross-PR assembly missing $binary" }
