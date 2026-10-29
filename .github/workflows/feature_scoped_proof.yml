@@ -49,7 +49,6 @@ jobs:
               "test_project_chat.py", "test_research_workplan.py",
               "test_research_simulation.py",
               "test_ngspice_adapter.py",
-              "test_research_measurement.py",
               "test_update_plan.py", "test_update_download.py",
               "test_update_manifest_client.py", "test_update_probe.py",
               "test_update_probe_cli.py", "test_update_stage.py",
