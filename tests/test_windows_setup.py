@@ -366,6 +366,70 @@ class WindowsSetupTests(unittest.TestCase):
             self.assertEqual((status, pid), ("ENGINE_SPAWNED_HEALTH_PENDING", 7380))
             launch.assert_called_once_with(request, receipt, approved=True)
 
+    def test_installed_project_chat_uses_existing_pins_without_viewer_ipc(self):
+        import json
+        import subprocess
+        from unittest.mock import Mock
+        from holding.windows_setup import launch_installed_project_chat
+        from holding.windows_engine_enrollment import EngineEnrollmentError
+
+        self.install_root.mkdir()
+        pins = {
+            "AtlasHoldingControlCenter.exe": "a" * 64,
+            "AtlasHoldingEngine.exe": "b" * 64,
+        }
+        version = "a" * 16 + "-" + "b" * 16
+        runtime = self.install_root / "runtime" / version
+        runtime.mkdir(parents=True)
+        viewer = runtime / "AtlasHoldingControlCenter.exe"
+        viewer.write_bytes(b"frozen viewer fixture")
+        (runtime / "AtlasHoldingEngine.exe").write_bytes(b"engine fixture")
+        agents = self.install_root / "agents"
+        agents.mkdir()
+        model = agents / "AtlasHoldingModel.json"
+        model.write_text(json.dumps({
+            "schema": 1, "model": "test:Q4", "digest": "c" * 64,
+            "num_ctx": 4096, "timeout": 30,
+        }), encoding="utf-8")
+        data = self.install_root / "data"
+        data.mkdir()
+        database = data / "engine.sqlite"
+        database.write_bytes(b"sqlite fixture for path checks")
+        with patch("holding.windows_engine_enrollment._require_native_windows"), \\
+             patch("holding.windows_setup.verify_runtime_payload") as verify, \\
+             patch("holding.windows_setup.validate_runtime_acl") as acl, \\
+             patch("subprocess.Popen", return_value=Mock(pid=8419)) as spawn:
+            self.assertEqual(launch_installed_project_chat(
+                install_root=self.install_root, runtime_pins=pins,
+                approved=True), 8419)
+            verify.assert_called_once_with(runtime, pins)
+            self.assertEqual(acl.call_count, 3)
+            argv = spawn.call_args.args[0]
+            self.assertEqual(argv, [
+                str(viewer), "--project-chat", "--chat-db", str(database),
+                "--chat-repo", "r9327/Dof-Atlas",
+                "--chat-model-config", str(model),
+            ])
+            options = spawn.call_args.kwargs
+            self.assertEqual(options["cwd"], runtime)
+            self.assertIs(options["stdin"], subprocess.DEVNULL)
+            self.assertIs(options["stdout"], subprocess.DEVNULL)
+            self.assertIs(options["stderr"], subprocess.DEVNULL)
+            self.assertIs(options["shell"], False)
+            self.assertIs(options["close_fds"], True)
+            spawn.reset_mock()
+            with self.assertRaisesRegex(EngineEnrollmentError, "operator"):
+                launch_installed_project_chat(
+                    install_root=self.install_root, runtime_pins=pins,
+                    approved=False)
+            spawn.assert_not_called()
+            database.unlink()
+            with self.assertRaisesRegex(EngineEnrollmentError, "unavailable"):
+                launch_installed_project_chat(
+                    install_root=self.install_root, runtime_pins=pins,
+                    approved=True)
+            spawn.assert_not_called()
+
     def test_first_install_preflight_is_read_only_and_reports_bytes(self):
         summary, pins = self.call_preflight()
         self.assertEqual(summary.phase, "PREFLIGHT")
