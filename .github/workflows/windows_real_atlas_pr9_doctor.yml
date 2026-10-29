@@ -42,6 +42,14 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: '3.13'
+      - name: Install pinned Qt required by canonical Atlas tests package
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          python -m pip install --disable-pip-version-check --only-binary=:all: PySide6==6.12.0
+          if ($LASTEXITCODE -ne 0) {
+            throw "Required canonical Atlas Qt test runtime is unavailable"
+          }
       - name: Unit-test advisory stages and independently verified receipts
         shell: pwsh
         run: |
