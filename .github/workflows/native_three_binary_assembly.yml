@@ -213,6 +213,37 @@ jobs:
               throw "Installed runtime receipt is incomplete for $name"
             }
           }
+          # Verify the chat is usable from the INSTALLED exact-hash GUI, not
+          # merely present in the checkout or staged pre-install archive.
+          # This test uses the frozen EXE with no Python, Ollama or private IPC.
+          $viewerPin = $installed.runtime_artifacts."AtlasHoldingControlCenter.exe".sha256
+          $enginePin = $installed.runtime_artifacts."AtlasHoldingEngine.exe".sha256
+          $runtimeVersion = $viewerPin.Substring(0, 16) + "-" + $enginePin.Substring(0, 16)
+          $installedViewer = Join-Path $installRoot "runtime\\$runtimeVersion\\AtlasHoldingControlCenter.exe"
+          if (!(Test-Path -LiteralPath $installedViewer -PathType Leaf) -or
+              (Get-FileHash -Algorithm SHA256 -LiteralPath $installedViewer).Hash.ToLowerInvariant() -cne $viewerPin) {
+            throw "Installed R&D Control Center binary differs from the pinned receipt"
+          }
+          if ($record.source_shas.release_candidate_viewer -ne "${{ github.event.pull_request.head.sha }}") {
+            throw "Frozen R&D viewer was not built from exact release candidate SHA"
+          }
+          $chatInfo = [System.Diagnostics.ProcessStartInfo]::new()
+          $chatInfo.FileName = $installedViewer
+          [void]$chatInfo.ArgumentList.Add("--project-chat-self-test")
+          $chatInfo.UseShellExecute = $false
+          $chatInfo.Environment.Clear()
+          $chatInfo.Environment["SystemRoot"] = $env:SystemRoot
+          $chatInfo.Environment["TEMP"] = $env:RUNNER_TEMP
+          $chatInfo.Environment["TMP"] = $env:RUNNER_TEMP
+          $chatInfo.Environment["QT_QPA_PLATFORM"] = "offscreen"
+          $chatProcess = [System.Diagnostics.Process]::Start($chatInfo)
+          if (!$chatProcess.WaitForExit(90000)) {
+            $chatProcess.Kill($true)
+            throw "Installed frozen R&D chat smoke timed out"
+          }
+          if ($chatProcess.ExitCode -ne 0) {
+            throw "Installed frozen R&D chat smoke failed: $($chatProcess.ExitCode)"
+          }
           $receipt = @{
             schema = 1
             candidate_sha = "${{ github.event.pull_request.head.sha }}"
@@ -220,6 +251,7 @@ jobs:
             setup_sha256 = ($record.artifacts | Where-Object name -eq "AtlasHoldingSetup.exe").sha256
             downloaded_candidate_self_test = "PASS"
             downloaded_candidate_real_provisioning = "PASS"
+            installed_frozen_rd_chat = "PASS"
             provisioning_receipt_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $installReceipt).Hash.ToLowerInvariant()
             inherited_python_environment = $false
             windows_clean_install_certified = $false
