@@ -39,6 +39,14 @@ jobs:
         run: |
           python -m pip install --disable-pip-version-check PySide6==6.12.0
           python -m pip install --disable-pip-version-check --only-binary=:all: "pyinstaller==6.22.3"
+      - name: Native Git SQLite three-restart recovery fail-closed proof
+        shell: pwsh
+        timeout-minutes: 3
+        run: |
+          python -B -X utf8 -m unittest discover -s tests -p test_recovery_three_boots.py -v
+          if ($LASTEXITCODE -ne 0) { throw "Three restart recovery proof failed" }
+          python -B -X utf8 -m unittest discover -s tests -p test_recovery.py -v
+          if ($LASTEXITCODE -ne 0) { throw "Git journal recovery regression failed" }
       - name: Derive exact runtime manifest from official publisher bytes
         shell: pwsh
         timeout-minutes: 12
