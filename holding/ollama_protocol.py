@@ -290,6 +290,60 @@ def _plan(config: dict, payload: dict, root: Path) -> dict:
             if pr_report is not None:
                 raise AdapterError('Unverified GitHub PR data cannot be used')
             mission_context['github_pr_observation'] = pr_state
+    if ('github_pr_path_status' in payload
+            or 'github_pr_path_overlap' in payload):
+        path_state = payload.get('github_pr_path_status')
+        overlap = payload.get('github_pr_path_overlap')
+        if path_state not in ('NOT_CHECKED', 'UNAVAILABLE', 'OBSERVED'):
+            raise AdapterError('Invalid PR path inspection state')
+        if path_state != 'OBSERVED':
+            if overlap is not None:
+                raise AdapterError('Unverified PR overlap metadata')
+            mission_context['github_pr_path_status'] = path_state
+        else:
+            prs = payload.get('github_open_prs')
+            if (not isinstance(prs, dict) or
+                    not isinstance(overlap, dict) or set(overlap) != {
+                        'pr_number', 'head_sha', 'status', 'observed_paths',
+                        'matching_local_paths', 'can_certify',
+                        'can_skip_implementation'}):
+                raise AdapterError('Missing authenticated PR path observation')
+            number, sha = overlap['pr_number'], overlap['head_sha']
+            if (type(number) is not int or number < 1
+                    or not isinstance(sha, str)
+                    or not re.fullmatch(r'[0-9a-f]{40}', sha)
+                    or not any(hint['number'] == number and
+                               hint['head_sha'] == sha
+                               for hint in prs['hints'])
+                    or overlap['status'] not in {
+                        'EXACT_PATH_OVERLAP', 'NO_MATCH_IN_PARTIAL_PR_SCAN',
+                        'NO_EXACT_PATH_MATCH'}
+                    or overlap['can_certify'] is not False
+                    or overlap['can_skip_implementation'] is not False):
+                raise AdapterError('PR overlap is not bound to a GitHub head')
+            observed = overlap['observed_paths']
+            matches = overlap['matching_local_paths']
+            local = payload.get('existing_code', {}).get('candidates', [])
+            local_paths = {entry['path'] for entry in local}
+            def safe_path(path):
+                return (isinstance(path, str) and 1 <= len(path) <= 240
+                        and re.fullmatch(
+                            r'[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*', path)
+                        and all(part not in ('', '.', '..') for part in
+                                path.split('/')))
+            if (not isinstance(observed, list) or len(observed) > 20
+                    or any(not safe_path(p) for p in observed)
+                    or len(set(observed)) != len(observed)
+                    or not isinstance(matches, list) or len(matches) > 12
+                    or any(not safe_path(p) for p in matches)
+                    or any(p not in observed or p not in local_paths
+                           for p in matches)
+                    or len(set(matches)) != len(matches)
+                    or (overlap['status'] == 'EXACT_PATH_OVERLAP')
+                       != bool(matches)):
+                raise AdapterError('Forged PR file overlap evidence')
+            mission_context['github_pr_path_status'] = 'OBSERVED'
+            mission_context['github_pr_path_overlap'] = overlap
     failed_sha = payload.get('previous_failed_candidate_sha')
     if failed_sha is not None:
         if not isinstance(failed_sha, str) or not re.fullmatch(r'[0-9a-f]{40}', failed_sha):
@@ -328,6 +382,9 @@ def _plan(config: dict, payload: dict, root: Path) -> dict:
                 'not evidence of implemented features, an absence of duplicates, '
                 'or permission to skip tasks. Inspect possible overlap before edits; '
                 'when unavailable, clearly retain PR uncertainty. '
+                'Exact PR filename overlaps are advisory only: compare likely '
+                'owners before editing; no match in a bounded listing never '
+                'establishes absence of duplicate functionality. '
                 'Never edit .github, '
                 '.git, credentials, tests or CI gates. Never claim a test passed.')},
             message]}, timeout=config['timeout'])
