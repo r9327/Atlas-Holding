@@ -90,18 +90,6 @@ class ControlPlane:
         return {"attempts": int(row["total"]), "missions": int(row["tasks"]),
                 "blocked": int(blocked)}
 
-    def mission_preflight(self, mission_id: str, *, now_epoch: int | None = None):
-        """Read-only mission diagnostic; never an authority to dispatch work.
-
-        Shares this ControlPlane's SQLite connection, so a caller can project
-        multiple missions inside one coherent read transaction.
-        """
-        from .mission_preflight import inspect_mission_connection
-        return inspect_mission_connection(
-            self.store.db, mission_id,
-            now_epoch=int(time.time()) if now_epoch is None else now_epoch,
-        )
-
     def scoped_qa_counts(self) -> dict[str, int]:
         """Advisory-only status for the UI, never a certification badge."""
         exists = self.store.db.execute(

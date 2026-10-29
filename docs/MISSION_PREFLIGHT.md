@@ -43,31 +43,31 @@ devra afficher la provenance de ces états sans transformer un préflight en PAS
 La suite de F02 doit raccorder les contrôles effectifs au moteur et à ses
 consommateurs, puis tester la reprise après interruption.
 
-## Tableau de bord authentifié (F02 — raccordement v6)
+## Premier raccordement au Control Center (schéma 6)
 
-Le moteur expose `ControlPlane.mission_preflight(mission_id, now_epoch=...)`,
-puis `project_dashboard_snapshot` publie les diagnostics dans son **unique
-snapshot signé/authentifié**. Les calculs sont réalisés depuis la même
-transaction SQLite de lecture que les états des tâches : pas de requête
-réseau, aucun accès à SQLite depuis le processus Qt, pas de nouveau moteur.
+Le moteur calcule **un préflight de la prochaine mission READY affichée**, par
+ordre de priorité, dans la **même transaction de lecture** que la projection
+SQLite des tâches. Il publie l'avis via le canal IPC authentifié existant.
+Le Control Center affiche l'identifiant et les causes (permission manquante,
+dépendance non prouvée, pause, besoin réseau non testé). Il ne reçoit jamais
+de chemin SQLite, secret ni pouvoir d'exécution supplémentaire.
 
-Le Control Center présente un onglet **Préflight** en lecture seule.
-Au maximum 20 missions `READY` sont détaillées, dans l'ordre de la
-roadmap visible ; `preflight_total_ready` donne le nombre réel de missions
-`READY` consultées, même quand toutes ne tiennent pas dans l'onglet.
-Le tableau affiche les grants présents et les blocages tels qu'observés,
-sans prétendre que la capacité de travail est disponible.
+La lecture des instantanés v1 à v5 reste compatible : dans ces cas aucun
+préflight n'est affiché. Une coupure ou une observation périmée signale
+explicitement que l'avis n'est plus actualisé. `PRECHECK_PASSED` reste un
+**précontrôle consultatif**, jamais une preuve de worker, de modèle ou de
+permission GitHub ; les contrôles indépendants du moteur restent obligatoires.
 
-Le protocole est passé à `schema_version=6` pour rendre les nouveaux champs
-explicites. Le lecteur conserve la compatibilité avec les snapshots v1–v5 ;
-les champs v6 ont un schéma strict, leurs missions doivent être `READY`
-et leurs identifiants correspondre exactement à l'ordre affiché. Les claims
-`executes_actions`, benchmark ou worker réussis sont rejetés. Les
-modifications de ce document et la PR ne constituent ni test natif Windows
-du produit installé, ni qualification de la release #9.
+Le bandeau indique uniquement le premier lot READY ; ce n'est pas encore un
+diagnostic exhaustif de toutes les missions ou de tous les outils. Aucune
+mutation du schéma SQLite ou du projet utilisateur n'est réalisée.
 
-**À développer ensuite** : contrôles de santé réels du worker et du hub MCP,
-benchmark modèle sur environnement actuel, liaison aux capacités de la
-mission, expiration des observations et éventuel détail/pagination pour
-plus de 20 missions. Le préflight reste consultatif ; aucune preuve CI
-ou permission n'est accordée automatiquement.
+## Vue multi-missions authentifiée (schéma v7)
+
+Le moteur conserve le `mission_preflight` v6 (premier READY), et ajoute
+`mission_preflights` pour 20 missions READY maximum ainsi que
+`preflight_total_ready`. Les observations partagent une seule transaction
+SQLite, sans réseau ni permission ajoutée. Le décodeur accepte v1–v6 et
+refuse les listes incohérentes avec l'ordre des tâches, les permissions ou
+le premier avis. Le Control Center affiche un tableau consultatif qui
+est périmé lors d'une coupure. Aucune conclusion de certification.

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from holding.autonomy import Mission, StandingGrant
 from holding.git_worktree import GitWorktrees
+from holding.github_pr_inventory import OpenPrInventory
 from holding.process_agent import AgentProgram
 from holding.service import HoldingService, ServiceSettings
 from holding.state_store import StateStore
@@ -40,13 +41,26 @@ else:
             with StateStore(db) as store:
                 RoadmapImporter(store).import_text(json.dumps({'repo':REPO,'missions':[{'id':'task','operation':'code','acceptance':['code must run']}]}),source='test')
                 store.grant_for_onboarding(StandingGrant(REPO,frozenset({'code','commit'}),int(time.time())+3600))
+            class Broker:
+                def __init__(self):
+                    self.calls = []
+                def observe_open_prs(self, repository):
+                    self.calls.append(repository)
+                    return OpenPrInventory(
+                        repository, "OPEN_PRS_OBSERVED", 0, ())
+
+            broker = Broker()
             localgit=GitWorktrees(canonical,root/'jobs',REPO)
             program=AgentProgram(Path(sys.executable).resolve(),(str(script),),timeout_seconds=3)
             with HoldingService.from_local_agent(ServiceSettings(db,idle_seconds=.05),program=program,
-                    git=localgit,health_directory=root,online=lambda:False) as service:
+                    git=localgit,health_directory=root,online=lambda:False,
+                    github_pr_observer=broker) as service:
+                self.assertIs(service.worker._adapters['code'].github_pr_observer,
+                              broker)
                 self.assertEqual(service.start(),())
                 out=service.run(max_ticks=1)
                 self.assertEqual(out.action,'QA_PENDING')
+                self.assertEqual(broker.calls, [REPO])
                 job=service.engine.store.missions()[0]
                 self.assertEqual(job.state,'QA_PENDING')
                 self.assertEqual(job.evidence_sha,'')

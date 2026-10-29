@@ -99,14 +99,13 @@ class ControlCenterWindow(QMainWindow):
             ("Mission", "Préflight", "Autorisation", "Blocages", "Dépendances"),
             "missionPreflightTable",
         )
+        self.preflight_summary = QLabel("Aucun préflight multi-missions reçu")
+        self.preflight_summary.setObjectName("missionPreflightSummary")
         self.preflight_note = QLabel(
-            "Diagnostic en lecture seule : un préflight favorable ne donne "
-            "aucune autorisation de lancement, de modèle ou de certification."
+            "Diagnostic consultatif : aucun préflight ne donne "
+            "une autorisation de lancement ou une certification."
         )
         self.preflight_note.setWordWrap(True)
-        self.preflight_note.setObjectName("missionPreflightDisclaimer")
-        self.preflight_summary = QLabel("Aucun préflight reçu")
-        self.preflight_summary.setObjectName("missionPreflightSummary")
         self.agents = _table(
             ("Agent", "Rôle", "État", "Objectif", "Tâche", "Profil"),
             "agentsTable",
@@ -262,6 +261,15 @@ class ControlCenterWindow(QMainWindow):
         self.project_status.setObjectName("projectGitStatus")
         self.project_status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.project_status)
+        self.mission_preflight_status = QLabel(
+            "Préflight : aucune observation authentifiée"
+        )
+        self.mission_preflight_status.setObjectName("missionPreflightStatus")
+        self.mission_preflight_status.setWordWrap(True)
+        self.mission_preflight_status.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        layout.addWidget(self.mission_preflight_status)
         layout.addWidget(self.status)
         layout.addWidget(tabs)
         self.setCentralWidget(root)
@@ -339,7 +347,12 @@ class ControlCenterWindow(QMainWindow):
         self.project_status.setText(view)
 
     def mark_local_hub_unverified(self) -> None:
-        """Never leave a historical hub heartbeat labeled as live on disconnect."""
+        """Historical observations must not stay labeled live on disconnect."""
+        self.mission_preflight_status.setText(
+            "Préflight : moteur non vérifié, dernière observation périmée"
+        )
+        self.preflight_summary.setText("Préflights : observation périmée")
+        _replace_rows(self.preflights, ())
         self.hub_status.setText(
             "Hub MCP interne : connexion moteur non vérifiée ; "
             "dernier statut historique seulement"
@@ -388,6 +401,39 @@ class ControlCenterWindow(QMainWindow):
             detail += f" · protocole {hub.protocol_version}"
         self.hub_status.setText(detail)
 
+    def _display_mission_preflight(self, state: DashboardState) -> None:
+        """Only render authenticated advisory data, never an execution control."""
+        report = state.mission_preflight
+        if report is None:
+            self.mission_preflight_status.setText(
+                "Préflight : aucune mission READY dans la vue du moteur"
+            )
+            return
+        messages = {
+            "NO_ACTIVE_SCOPED_GRANT": "autorisation absente ou expirée",
+            "PRODUCT_DECISION_REQUIRED": "décision produit nécessaire",
+            "RETRY_BUDGET_EXHAUSTED": "limite de tentatives atteinte",
+            "OPERATOR_SUSPENDED": "moteur en pause ou arrêté",
+            "OTHER_MISSION_RUNNING": "une autre mission utilise le moteur",
+            "EXTERNAL_HEALTH_NOT_VERIFIED": "réseau non vérifié",
+            "UNSUPPORTED_OPERATION": "opération non autorisée",
+        }
+        if report.status == "PRECHECK_PASSED":
+            detail = "contrôles locaux franchis (modèle et worker non vérifiés)"
+        elif report.status == "WAITING_FOR_DEPENDENCIES":
+            detail = "dépendances à terminer : " + ", ".join(report.waiting_for[:4])
+        else:
+            blockers = tuple(
+                messages.get(code, "dépendance inconnue" if code.startswith(
+                    "UNKNOWN_DEPENDENCY:") else "contrôle non satisfait")
+                for code in report.blockers
+            )
+            detail = "bloqué : " + ", ".join(blockers[:4])
+        self.mission_preflight_status.setText(
+            f"Préflight {report.mission_id} : {detail}. "
+            "Observation seulement, aucune permission accordée."
+        )
+
     def acknowledge_authenticated_state(self, state: DashboardState) -> bool:
         """Renew freshness only after a new MAC-verified IPC response."""
         if not isinstance(state, DashboardState):
@@ -400,6 +446,7 @@ class ControlCenterWindow(QMainWindow):
         # A signed same-sequence heartbeat can update independent supervisor
         # observations without implying a new durable mission transition.
         self._display_local_hub(state)
+        self._display_mission_preflight(state)
         self.status.setText(self._last_status_text)
         self._status_timer.start()
         return True
@@ -426,21 +473,6 @@ class ControlCenterWindow(QMainWindow):
             ("Aucune" if task.completion_evidence is None else
              f"{task.completion_evidence.kind} {task.completion_evidence.scope}"),
         ) for task in state.tasks)
-        preflight_rows = tuple((
-            item.mission_id,
-            {
-                "PRECHECK_PASSED": "Prérequis observés",
-                "BLOCKED": "Blocage détecté",
-                "WAITING_FOR_DEPENDENCIES": "Attend des tâches",
-            }[item.status],
-            ("Grant existant" if item.permission == "SCOPED_GRANT_PRESENT"
-             else "Manquant ou expiré"),
-            ", ".join(item.blockers) if item.blockers else "Aucun observé",
-            ", ".join(item.waiting_for[:5]) +
-            (f" (+{len(item.waiting_for) - 5} autres)"
-             if len(item.waiting_for) > 5 else "")
-            if item.waiting_for else "Aucune",
-        ) for item in state.mission_preflights)
         agent_rows = tuple((
             agent.agent_id,
             agent.role,
@@ -495,12 +527,26 @@ class ControlCenterWindow(QMainWindow):
         )
         _replace_rows(self.proofs, proof_rows)
         _replace_rows(self.tasks, task_rows)
+        preflight_rows = tuple((
+            x.mission_id,
+            {"BLOCKED": "Blocage détecté",
+             "WAITING_FOR_DEPENDENCIES": "Attend des tâches",
+             "PRECHECK_PASSED": "Prérequis observés"}[x.status],
+            "Grant existant" if x.permission == "SCOPED_GRANT_PRESENT"
+            else "Manquant ou expiré",
+            ", ".join(x.blockers) if x.blockers else "Aucun observé",
+            ", ".join(x.waiting_for[:5]) + (
+                f" (+{len(x.waiting_for) - 5} autres)"
+                if len(x.waiting_for) > 5 else "")
+            if x.waiting_for else "Aucune",
+        ) for x in state.mission_preflights)
         _replace_rows(self.preflights, preflight_rows)
-        count = state.preflight_total_ready
         self.preflight_summary.setText(
-            f"Préflights affichés : {len(preflight_rows)} / {count} missions READY"
-            " · réseau, modèle et worker non vérifiés ici"
+            f"Préflights affichés : {len(preflight_rows)} / "
+            f"{state.preflight_total_ready} missions READY"
+            " · worker, modèle, réseau non vérifiés ici"
         )
+        self._display_mission_preflight(state)
         _replace_rows(self.agents, agent_rows)
         _replace_rows(self.plugins, plugin_rows)
         service_rows = tuple((

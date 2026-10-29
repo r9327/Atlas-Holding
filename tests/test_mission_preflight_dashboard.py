@@ -1,4 +1,4 @@
-"""Autonomie V2 F02: real SQLite -> authenticated v6 snapshot -> Qt tests."""
+"""Autonomie V2 F02: real SQLite -> authenticated v7 snapshot -> Qt."""
 from __future__ import annotations
 
 from copy import deepcopy
@@ -46,7 +46,7 @@ class MissionPreflightDashboardTests(unittest.TestCase):
 
     def test_missing_grant_is_visible_and_not_a_permission(self):
         payload, state = self.read()
-        self.assertEqual(payload["schema_version"], 6)
+        self.assertEqual(payload["schema_version"], 7)
         self.assertEqual(payload["preflight_total_ready"], 1)
         self.assertEqual(len(state.mission_preflights), 1)
         item = state.mission_preflights[0]
@@ -65,8 +65,9 @@ class MissionPreflightDashboardTests(unittest.TestCase):
         self.assertEqual(state.tasks[0].state, "READY")
         self.assertEqual(payload["mission_preflights"][0]["network_verification"], "NOT_RUN")
         with ControlPlane(self.path) as control:
-            self.assertEqual(control.mission_preflight(
-                "primary", now_epoch=NOW).status, "PRECHECK_PASSED")
+            from holding.mission_preflight import inspect_mission_in_connection
+            self.assertEqual(inspect_mission_in_connection(
+                control.store.db, "primary", now_epoch=NOW).status, "PRECHECK_PASSED")
             self.assertEqual(control.store.missions()[0].state, "READY")
 
     def test_independent_task_preflight_continues_while_other_is_deferred(self):
@@ -136,6 +137,25 @@ class MissionPreflightDashboardTests(unittest.TestCase):
                         json.dumps(bad).encode(),
                         trusted_engine_id="eng-f02",
                         expected_sequence=bad["sequence"], now_epoch=NOW)
+
+    def test_v6_primary_snapshot_remains_supported(self):
+        payload, _ = self.read()
+        payload["schema_version"] = 6
+        del payload["mission_preflights"]
+        del payload["preflight_total_ready"]
+        state = consume_dashboard_snapshot(
+            json.dumps(payload).encode(), trusted_engine_id="eng-f02",
+            expected_sequence=payload["sequence"], now_epoch=NOW)
+        self.assertIsNotNone(state.mission_preflight)
+        self.assertEqual(state.mission_preflights, ())
+
+    def test_page_and_primary_cannot_disagree(self):
+        payload, _ = self.read()
+        payload["mission_preflight"] = None
+        with self.assertRaises(ControlCenterStateError):
+            consume_dashboard_snapshot(
+                json.dumps(payload).encode(), trusted_engine_id="eng-f02",
+                expected_sequence=payload["sequence"], now_epoch=NOW)
 
     def test_qt_tab_displays_blocker_without_launch_capability(self):
         from PySide6.QtWidgets import QApplication

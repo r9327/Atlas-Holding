@@ -34,36 +34,18 @@ class MissionPreflight:
     executes_actions: bool = False
 
 
-def inspect_mission(db_path: Path, mission_id: str, *, now_epoch: int | None = None) -> MissionPreflight:
-    """Inspect existing local SQLite without creating a file, table or grant.
+def inspect_mission_in_connection(
+    db: sqlite3.Connection, mission_id: str, *, now_epoch: int,
+) -> MissionPreflight:
+    """Inspect within the caller's existing consistent SQLite read transaction.
 
-    Only the daemon's independent authorization and execution gates can move a
-    mission to RUNNING. A PRECHECK_PASSED result does not mean it is runnable.
+    The daemon projection invokes this for its displayed mission only. It must
+    never hold a SQLite write lock or perform background network checks.
     """
-    if not isinstance(db_path, Path) or not db_path.is_absolute():
-        raise StoreError("Absolute state database path required")
     if not isinstance(mission_id, str) or not _MISSION_ID.fullmatch(mission_id):
         raise StoreError("Invalid mission ID")
-    if not db_path.is_file():
-        raise StoreError("State database does not exist")
-    if now_epoch is None:
-        now_epoch = int(time.time())
     if type(now_epoch) is not int or now_epoch < 0:
         raise StoreError("Invalid preflight timestamp")
-
-    try:
-        # SQLite mode=ro (not StateStore.__init__) prevents schema migration,
-        # WAL writes and accidental creation of a missing database.
-        with closing(sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True, timeout=2)) as db:
-            db.row_factory = sqlite3.Row
-            db.execute("PRAGMA query_only=ON")
-            return _inspect_mission_db(db, mission_id, now_epoch)
-    except sqlite3.DatabaseError as exc:
-        raise StoreError("Cannot inspect existing state database") from exc
-
-
-def _inspect_mission_db(db: sqlite3.Connection, mission_id: str, now_epoch: int) -> MissionPreflight:
-    """Shared read-only evaluator for a trusted consistent SQLite read view."""
     row = db.execute("SELECT * FROM missions WHERE id=?", (mission_id,)).fetchone()
     if row is None:
         raise StoreError("Unknown mission")
@@ -125,17 +107,29 @@ def _inspect_mission_db(db: sqlite3.Connection, mission_id: str, now_epoch: int)
     )
 
 
-def inspect_mission_connection(
-    db: sqlite3.Connection, mission_id: str, *, now_epoch: int,
-) -> MissionPreflight:
-    """Project one mission from the control-plane read transaction, with no writes."""
-    if not isinstance(db, sqlite3.Connection):
-        raise StoreError("Trusted SQLite connection required")
+def inspect_mission(db_path: Path, mission_id: str, *, now_epoch: int | None = None) -> MissionPreflight:
+    """Inspect existing local SQLite without creating a file, table or grant.
+
+    Only the daemon's independent authorization and execution gates can move a
+    mission to RUNNING. A PRECHECK_PASSED result does not mean it is runnable.
+    """
+    if not isinstance(db_path, Path) or not db_path.is_absolute():
+        raise StoreError("Absolute state database path required")
     if not isinstance(mission_id, str) or not _MISSION_ID.fullmatch(mission_id):
         raise StoreError("Invalid mission ID")
+    if not db_path.is_file():
+        raise StoreError("State database does not exist")
+    if now_epoch is None:
+        now_epoch = int(time.time())
     if type(now_epoch) is not int or now_epoch < 0:
         raise StoreError("Invalid preflight timestamp")
+
     try:
-        return _inspect_mission_db(db, mission_id, now_epoch)
+        # SQLite mode=ro (not StateStore.__init__) prevents schema migration,
+        # WAL writes and accidental creation of a missing database.
+        with closing(sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True, timeout=2)) as db:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA query_only=ON")
+            return inspect_mission_in_connection(db, mission_id, now_epoch=now_epoch)
     except sqlite3.DatabaseError as exc:
-        raise StoreError("Cannot inspect current state database") from exc
+        raise StoreError("Cannot inspect existing state database") from exc

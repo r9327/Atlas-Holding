@@ -87,7 +87,7 @@ class HoldingService:
     @classmethod
     def from_local_agent(cls, settings: ServiceSettings, *, program,
                          git: GitWorktrees, health_directory: Path,
-                         online: Callable[[], bool]) -> "HoldingService":
+                         online: Callable[[], bool], github_pr_observer=None) -> "HoldingService":
         """Trusted setup only: bind the fixed local binary to leased Git writes.
 
         The user-onboarded config must choose the binary and repository. A
@@ -128,7 +128,9 @@ class HoldingService:
             return False
 
         adapter = LocalProcessAgent(program, should_stop=should_stop_agent)
-        worker = LocalCodeWorker(authenticated_git, adapter, health_directory=health_directory)
+        worker = LocalCodeWorker(authenticated_git, adapter,
+                                 health_directory=health_directory,
+                                 github_pr_observer=github_pr_observer)
         router = OperationWorkerRouter({'code': worker})
         service.worker = router
         service.engine.worker = router

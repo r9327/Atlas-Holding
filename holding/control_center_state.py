@@ -59,9 +59,9 @@ class TaskView:
 class MissionPreflightView:
     mission_id: str
     status: str
-    permission: str
     blockers: tuple[str, ...]
     waiting_for: tuple[str, ...]
+    permission: str
 
 
 @dataclass(frozen=True)
@@ -140,6 +140,7 @@ class DashboardState:
     services: tuple[ServiceView, ...] = ()
     model_history: tuple[ModelUsageView, ...] = ()
     hub: LocalHubView | None = None
+    mission_preflight: MissionPreflightView | None = None
     mission_preflights: tuple[MissionPreflightView, ...] = ()
     preflight_total_ready: int = 0
 
@@ -253,54 +254,55 @@ def _task(value: Any) -> TaskView:
     )
 
 
-def _mission_preflight(value: Any, task_ids: set[str]) -> MissionPreflightView:
+def _mission_preflight(value: Any, tasks: tuple[TaskView, ...]) -> MissionPreflightView:
+    """Validate advisory F02 status from the authenticated engine projection."""
     item = _object(value, {
-        "mission_id", "repository", "operation", "mission_state",
-        "status", "blockers", "waiting_for", "permission",
-        "network_verification", "worker_validation", "model_benchmark",
-        "executes_actions",
+        "mission_id", "repository", "operation", "mission_state", "status",
+        "blockers", "waiting_for", "permission", "network_verification",
+        "worker_validation", "model_benchmark", "executes_actions",
     })
     mission_id = _identifier(item["mission_id"], "preflight mission")
-    if mission_id not in task_ids or item["mission_state"] != "READY":
-        raise ControlCenterStateError("Preflight references a non-ready mission")
+    task = next((t for t in tasks if t.task_id == mission_id), None)
+    if task is None or task.state != "READY" or item["mission_state"] != "READY":
+        raise ControlCenterStateError("Preflight must reference a READY visible task")
     repo = item["repository"]
-    operation = item["operation"]
-    if (not isinstance(repo, str) or not re.fullmatch(
-            r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo)
-            or not isinstance(operation, str)
-            or not re.fullmatch(r"[a-z_]{2,40}", operation)):
-        raise ControlCenterStateError("Invalid preflight source identity")
-    status = item["status"]
-    permission = item["permission"]
+    if (not isinstance(repo, str) or len(repo) > 180
+            or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo)):
+        raise ControlCenterStateError("Invalid preflight repository")
+    if item["operation"] not in {
+            "plan", "code", "local_test", "commit", "push", "open_pr",
+            "ready_for_review", "read_ci", "merge"}:
+        raise ControlCenterStateError("Unsupported preflight operation")
+    if task.title != f"{mission_id} · {item['operation']}":
+        raise ControlCenterStateError("Preflight task/operation mismatch")
+    for field in ("network_verification", "worker_validation", "model_benchmark"):
+        if item[field] != "NOT_RUN":
+            raise ControlCenterStateError("Unverified preflight cannot claim a test")
+    if item["executes_actions"] is not False:
+        raise ControlCenterStateError("Preflight is never an execution grant")
+    status, permission = item["status"], item["permission"]
     if status not in {"BLOCKED", "WAITING_FOR_DEPENDENCIES", "PRECHECK_PASSED"}:
-        raise ControlCenterStateError("Invalid preflight state")
+        raise ControlCenterStateError("Invalid preflight status")
     if permission not in {"SCOPED_GRANT_PRESENT", "MISSING_OR_EXPIRED"}:
         raise ControlCenterStateError("Invalid preflight permission")
-    blockers = item["blockers"]
+    reasons = item["blockers"]
     waiting = item["waiting_for"]
-    if (not isinstance(blockers, list) or len(blockers) > 16
-            or not isinstance(waiting, list) or len(waiting) > 1000
-            or any(not isinstance(x, str) or
-                   not re.fullmatch(r"[A-Z_]+(?::[A-Za-z0-9_.-]{1,80})?", x)
-                   for x in blockers)
+    if (not isinstance(reasons, list) or len(reasons) > 40
+            or not isinstance(waiting, list) or len(waiting) > 200
+            or any(not isinstance(x, str) or len(x) > 200 or not re.fullmatch(
+                r"[A-Z_]+(?::[A-Za-z0-9_.-]{1,80})?", x) for x in reasons)
             or any(not isinstance(x, str) or not _IDENTIFIER.fullmatch(x)
                    for x in waiting)
-            or len(set(waiting)) != len(waiting)
-            or len(set(blockers)) != len(blockers)):
+            or len(set(reasons)) != len(reasons)
+            or len(set(waiting)) != len(waiting)):
         raise ControlCenterStateError("Invalid preflight blockers or dependencies")
-    if ((status == "PRECHECK_PASSED" and (blockers or waiting))
-            or (status == "WAITING_FOR_DEPENDENCIES" and (blockers or not waiting))
-            or (status == "BLOCKED" and not blockers)
-            or (permission == "MISSING_OR_EXPIRED"
-                and "NO_ACTIVE_SCOPED_GRANT" not in blockers)
-            or item["network_verification"] != "NOT_RUN"
-            or item["worker_validation"] != "NOT_RUN"
-            or item["model_benchmark"] != "NOT_RUN"
-            or item["executes_actions"] is not False):
-        raise ControlCenterStateError("Preflight falsely claims readiness or execution")
-    return MissionPreflightView(
-        mission_id, status, permission, tuple(blockers), tuple(waiting),
-    )
+    if ((permission == "MISSING_OR_EXPIRED") != ("NO_ACTIVE_SCOPED_GRANT" in reasons)
+            or (status == "PRECHECK_PASSED" and (reasons or waiting))
+            or (status == "WAITING_FOR_DEPENDENCIES" and (reasons or not waiting))
+            or (status == "BLOCKED" and not reasons)):
+        raise ControlCenterStateError("Preflight status contradicts its reasons")
+    return MissionPreflightView(mission_id, status, tuple(reasons),
+                                tuple(waiting), permission)
 
 
 def _agent(value: Any, task_ids: set[str]) -> AgentView:
@@ -478,21 +480,23 @@ def consume_dashboard_snapshot(
         "schema_version", "engine_id", "sequence", "generated_at", "network",
         "pending_external", "tasks", "agents", "plugins", "log_page",
     }
-    if type(version) is int and version in (2, 3, 4, 5, 6):
+    if type(version) is int and version in (2, 3, 4, 5, 6, 7):
         keys |= {"paused", "stop_requested"}
-    if type(version) is int and version in (3, 4, 5, 6):
+    if type(version) is int and version in (3, 4, 5, 6, 7):
         keys.add("services")
-    if type(version) is int and version in (4, 5, 6):
+    if type(version) is int and version in (4, 5, 6, 7):
         keys.add("model_history")
-    if type(version) is int and version in (5, 6):
+    if type(version) is int and version in (5, 6, 7):
         keys.add("hub")
-    if type(version) is int and version == 6:
+    if type(version) is int and version in (6, 7):
+        keys.add("mission_preflight")
+    if type(version) is int and version == 7:
         keys |= {"mission_preflights", "preflight_total_ready"}
     data = _object(payload, keys)
-    if (type(version) is not int or version not in (1, 2, 3, 4, 5, 6)
+    if (type(version) is not int or version not in (1, 2, 3, 4, 5, 6, 7)
             or data["engine_id"] != trusted_engine_id):
         raise ControlCenterStateError("Snapshot identity mismatch")
-    if version in (2, 3, 4, 5, 6) and (type(data["paused"]) is not bool
+    if version in (2, 3, 4, 5, 6, 7) and (type(data["paused"]) is not bool
                           or type(data["stop_requested"]) is not bool):
         raise ControlCenterStateError("Invalid durable operator control state")
     sequence = _integer(data["sequence"], "snapshot sequence", maximum=2**63 - 1)
@@ -530,7 +534,7 @@ def consume_dashboard_snapshot(
         raise ControlCenterStateError("Duplicate plugin name")
 
     services: tuple[ServiceView, ...] = ()
-    if version in (3, 4, 5, 6):
+    if version in (3, 4, 5, 6, 7):
         raw_services = data["services"]
         if not isinstance(raw_services, list) or len(raw_services) > 3:
             raise ControlCenterStateError("Invalid bounded service list")
@@ -539,7 +543,7 @@ def consume_dashboard_snapshot(
             raise ControlCenterStateError("Duplicate service identities")
 
     model_history: tuple[ModelUsageView, ...] = ()
-    if version in (4, 5, 6):
+    if version in (4, 5, 6, 7):
         raw_history = data["model_history"]
         if not isinstance(raw_history, list) or len(raw_history) > 20:
             raise ControlCenterStateError("Invalid bounded model usage history")
@@ -551,24 +555,29 @@ def consume_dashboard_snapshot(
             raise ControlCenterStateError("Model history order mismatch")
 
     hub = None
-    if version in (5, 6) and data["hub"] is not None:
+    if version in (5, 6, 7) and data["hub"] is not None:
         hub = _local_hub(data["hub"], generated_at)
+
+    mission_preflight = None
+    if version in (6, 7) and data["mission_preflight"] is not None:
+        mission_preflight = _mission_preflight(data["mission_preflight"], tasks)
 
     mission_preflights: tuple[MissionPreflightView, ...] = ()
     preflight_total_ready = 0
-    if version == 6:
+    if version == 7:
+        ready = [task.task_id for task in tasks if task.state == "READY"]
         preflight_total_ready = _integer(
             data["preflight_total_ready"], "ready preflight count", maximum=1000)
-        ready_ids = [item.task_id for item in tasks if item.state == "READY"]
-        if preflight_total_ready != len(ready_ids):
-            raise ControlCenterStateError("Preflight ready count mismatches tasks")
+        if preflight_total_ready != len(ready):
+            raise ControlCenterStateError("Preflight READY count mismatch")
         rows = data["mission_preflights"]
         if not isinstance(rows, list) or len(rows) != min(20, preflight_total_ready):
-            raise ControlCenterStateError("Invalid bounded mission preflight page")
-        mission_preflights = tuple(
-            _mission_preflight(item, set(ready_ids)) for item in rows)
-        if [item.mission_id for item in mission_preflights] != ready_ids[:20]:
-            raise ControlCenterStateError("Preflight order mismatches ready tasks")
+            raise ControlCenterStateError("Invalid bounded preflight page")
+        mission_preflights = tuple(_mission_preflight(item, tasks) for item in rows)
+        if ([x.mission_id for x in mission_preflights] != ready[:20]
+                or (mission_preflight is None) != (not mission_preflights)
+                or (mission_preflights and mission_preflight != mission_preflights[0])):
+            raise ControlCenterStateError("Primary and page preflight disagree")
 
     page = _object(data["log_page"], {"items", "next_cursor"})
     if not isinstance(page["items"], list) or len(page["items"]) > MAX_LOG_PAGE:
@@ -588,7 +597,8 @@ def consume_dashboard_snapshot(
         data["network"],
         _integer(data["pending_external"], "pending external count", maximum=100_000),
         tasks, agents, plugins, logs, cursor,
-        data["paused"] if version in (2, 3, 4, 5, 6) else None,
-        data["stop_requested"] if version in (2, 3, 4, 5, 6) else None,
-        services, model_history, hub, mission_preflights, preflight_total_ready,
+        data["paused"] if version in (2, 3, 4, 5, 6, 7) else None,
+        data["stop_requested"] if version in (2, 3, 4, 5, 6, 7) else None,
+        services, model_history, hub, mission_preflight,
+        mission_preflights, preflight_total_ready,
     )
