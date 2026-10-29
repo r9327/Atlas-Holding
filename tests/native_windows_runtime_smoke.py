@@ -20,9 +20,10 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from holding.dashboard_ipc import DashboardIpcClient, DashboardIpcError
+from holding.windows_tree_ram import MemorySampler
 
 
-def run(viewer: Path, engine: Path) -> None:
+def run(viewer: Path, engine: Path, *, ram_receipt: Path | None = None) -> None:
     if os.name != "nt":
         raise RuntimeError("Native runtime proof requires actual Windows")
     for exe in (viewer, engine):
@@ -37,6 +38,10 @@ def run(viewer: Path, engine: Path) -> None:
         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL, shell=False, close_fds=True,
     )
+    sampler = MemorySampler(interval=0.05)
+    sampler.add_root(worker.pid)
+    sampler.start()
+    ram_observed = None
     try:
         if worker.stdin is None or worker.stdout is None:
             raise RuntimeError("Frozen engine diagnostic pipes unavailable")
@@ -75,11 +80,20 @@ def run(viewer: Path, engine: Path) -> None:
             pass
         else:
             raise RuntimeError("Frozen engine accepted untrusted GUI credentials")
-        valid = subprocess.run(
-            argv, input=read_key,
+        # Observe the actual authenticated, frozen Qt GUI and engine
+        # simultaneously, including PyInstaller-spawned descendants.
+        valid = subprocess.Popen(
+            argv, stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            timeout=45, shell=False, check=False,
+            shell=False, close_fds=True,
         )
+        sampler.add_root(valid.pid)
+        try:
+            valid.communicate(input=read_key, timeout=45)
+        except subprocess.TimeoutExpired:
+            valid.kill()
+            valid.wait(timeout=5)
+            raise
         if valid.returncode != 0:
             raise RuntimeError("Frozen GUI could not authenticate to frozen engine")
         try:
@@ -94,6 +108,17 @@ def run(viewer: Path, engine: Path) -> None:
             worker.wait(timeout=5)
         if worker.stdout is not None:
             worker.stdout.close()
+        # No sample, unseen root or an inaccessible Holding descendant
+        # must fail; a single-UI-PID trace is not sufficient evidence.
+        ram_observed = sampler.finish()
+    if ram_receipt is not None:
+        if (not ram_receipt.is_absolute() or ram_receipt.exists()
+                or ram_receipt.is_symlink()
+                or not ram_receipt.parent.is_dir()):
+            raise ValueError("New absolute RAM evidence path required")
+        encoded = json.dumps(ram_observed, sort_keys=True, separators=(",", ":")) + "\\n"
+        with ram_receipt.open("x", encoding="utf-8") as output:
+            output.write(encoded)
     # Standalone durable engine SQLite offline check is independent of the
     # authenticated IPC check and catches missing frozen runtime modules.
     engine_ok = subprocess.run(
@@ -112,8 +137,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--viewer", required=True, type=Path)
     parser.add_argument("--engine", required=True, type=Path)
+    parser.add_argument("--ram-receipt", type=Path)
     args = parser.parse_args()
-    run(args.viewer, args.engine)
+    run(args.viewer, args.engine, ram_receipt=args.ram_receipt)
 
 
 if __name__ == "__main__":
