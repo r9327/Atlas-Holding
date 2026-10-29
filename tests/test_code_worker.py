@@ -74,7 +74,7 @@ else:
 
     def test_existing_code_hints_reach_agent_before_patch(self):
         (self.canonical / "feature.py").write_text(
-            "class ExistingFeature:\\n    pass\\n", encoding="utf-8")
+            "class ExistingFeature:\n    pass\n", encoding="utf-8")
         git(self.canonical, "add", "feature.py")
         git(self.canonical, "commit", "-m", "Existing implementation")
         self.agent_path.write_text('''import json,sys
@@ -99,7 +99,7 @@ else:
         sha=worker(Mission('job',REPO))
         self.assertEqual(len(sha),40)
         self.assertEqual((self.root/'trees'/'job'/'safe.py').read_text(),
-                         'ok=True\\n')
+                         'ok=True\n')
 
     def test_failed_exact_tree_discovery_blocks_model_patch(self):
         from unittest.mock import patch
