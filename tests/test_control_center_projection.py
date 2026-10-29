@@ -254,7 +254,10 @@ class ControlCenterProjectionTests(unittest.TestCase):
         self.assertEqual(state.hub.age_seconds, 12)
         self.assertEqual(state.hub.source_sha256, "c" * 64)
         self.assertEqual(state.plugins, ())
-        self.assertNotIn("ACTIVE", json.dumps(payload))
+        self.assertEqual(payload["plugins"], [])
+        self.assertEqual(payload["agents"], [])
+        # A preflight blocker may legitimately contain NO_ACTIVE_SCOPED_GRANT.
+        # Neither plugin nor agent visibility may be inferred from that word.
 
     def test_old_or_invalid_hub_observation_cannot_claim_live_protocol(self):
         from holding.control_center_projection import DashboardProjectionError
