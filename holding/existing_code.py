@@ -97,7 +97,7 @@ def inspect_existing_code(
         raise ExistingCodeError("Git inventory unavailable") from exc
     if not isinstance(raw, str) or len(raw.encode("utf-8", "surrogateescape")) > 4 * 1024 * 1024:
         raise ExistingCodeError("Git path inventory exceeds bound")
-    records = raw.split("\\0")
+    records = raw.split("\0")
     if records[-1] == "":
         records.pop()
     if len(records) > 20_000:
@@ -106,13 +106,13 @@ def inspect_existing_code(
     seen = set()
     for record in records:
         try:
-            header, path = record.split("\\t", 1)
+            header, path = record.split("\t", 1)
             mode, kind, obj = header.split(" ")
         except ValueError as exc:
             raise ExistingCodeError("Malformed Git tree entry") from exc
         if (not re.fullmatch(r"[0-9a-f]{40}", obj)
                 or path in seen or not path
-                or "\\n" in path or "\\r" in path):
+                or "\n" in path or "\r" in path):
             raise ExistingCodeError("Unsafe or duplicate Git tree entry")
         seen.add(path)
         # Symlinks and submodule commits are never source candidates.
