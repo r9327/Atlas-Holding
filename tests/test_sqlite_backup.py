@@ -32,6 +32,23 @@ class SQLiteBackupTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT payload FROM checkpoints").fetchone()[0], "after-crash")
             self.assertEqual(db.execute("PRAGMA integrity_check").fetchone()[0], "ok")
 
+    def test_restore_preserves_data_with_uri_characters_in_path(self):
+        for name in ("sauvegarde#1.sqlite", "sauvegarde%23.sqlite",
+                     "sauvegarde été.sqlite"):
+            with self.subTest(name=name):
+                folder = self.root / ("dossier # % été " + name)
+                folder.mkdir()
+                backup = create_snapshot(self.db, folder / name)
+                before = {path.name for path in folder.iterdir()}
+                destination = folder / "restored.sqlite"
+                restore_snapshot(backup.database, destination)
+                with closing(sqlite3.connect(destination)) as restored:
+                    self.assertEqual(restored.execute(
+                        "SELECT payload FROM checkpoints").fetchall(),
+                        [("after-crash",)])
+                self.assertEqual({path.name for path in folder.iterdir()},
+                                 before | {destination.name})
+
     def test_snapshot_does_not_leave_temporary_wal_or_shm(self):
         self.snapshot()
         children = sorted(p.name for p in self.root.iterdir() if p.name.startswith('.atlas-snapshot-'))
