@@ -178,6 +178,73 @@ class NativeCandidateDoctorTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             _review_diagnostics(envelope, stage="check")
 
+    def test_validate_failure_exposes_only_bounded_guardian_and_test_id(self):
+        report = {
+            "action": "validate", "status": "FAIL",
+            "execution": {
+                "status": "FAIL",
+                "checks": [{
+                    "key": "atlas_integrity",
+                    "report": {"groups": {
+                        "ASYNC_LIFECYCLE": {
+                            "status": "BLOCKED",
+                            "commands": [{
+                                "exit_code": 2,
+                                "output_tail": (
+                                    "FAIL: test_session "
+                                    "(tests.test_async_suite.Suite.test_session)\\n"
+                                    "secret=never-print-this\\n"
+                                    "C:\\\\private\\\\token=secret"
+                                ),
+                            }],
+                        },
+                        "STARTUP": {"status": "PASS", "commands": []},
+                    }},
+                }],
+            },
+            "selected_checks": {"tests": ["tests.test_example"]},
+            "next_actions": ["ASYNC_LIFECYCLE_FAILED"],
+        }
+        observed = _review_diagnostics(report, stage="validate")
+        self.assertIn("guardian=ASYNC_LIFECYCLE:status=BLOCKED:exit=2", observed)
+        self.assertIn(
+            "failed_test=ASYNC_LIFECYCLE:tests.test_async_suite.Suite.test_session",
+            observed,
+        )
+        self.assertNotIn("never-print-this", " ".join(observed))
+        self.assertNotIn("C:\\\\private", " ".join(observed))
+        self.assertFalse(any("guardian=STARTUP" in line for line in observed))
+
+    def test_integrity_failure_diagnostics_do_not_echo_untrusted_names(self):
+        report = {
+            "action": "validate", "status": "FAIL",
+            "execution": {
+                "status": "FAIL",
+                "checks": [{
+                    "key": "atlas_integrity",
+                    "report": {"groups": {
+                        "TOKEN=must-not-leak": {
+                            "status": "BLOCKED",
+                            "commands": [{"exit_code": 1}],
+                        },
+                        "RESOURCE_BUDGETS": {
+                            "status": "BLOCKED",
+                            "commands": [{
+                                "exit_code": True,
+                                "output_tail": "garbage FAIL: TOKEN=must-not-leak",
+                            }],
+                        },
+                    }},
+                }],
+            },
+            "selected_checks": {"tests": []},
+            "next_actions": [],
+        }
+        observed = _review_diagnostics(report, stage="validate")
+        self.assertIn("guardian=RESOURCE_BUDGETS:status=BLOCKED", observed)
+        self.assertNotIn("must-not-leak", " ".join(observed))
+        self.assertFalse(any("exit=True" in line for line in observed))
+
     def test_review_diagnostics_reject_unbounded_or_incomplete_report(self):
         valid = {
             "action": "validate", "status": "REVIEW",

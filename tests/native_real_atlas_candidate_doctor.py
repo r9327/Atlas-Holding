@@ -218,6 +218,66 @@ def _candidate_summary(*, source_sha: str, candidate_sha: str,
 
 
 
+def _integrity_failure_details(checks: object) -> tuple[str, ...]:
+    """Export bounded failure identities only; never expose raw Doctor output.
+
+    The Doctor envelope is authenticated separately. This adapter is NOT a
+    second certification authority, and diagnostic text cannot grant a PASS.
+    """
+    if not isinstance(checks, list) or len(checks) > 60:
+        return ()
+    findings: list[str] = []
+    for check in checks:
+        if not isinstance(check, dict) or check.get("key") != "atlas_integrity":
+            continue
+        report = check.get("report")
+        groups = report.get("groups") if isinstance(report, dict) else None
+        if not isinstance(groups, dict) or len(groups) > 100:
+            continue
+        for name, item in groups.items():
+            if len(findings) >= 16:
+                break
+            if (not isinstance(name, str)
+                    or not re.fullmatch(r"[A-Z][A-Z0-9_]{1,63}", name)
+                    or not isinstance(item, dict)):
+                continue
+            state = item.get("status")
+            if state not in {"BLOCKED", "FAIL", "REVIEW", "MEASURED_ONLY_FAILED"}:
+                continue
+            commands = item.get("commands")
+            if not isinstance(commands, list) or len(commands) > 20:
+                continue
+            codes = [
+                str(cmd["exit_code"])
+                for cmd in commands
+                if isinstance(cmd, dict)
+                and type(cmd.get("exit_code")) is int
+                and 0 <= cmd["exit_code"] <= 255
+            ]
+            finding = f"guardian={name}:status={state}"
+            if codes:
+                finding += ":exit=" + ",".join(codes[:4])
+            findings.append(finding)
+            # Extract real unittest case identities from existing bounded
+            # command tails, never echo arbitrary stdout/stderr or file paths.
+            seen: set[str] = set()
+            for cmd in commands[:4]:
+                if not isinstance(cmd, dict):
+                    continue
+                tail = cmd.get("output_tail")
+                if not isinstance(tail, str) or len(tail) > 20_000:
+                    continue
+                for case in re.findall(
+                    r"(?:FAIL|ERROR): [A-Za-z0-9_]+ "
+                    r"\\((tests\\.test_[A-Za-z0-9_.]{1,160})\\)",
+                    tail,
+                ):
+                    if case not in seen and len(seen) < 3 and len(findings) < 16:
+                        seen.add(case)
+                        findings.append(f"failed_test={name}:{case}")
+    return tuple(findings)
+
+
 def _review_diagnostics(report: dict, *, stage: str) -> tuple[str, ...]:
     """Extract only bounded non-authorizing reasons from a verified envelope."""
     if not isinstance(report, dict) or stage not in {"check", "validate"}:
@@ -245,11 +305,14 @@ def _review_diagnostics(report: dict, *, stage: str) -> tuple[str, ...]:
         if not isinstance(item, str) or not 1 <= len(item) <= 1500:
             raise RuntimeError("Doctor review explanation is not bounded")
         reason.append(" ".join(item.split())[:180])
+    detail = (_integrity_failure_details(execution.get("checks"))
+              if stage == "validate" else ())
     return (
         "stage=" + stage,
         "execution=" + state,
         "selected_test_modules=" + str(len(selected)),
         *("reason=" + msg for msg in reason),
+        *detail,
     )
 
 
