@@ -335,8 +335,8 @@ def _plan(config: dict, payload: dict, root: Path) -> dict:
                         and not any(token in part.lower()
                                     for part in path.split('/')
                                     for token in (
-                                        'secret', 'password', 'credential',
-                                        'private', 'apikey', 'api_key',
+                                        'secret', 'token', 'password',
+                                        'credential', 'private', 'apikey', 'api_key',
                                         '.env', '.pem', '.p12', 'id_rsa')))
             if (not isinstance(observed, list) or len(observed) > 20
                     or any(not safe_path(p) for p in observed)
