@@ -18,6 +18,8 @@ from .github_full_evidence import (
 )
 from .github_mutation_gate import GitHubMutationIntent
 from .github_pr_inventory import OpenPrInventory, PrInventoryError, parse_open_prs
+from .github_pr_changed_paths import (PrChangedPaths, PrChangedPathsError,
+                                     parse_pr_changed_paths)
 from .sync_coordinator import LiveGitHubState, MutationFailure
 
 
@@ -222,6 +224,33 @@ class GitHubPrivilegedTransport:
             pull["draft"], True, merged=pull["merged"],
             ci_run_id=run_id, ci_head_sha=run_sha,
         )
+
+    def observe_pr_paths(self, repository: str, pr_number: int,
+                         head_sha: str) -> PrChangedPaths:
+        """Only paths for the exact open PR head observed before and after GET."""
+        if (repository != self.repository or type(pr_number) is not int
+                or pr_number < 1 or not isinstance(head_sha, str)
+                or not _SHA.fullmatch(head_sha)):
+            raise GitHubEvidenceError("Invalid exact-head PR paths request")
+        def assert_pr_head():
+            pull = self._pull(pr_number)
+            head, base = pull.get("head"), pull.get("base")
+            if (pull.get("state") != "open"
+                    or not isinstance(head, dict)
+                    or head.get("sha") != head_sha
+                    or not isinstance(base, dict)
+                    or not isinstance(base.get("repo"), dict)
+                    or base["repo"].get("full_name") != repository):
+                raise GitHubEvidenceError("PR head moved or belongs to another repository")
+        assert_pr_head()
+        rows = self._request(
+            "GET", self._url(f"pulls/{pr_number}/files?per_page=100"),
+            response_array=True)
+        assert_pr_head()
+        try:
+            return parse_pr_changed_paths(repository, pr_number, head_sha, rows)
+        except PrChangedPathsError as exc:
+            raise GitHubEvidenceError("Malformed exact-head PR file listing") from exc
 
     def observe_open_prs(self, repository: str) -> OpenPrInventory:
         """Read a bounded API page with the existing credential-isolated broker."""
