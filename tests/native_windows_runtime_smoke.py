@@ -111,14 +111,6 @@ def run(viewer: Path, engine: Path, *, ram_receipt: Path | None = None) -> None:
         # No sample, unseen root or an inaccessible Holding descendant
         # must fail; a single-UI-PID trace is not sufficient evidence.
         ram_observed = sampler.finish()
-    if ram_receipt is not None:
-        if (not ram_receipt.is_absolute() or ram_receipt.exists()
-                or ram_receipt.is_symlink()
-                or not ram_receipt.parent.is_dir()):
-            raise ValueError("New absolute RAM evidence path required")
-        encoded = json.dumps(ram_observed, sort_keys=True, separators=(",", ":")) + "\\n"
-        with ram_receipt.open("x", encoding="utf-8") as output:
-            output.write(encoded)
     # Standalone durable engine SQLite offline check is independent of the
     # authenticated IPC check and catches missing frozen runtime modules.
     engine_ok = subprocess.run(
@@ -130,6 +122,14 @@ def run(viewer: Path, engine: Path, *, ram_receipt: Path | None = None) -> None:
     )
     if engine_ok.returncode != 0:
         raise RuntimeError("Frozen engine failed actual offline SQLite self-test")
+    if ram_receipt is not None:
+        if (not ram_receipt.is_absolute() or ram_receipt.exists()
+                or ram_receipt.is_symlink()
+                or not ram_receipt.parent.is_dir()):
+            raise ValueError("New absolute RAM evidence path required")
+        encoded = json.dumps(ram_observed, sort_keys=True, separators=(",", ":")) + "\n"
+        with ram_receipt.open("x", encoding="utf-8") as output:
+            output.write(encoded)
     print("NONRELEASE_FROZEN_ENGINE_TO_FROZEN_GUI_IPC_PASS")
 
 
