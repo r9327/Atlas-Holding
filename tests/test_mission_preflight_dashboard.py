@@ -157,6 +157,27 @@ class MissionPreflightDashboardTests(unittest.TestCase):
                 json.dumps(payload).encode(), trusted_engine_id="eng-f02",
                 expected_sequence=payload["sequence"], now_epoch=NOW)
 
+    def test_same_sequence_heartbeat_refreshes_advisory_table(self):
+        from dataclasses import replace
+        from PySide6.QtWidgets import QApplication
+        from holding.control_center_ui import ControlCenterWindow
+        app = QApplication.instance() or QApplication([])
+        _, initial = self.read()
+        window = ControlCenterWindow(trusted_engine_id="eng-f02")
+        try:
+            self.assertTrue(window.render_state(initial))
+            self.assertIn("Manquant", window.preflights.item(0, 2).text())
+            self.grant()
+            _, updated = self.read()
+            # An authenticated heartbeat can refresh advisory local grants
+            # without a new durable task transition.
+            heartbeat = replace(updated, sequence=initial.sequence)
+            self.assertTrue(window.acknowledge_authenticated_state(heartbeat))
+            self.assertIn("Grant existant", window.preflights.item(0, 2).text())
+            self.assertIn("Prérequis observés", window.preflights.item(0, 1).text())
+        finally:
+            window.close()
+
     def test_qt_tab_displays_blocker_without_launch_capability(self):
         from PySide6.QtWidgets import QApplication
         from holding.control_center_ui import ControlCenterWindow
