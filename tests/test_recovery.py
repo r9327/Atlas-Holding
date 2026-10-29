@@ -64,6 +64,27 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(self.recovery.recover('x').state,'RECOVERY_REQUIRED')
         self.assertTrue((tree.path/'uncommitted.py').exists())
 
+    def test_clean_unjournaled_commit_is_never_auto_replayed(self):
+        tree = self.actor.create('x')
+        # An external process can write a valid Git commit without the
+        # trusted journal. The clean status alone is NOT a recovery proof.
+        (tree.path / 'code.py').write_text('untracked Git operation\n')
+        git(tree.path, 'add', 'code.py')
+        git(tree.path, 'commit', '-m', 'external unjournaled write')
+        original_head = git(tree.path, 'rev-parse', 'HEAD')
+        self.quarantine()
+        outcome = self.recovery.recover('x')
+        self.assertEqual(outcome.state, 'RECOVERY_REQUIRED')
+        self.assertIn('journaled', outcome.reason)
+        mission = self.store.missions()[0]
+        self.assertEqual(mission.state, 'RECOVERY_REQUIRED')
+        self.assertEqual(mission.candidate_sha, '')
+        self.assertEqual(mission.evidence_sha, '')
+        self.assertEqual(mission.failures_without_progress, 0)
+        self.assertEqual(git(tree.path, 'rev-parse', 'HEAD'), original_head)
+        self.assertTrue((tree.path / 'code.py').exists())
+        self.assertEqual(self.recovery.recover('x').state, 'RECOVERY_REQUIRED')
+
     def test_unknown_job_refused(self):
         self.quarantine()
         with self.assertRaises(StoreError):
