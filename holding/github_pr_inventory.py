@@ -97,6 +97,7 @@ def validate_open_pr_inventory(repository: str, result: Any) -> OpenPrInventory:
             "can_certify", "can_skip_implementation"}:
         raise PrInventoryError("Malformed privileged PR inventory response")
     if (result["repository"] != repository
+            or not isinstance(result["status"], str)
             or result["status"] not in {"PAGINATION_NOT_VERIFIED", "OPEN_PRS_OBSERVED"}
             or type(result["observed_count"]) is not int
             or not 0 <= result["observed_count"] <= 100
