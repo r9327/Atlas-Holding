@@ -72,6 +72,7 @@ class OpenPrInventoryTests(unittest.TestCase):
             {"repository": "other/repo"},
             {"observed_count": 100},
             {"status": "PAGINATION_NOT_VERIFIED"},
+            {"status": ["OPEN_PRS_OBSERVED"]},
             {"hints": []},
         )
         for change in variants:
