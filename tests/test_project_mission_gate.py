@@ -83,6 +83,29 @@ class ProjectMissionGateTests(unittest.TestCase):
         self.assertEqual(len(self.calls), 1)
         self.assertEqual(self.calls[0][1], "trusted:roadmap")
 
+    def test_verified_planner_goal_reaches_real_importer(self):
+        from holding.control import ControlPlane
+        goal='Concevoir une plateforme qui simplifie la recherche.'
+        self.roadmap['project_goal']=goal
+        self.missions['project_goal']=goal
+        with ControlPlane(Path(self.temp.name) / 'engine.sqlite') as control:
+            result=self.invoke(trusted_importer=control.import_roadmap)
+            self.assertEqual(result.added,('lot-1','lot-2'))
+            specs=[json.loads(row[0]) for row in control.store.db.execute(
+                'SELECT spec_json FROM mission_specs ORDER BY id')]
+            self.assertEqual([spec['project_goal'] for spec in specs],[goal,goal])
+
+    def test_unverified_or_missing_goal_cannot_be_injected(self):
+        self.missions['project_goal']='Unverified change'
+        with self.assertRaisesRegex(ProjectMissionGateError,'project goal differs'):
+            self.invoke()
+        self.assertFalse(self.calls)
+        self.missions.pop('project_goal')
+        self.roadmap['project_goal']='Verified goal'
+        with self.assertRaisesRegex(ProjectMissionGateError,'project goal differs'):
+            self.invoke()
+        self.assertFalse(self.calls)
+
     def test_wrong_repository_denied_before_import(self):
         self.missions["repo"] = "example/other"
         with self.assertRaisesRegex(ProjectMissionGateError, "another project"):
@@ -119,7 +142,7 @@ class ProjectMissionGateTests(unittest.TestCase):
 
     def test_restricted_planner_lot_cannot_be_imported(self):
         self.roadmap["lots"][1]["autonomy"] = "REQUIRES_DECISION"
-        with self.assertRaisesRegex(ProjectMissionGateError, "human decision"):
+        with self.assertRaisesRegex(ProjectMissionGateError, "restricted or dependent"):
             self.invoke()
         self.assertFalse(self.calls)
 
@@ -157,9 +180,65 @@ class ProjectMissionGateTests(unittest.TestCase):
 
     def test_planner_blocked_lot_cannot_be_silently_imported_ready(self):
         self.roadmap["lots"][1]["state"] = "BLOCKED"
-        with self.assertRaisesRegex(ProjectMissionGateError, "blocked planner"):
+        with self.assertRaisesRegex(ProjectMissionGateError, "restricted or dependent"):
             self.invoke()
         self.assertEqual(self.calls, [])
+
+    def test_independent_lot_is_importable_when_another_is_blocked(self):
+        self.roadmap["lots"][1]["state"] = "BLOCKED"
+        self.missions["missions"].pop()
+        self.assertEqual(self.invoke(), {"count": 1})
+        self.assertEqual([m["id"] for m in json.loads(self.calls[0][0])["missions"]],
+                         ["lot-1"])
+
+    def test_restricted_lot_and_its_descendants_stay_out_of_import(self):
+        self.roadmap["lots"][1]["autonomy"] = "REQUIRES_DECISION"
+        self.roadmap["lots"][1]["state"] = "REQUIRES_DECISION"
+        self.roadmap["requirements"].append({"id": "req-3", "statement": "Downstream"})
+        self.roadmap["lots"].append({
+            "id": "lot-3", "title": "Downstream", "dependencies": ["lot-2"],
+            "requirement_ids": ["req-3"], "acceptance": ["prove downstream"],
+            "autonomy": "AUTO", "state": "TRIAGED",
+            "external_evidence_required": False, "external_review_pending": False,
+        })
+        self.missions["missions"] = [operations()["missions"][0]]
+        self.assertEqual(self.invoke(), {"count": 1})
+        self.assertEqual(len(self.calls), 1)
+        self.calls.clear()
+        self.missions["missions"].append({
+            "id": "lot-3", "operation": "code", "depends_on": ["lot-2"],
+            "acceptance": ["prove downstream"],
+        })
+        with self.assertRaisesRegex(ProjectMissionGateError, "restricted or dependent"):
+            self.invoke()
+        self.assertFalse(self.calls)
+
+    def test_real_importer_can_add_unblocked_lots_later_without_losing_work(self):
+        from holding.control import ControlPlane
+
+        self.roadmap["lots"][1]["state"] = "BLOCKED"
+        self.missions["missions"].pop()
+        with ControlPlane(Path(self.temp.name) / "engine.sqlite") as control:
+            first = self.invoke(trusted_importer=control.import_roadmap)
+            self.assertEqual(first.added, ("lot-1",))
+            self.assertEqual([m.id for m in control.store.missions()], ["lot-1"])
+            self.assertEqual(control.store.missions()[0].state, "READY")
+
+            # A separately verified, exact-source replan unblocks lot-2.
+            self.roadmap["lots"][1]["state"] = "TRIAGED"
+            self.missions = operations()
+            second = self.invoke(trusted_importer=control.import_roadmap)
+            self.assertEqual(second.added, ("lot-2",))
+            self.assertEqual(second.preserved, ("lot-1",))
+            self.assertEqual({m.id for m in control.store.missions()},
+                             {"lot-1", "lot-2"})
+
+    def test_no_independent_lots_cannot_be_imported(self):
+        self.roadmap["lots"][0]["state"] = "BLOCKED"
+        self.missions["missions"] = []
+        with self.assertRaisesRegex(ProjectMissionGateError, "no independently importable"):
+            self.invoke()
+        self.assertFalse(self.calls)
 
     def test_user_decision_flag_cannot_be_hidden_in_auto_mission(self):
         self.missions["missions"][0]["product_decision_required"] = True

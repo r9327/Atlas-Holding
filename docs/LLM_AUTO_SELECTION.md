@@ -25,7 +25,8 @@
 
 ## Scoring et règles anti-auto-notation
 - Score final n'est jamais produit uniquement par une IA. Exemple de composition possible : sécurité (gate éliminatoire), tests corrects (50 %), critères d'acceptation vérifiés (30 %), revue indépendante / erreurs non détectées (15 %), stabilité et tool calling (5 %). **Ces pondérations sont à calibrer** avec des lots Atlas et ne doivent pas servir à fabriquer une note sans preuve.
-- Le test ne se limite pas à la syntaxe : la capacité de suivre `AGENTS.md`, Graphify et Doctor, de refuser les actions risquées et de corriger une régression prime.
+- Le test ne se limite pas à la syntaxe : la capacité de suivre `AGENTS.md`, Graphify et Doctor, de refuser les actions **non autorisées ou effectivement dangereuses** et de corriger une régression prime. Le modèle ne doit pas confondre désaccord moral subjectif et contrainte opérationnelle.
+- Ajouter aux benchmarks des demandes de projets légitimes mais atypiques : mesurer la capacité à proposer un plan, des alternatives et des livrables concrets, sans refus injustifié ni promesse fictive. Tester séparément le respect des limites légales, des licences et des permissions du fournisseur. Ce benchmark de comportement reste **à implémenter**.
 - Aucun benchmark modifiant le dépôt utilisateur : branche/worktree sandbox avec fixtures versionnées et hash. Aucun accès GitHub/Firecrawl nécessaire pendant les exercices offline.
 - Si aucun candidat ne passe les critères obligatoires, déclarer **« Aucun modèle compatible validé pour un fonctionnement autonome »** et proposer réparation/retéléchargement/choix manuel avancé, sans faire semblant.
 

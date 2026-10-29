@@ -91,6 +91,39 @@ class SelectedProjectPlanTests(unittest.TestCase):
         self.assertEqual(result.profile_digest, self.entry.digest)
         self.assertFalse((self.root / ".git").exists())
 
+    def test_preflight_displays_restricted_and_dependent_lots(self):
+        self.registry.select("dofus-atlas", expected_digest=self.entry.digest)
+        full = plan()
+        full["lots"][1]["state"] = "BLOCKED"
+        full["requirements"].append({"id": "req-3", "statement": "Dependent"})
+        full["lots"].append({
+            "id": "lot-3", "title": "Dependent", "dependencies": ["lot-2"],
+            "requirement_ids": ["req-3"], "acceptance": ["test dependent"],
+            "autonomy": "AUTO", "state": "TRIAGED",
+            "external_evidence_required": False,
+            "external_review_pending": False,
+        })
+        self.planfile.write_text(json.dumps(full), encoding="utf-8")
+        binding = self.bind()
+        self.assertEqual(binding.lot_ids, ("lot-1", "lot-2", "lot-3"))
+        self.assertEqual(binding.importable_lots, ("lot-1",))
+        self.assertEqual(binding.deferred_lots, ("lot-2", "lot-3"))
+        self.assertEqual(binding.status, "PREFLIGHT_ONLY")
+        result = subprocess.run(
+            [sys.executable, "-m", "holding.project_registry_cli",
+             "--root", str(self.root / "config"),
+             "verify-plan", str(self.planfile),
+             "--expected-profile-digest", self.entry.digest,
+             "--snapshot-sha", SHA, "--source-digest", SOURCE],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["importable_lots"], ["lot-1"])
+        self.assertEqual(report["deferred_lots"], ["lot-2", "lot-3"])
+        self.assertEqual(report["lot_count"], 3)
+        self.assertFalse(report["execution_performed"])
+
     def test_no_implicit_project_selection(self):
         with self.assertRaisesRegex(ProjectPlanBindingError, "no project"):
             self.bind()

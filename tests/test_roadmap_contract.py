@@ -43,6 +43,17 @@ class RoadmapContractTests(unittest.TestCase):
         with self.assertRaises(AttributeError):
             result.snapshot_sha = "c" * 40
 
+    def test_optional_product_goal_is_bounded_and_preserved(self):
+        p=plan()
+        p['project_goal']='Créer un outil utile aux utilisateurs.'
+        self.assertEqual(validate(p).project_goal,p['project_goal'])
+        self.assertIsNone(validate(plan()).project_goal)
+        for value in ('', ' '*10, 'X'*4097, None, False):
+            with self.subTest(value=str(value)[:12]):
+                p['project_goal']=value
+                with self.assertRaises(RoadmapContractError):
+                    validate(p)
+
     def test_source_identity_is_exact(self):
         value = plan(); value["source_digest"] = "c" * 64
         with self.assertRaisesRegex(RoadmapContractError, "trusted source"):

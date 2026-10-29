@@ -1,0 +1,38 @@
+name: Project chat R&D validation (opt-in)
+on:
+  pull_request:
+    types: [labeled]
+permissions:
+  contents: read
+jobs:
+  chat-qt:
+    if: github.event.label.name == 'ci:project-chat'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install Qt runtime on Linux
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libegl1
+      - name: Install pinned PySide6
+        run: python -m pip install --disable-pip-version-check PySide6==6.12.0
+      - name: Run UI contract
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PYTHONUTF8: 1
+        run: python -B -X utf8 -m unittest discover -s tests -p 'test_project_chat_ui.py' -v
+      - name: Require clean checkout
+        shell: bash
+        run: 'test -z "$(git status --porcelain --untracked-files=normal)"'

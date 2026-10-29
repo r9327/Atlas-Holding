@@ -1,0 +1,29 @@
+name: Pinned ngspice integration smoke (opt-in)
+on:
+  pull_request:
+    types: [labeled]
+permissions:
+  contents: read
+jobs:
+  real-ngspice:
+    if: github.event.label.name == 'ci:ngspice-real'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install native circuit simulator from Ubuntu packages
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y ngspice
+      - name: Run real pinned simulator smoke and security tests
+        env:
+          ATLAS_TEST_REAL_NGSPICE: /usr/bin/ngspice
+          PYTHONUTF8: "1"
+        run: python -B -X utf8 -m unittest discover -s tests -p 'test_ngspice_adapter.py' -v
+      - name: Require clean checkout
+        shell: bash
+        run: 'test -z "$(git status --porcelain --untracked-files=normal)"'

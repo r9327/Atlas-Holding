@@ -52,6 +52,29 @@ class RoadmapControlIntakeTests(unittest.TestCase):
             stored = db.db.execute("SELECT source FROM roadmap_versions").fetchone()[0]
             self.assertEqual(stored, "user:roadmap-v1")
 
+    def test_optional_global_goal_is_stored_but_never_grants_permissions(self):
+        goal='Permettre une expérience fiable et accessible sans perdre les données.'
+        document=json.loads(payload([mission('a'),mission('b', ['a'])]))
+        document['project_goal']=goal
+        self.file.write_text(json.dumps(document),encoding='utf-8')
+        self.assertEqual(self.invoke()['added'],['a','b'])
+        with StateStore(self.db) as db:
+            specs=[json.loads(row[0]) for row in db.db.execute(
+                'SELECT spec_json FROM mission_specs ORDER BY id')]
+            self.assertTrue(all(item['project_goal']==goal for item in specs))
+            self.assertEqual(db.db.execute('SELECT count(*) FROM grants').fetchone()[0],0)
+
+    def test_invalid_project_goal_never_partially_imports(self):
+        for goal in ('', ' ', 'a'*4097, [], None):
+            data=json.loads(payload([mission('a')]))
+            data['project_goal']=goal
+            self.file.write_text(json.dumps(data),encoding='utf-8')
+            with self.subTest(goal=str(goal)[:12]):
+                with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                    self.invoke()
+                with StateStore(self.db) as db:
+                    self.assertEqual(db.missions(), ())
+
     def test_idempotent_reimport_and_new_dependent_work(self):
         self.file.write_text(payload([mission("a")]), encoding="utf-8")
         first = self.invoke()
