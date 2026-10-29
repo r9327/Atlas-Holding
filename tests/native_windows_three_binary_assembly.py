@@ -116,6 +116,11 @@ def assemble(
                 raise RuntimeError("Real frozen runtime missing")
         _run([str(engine), "--self-test"], cwd=runtime_root, timeout=90)
         _run([str(viewer), "--self-test"], cwd=runtime_root, timeout=90)
+        # The packaged Control Center must also contain the R&D chat UI.
+        # Smoke the isolated mode from the TRUE frozen EXE; no model, SQLite
+        # authority, IPC capabilities or Python interpreter are provisioned.
+        _run([str(viewer), "--project-chat-self-test"],
+             cwd=runtime_root, timeout=90)
         _run([
             sys.executable, "-B",
             str(Path(__file__).with_name("native_windows_runtime_smoke.py")),
