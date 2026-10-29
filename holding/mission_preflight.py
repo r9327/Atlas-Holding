@@ -34,6 +34,79 @@ class MissionPreflight:
     executes_actions: bool = False
 
 
+def inspect_mission_in_connection(
+    db: sqlite3.Connection, mission_id: str, *, now_epoch: int,
+) -> MissionPreflight:
+    """Inspect within the caller's existing consistent SQLite read transaction.
+
+    The daemon projection invokes this for its displayed mission only. It must
+    never hold a SQLite write lock or perform background network checks.
+    """
+    if not isinstance(mission_id, str) or not _MISSION_ID.fullmatch(mission_id):
+        raise StoreError("Invalid mission ID")
+    if type(now_epoch) is not int or now_epoch < 0:
+        raise StoreError("Invalid preflight timestamp")
+    row = db.execute("SELECT * FROM missions WHERE id=?", (mission_id,)).fetchone()
+    if row is None:
+        raise StoreError("Unknown mission")
+    mission = StateStore._mission(row)
+    blockers: list[str] = []
+    waiting: list[str] = []
+    for dep in mission.dependencies:
+        dependency = db.execute(
+            "SELECT state,candidate_sha,evidence_sha FROM missions WHERE id=?",
+            (dep,),
+        ).fetchone()
+        if dependency is None:
+            blockers.append("UNKNOWN_DEPENDENCY:" + dep)
+        elif (dependency["state"] != "DONE"
+              or not dependency["candidate_sha"]
+              or dependency["candidate_sha"] != dependency["evidence_sha"]):
+            waiting.append(dep)
+
+    grants = [
+        StandingGrant(r["repo"], frozenset({r["operation"]}),
+                      r["expires_epoch"], bool(r["enabled"]))
+        for r in db.execute(
+            "SELECT repo,operation,expires_epoch,enabled FROM grants "
+            "WHERE repo=? AND operation=?", (mission.repo, mission.operation))
+    ]
+    granted = any(g.allows(mission.repo, mission.operation, now_epoch)
+                  for g in grants)
+    permission = "SCOPED_GRANT_PRESENT" if granted else "MISSING_OR_EXPIRED"
+    if mission.operation in FORBIDDEN_OPERATIONS or mission.operation not in KNOWN_OPERATIONS:
+        blockers.append("UNSUPPORTED_OPERATION")
+    if not granted:
+        blockers.append("NO_ACTIVE_SCOPED_GRANT")
+    if mission.product_decision_required:
+        blockers.append("PRODUCT_DECISION_REQUIRED")
+    if mission.failures_without_progress >= 3:
+        blockers.append("RETRY_BUDGET_EXHAUSTED")
+    flags = dict(db.execute(
+        "SELECT key,value FROM settings WHERE key IN ('paused','stop_requested')").fetchall())
+    if flags.get("paused") == "1" or flags.get("stop_requested") == "1":
+        blockers.append("OPERATOR_SUSPENDED")
+    if mission.state == "READY" and db.execute(
+        "SELECT 1 FROM missions WHERE state='RUNNING' AND id!=? LIMIT 1",
+        (mission_id,)).fetchone():
+        blockers.append("OTHER_MISSION_RUNNING")
+    if mission.external_required:
+        blockers.append("EXTERNAL_HEALTH_NOT_VERIFIED")
+
+    if mission.state != "READY":
+        status = "NOT_READY"
+    elif blockers:
+        status = "BLOCKED"
+    elif waiting:
+        status = "WAITING_FOR_DEPENDENCIES"
+    else:
+        status = "PRECHECK_PASSED"
+    return MissionPreflight(
+        mission_id, mission.repo, mission.operation, mission.state,
+        status, tuple(blockers), tuple(waiting), permission,
+    )
+
+
 def inspect_mission(db_path: Path, mission_id: str, *, now_epoch: int | None = None) -> MissionPreflight:
     """Inspect existing local SQLite without creating a file, table or grant.
 
@@ -57,64 +130,6 @@ def inspect_mission(db_path: Path, mission_id: str, *, now_epoch: int | None = N
         with closing(sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True, timeout=2)) as db:
             db.row_factory = sqlite3.Row
             db.execute("PRAGMA query_only=ON")
-            row = db.execute("SELECT * FROM missions WHERE id=?", (mission_id,)).fetchone()
-            if row is None:
-                raise StoreError("Unknown mission")
-            mission = StateStore._mission(row)
-            blockers: list[str] = []
-            waiting: list[str] = []
-            for dep in mission.dependencies:
-                dependency = db.execute(
-                    "SELECT state,candidate_sha,evidence_sha FROM missions WHERE id=?",
-                    (dep,),
-                ).fetchone()
-                if dependency is None:
-                    blockers.append("UNKNOWN_DEPENDENCY:" + dep)
-                elif (dependency["state"] != "DONE"
-                      or not dependency["candidate_sha"]
-                      or dependency["candidate_sha"] != dependency["evidence_sha"]):
-                    waiting.append(dep)
-
-            grants = [
-                StandingGrant(r["repo"], frozenset({r["operation"]}),
-                              r["expires_epoch"], bool(r["enabled"]))
-                for r in db.execute(
-                    "SELECT repo,operation,expires_epoch,enabled FROM grants "
-                    "WHERE repo=? AND operation=?", (mission.repo, mission.operation))
-            ]
-            granted = any(g.allows(mission.repo, mission.operation, now_epoch)
-                          for g in grants)
-            permission = "SCOPED_GRANT_PRESENT" if granted else "MISSING_OR_EXPIRED"
-            if mission.operation in FORBIDDEN_OPERATIONS or mission.operation not in KNOWN_OPERATIONS:
-                blockers.append("UNSUPPORTED_OPERATION")
-            if not granted:
-                blockers.append("NO_ACTIVE_SCOPED_GRANT")
-            if mission.product_decision_required:
-                blockers.append("PRODUCT_DECISION_REQUIRED")
-            if mission.failures_without_progress >= 3:
-                blockers.append("RETRY_BUDGET_EXHAUSTED")
-            flags = dict(db.execute(
-                "SELECT key,value FROM settings WHERE key IN ('paused','stop_requested')").fetchall())
-            if flags.get("paused") == "1" or flags.get("stop_requested") == "1":
-                blockers.append("OPERATOR_SUSPENDED")
-            if mission.state == "READY" and db.execute(
-                "SELECT 1 FROM missions WHERE state='RUNNING' AND id!=? LIMIT 1",
-                (mission_id,)).fetchone():
-                blockers.append("OTHER_MISSION_RUNNING")
-            if mission.external_required:
-                blockers.append("EXTERNAL_HEALTH_NOT_VERIFIED")
-
-            if mission.state != "READY":
-                status = "NOT_READY"
-            elif blockers:
-                status = "BLOCKED"
-            elif waiting:
-                status = "WAITING_FOR_DEPENDENCIES"
-            else:
-                status = "PRECHECK_PASSED"
-            return MissionPreflight(
-                mission_id, mission.repo, mission.operation, mission.state,
-                status, tuple(blockers), tuple(waiting), permission,
-            )
+            return inspect_mission_in_connection(db, mission_id, now_epoch=now_epoch)
     except sqlite3.DatabaseError as exc:
         raise StoreError("Cannot inspect existing state database") from exc
