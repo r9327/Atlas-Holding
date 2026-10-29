@@ -191,3 +191,16 @@ explicitement `target: DISPOSABLE_LOCAL_GIT_NOT_REAL_ATLAS`,
 `release_ready: false` : cette épreuve valide l'ordonnancement, la réparation et
 la clôture persistante, mais pas trois PR GitHub ni le Doctor canonique Atlas.
 
+
+
+## Accès au chat R&D depuis le binaire Windows gelé (candidat nonrelease)
+
+Le candidat Windows embarque désormais l’interface PySide6 `ProjectChatWindow` dans `AtlasHoldingControlCenter.exe`, via **un mode d’exécution séparé**, sans joindre les capacités privées de lecture/commande du tableau de bord. La vérification `--project-chat-self-test` instancie les véritables widgets R&D depuis le binaire gelé ; l’assemblage natif échoue si ce mode ou ses dépendances sont absents.
+
+**Mode opérateur explicite, non automatisé** (fichiers locaux choisis et config modèle préexistante) :
+
+```powershell
+& "C:\\Atlas Holding\\runtime\\<version>\\AtlasHoldingControlCenter.exe" --project-chat --chat-db "C:\\Atlas Holding\\state\\holding.sqlite" --chat-repo "owner/repository" --chat-model-config "C:\\Atlas Holding\\models\\local-model.json"
+```
+
+Le chemin de version et les fichiers doivent être adaptés aux chemins **réellement installés** ; ceci n’est pas une commande à copier telle quelle. L’accès au chat est un mode indépendant avec une sélection de projet/configuration explicite : **l’installeur n’ajoute pas encore un bouton « Nouveau projet » et ne crée pas automatiquement la configuration du modèle ni un raccourci**. Ces étapes restent des critères du parcours utilisateur final, tout comme les mesures de RAM, un essai complet à modèle réel et les preuves Windows de machine neuve. Un test Qt ou un EXE démarré ne certifie ni une étude R&D réelle ni une release publiable.
