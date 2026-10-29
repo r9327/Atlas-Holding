@@ -273,6 +273,85 @@ MCP_HUB_JOURNAL_SCHEMA = (
 )
 
 
+PROJECT_CHAT_SCHEMA = (
+    """CREATE TABLE IF NOT EXISTS project_chat_sessions (
+        session_id TEXT PRIMARY KEY,
+        repository TEXT NOT NULL,
+        initial_goal TEXT NOT NULL,
+        questions_json TEXT NOT NULL,
+        answers_json TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('ASSESSING','ASKING','GENERATING','READY')),
+        mission_id TEXT NOT NULL UNIQUE,
+        proposal_sha256 TEXT,
+        updated_epoch INTEGER NOT NULL
+    )""",
+)
+
+
+RESEARCH_WORKPLAN_SCHEMA = (
+    """CREATE TABLE IF NOT EXISTS project_workplans (
+     session_id TEXT PRIMARY KEY REFERENCES project_chat_sessions(session_id),
+     repository TEXT NOT NULL,
+     proposal_sha256 TEXT NOT NULL,
+     spec_sha256 TEXT NOT NULL,
+     model_digest TEXT NOT NULL,
+     plan_sha256 TEXT NOT NULL,
+     plan_json TEXT NOT NULL,
+     state TEXT NOT NULL CHECK(state IN ('PREPARED','STAGED')),
+     queued_json TEXT NOT NULL,
+     deferred_json TEXT NOT NULL,
+     updated_epoch INTEGER NOT NULL
+    )""",
+)
+
+
+RESEARCH_SIMULATION_SCHEMA = (
+    """CREATE TABLE IF NOT EXISTS research_simulation_runs (
+     session_id TEXT NOT NULL REFERENCES project_workplans(session_id),
+     task_index INTEGER NOT NULL CHECK(task_index>=0 AND task_index<8),
+     plan_sha256 TEXT NOT NULL,
+     spec_sha256 TEXT NOT NULL,
+     result_sha256 TEXT NOT NULL,
+     result_json TEXT NOT NULL,
+     computed_epoch INTEGER NOT NULL,
+     PRIMARY KEY(session_id,task_index)
+    )""",
+)
+
+
+RESEARCH_CIRCUIT_SCHEMA = (
+    """CREATE TABLE IF NOT EXISTS research_circuit_runs (
+     session_id TEXT NOT NULL REFERENCES project_workplans(session_id),
+     task_index INTEGER NOT NULL CHECK(task_index >= 0 AND task_index < 8),
+     plan_sha256 TEXT NOT NULL,
+     circuit_sha256 TEXT NOT NULL,
+     executable_sha256 TEXT NOT NULL,
+     result_sha256 TEXT NOT NULL,
+     result_json TEXT NOT NULL,
+     computed_epoch INTEGER NOT NULL,
+     PRIMARY KEY(session_id,task_index)
+    )""",
+)
+
+
+RESEARCH_MEASUREMENT_SCHEMA = (
+    """CREATE TABLE IF NOT EXISTS research_measurement_comparisons (
+     session_id TEXT NOT NULL,
+     task_index INTEGER NOT NULL,
+     plan_sha256 TEXT NOT NULL,
+     simulation_sha256 TEXT NOT NULL,
+     source_sha256 TEXT NOT NULL,
+     observations_sha256 TEXT NOT NULL,
+     observations_json TEXT NOT NULL,
+     comparison_sha256 TEXT NOT NULL,
+     comparison_json TEXT NOT NULL,
+     created_epoch INTEGER NOT NULL,
+     PRIMARY KEY(session_id,task_index,source_sha256),
+     FOREIGN KEY(session_id,task_index)
+         REFERENCES research_circuit_runs(session_id,task_index)
+    )""",
+)
+
 def apply_schema(db: sqlite3.Connection, statements: Iterable[str]) -> None:
     """Apply canonical statements without the implicit commits of executescript."""
     for statement in statements:
