@@ -197,13 +197,15 @@ la clôture persistante, mais pas trois PR GitHub ni le Doctor canonique Atlas.
 
 Le candidat Windows embarque désormais l’interface PySide6 `ProjectChatWindow` dans `AtlasHoldingControlCenter.exe`, via **un mode d’exécution séparé**, sans joindre les capacités privées de lecture/commande du tableau de bord. La vérification `--project-chat-self-test` instancie les véritables widgets R&D depuis le binaire gelé ; l’assemblage natif échoue si ce mode ou ses dépendances sont absents.
 
-**Mode opérateur explicite, non automatisé** (fichiers locaux choisis et config modèle préexistante) :
+**Parcours utilisateur sans commande :** après une installation consentie, un modèle Ollama réellement épinglé et le lancement du moteur, le setup propose le bouton **« Ouvrir le chat R&D »**. Ce bouton vérifie l'identité et l'ACL des exécutables, la configuration de modèle installée et la base SQLite, puis démarre **un autre processus** `AtlasHoldingControlCenter.exe --project-chat` avec `stdin` fermé. Aucun secret du tableau de bord n'est transféré. Un démarrage de fenêtre ne prouve pas la santé de l'agent ou le succès d'un projet.
+
+Pour diagnostic, le même mode peut s'ouvrir directement en ligne de commande depuis le **chemin réel installé** :
 
 ```powershell
-& "C:\\Atlas Holding\\runtime\\<version>\\AtlasHoldingControlCenter.exe" --project-chat --chat-db "C:\\Atlas Holding\\state\\holding.sqlite" --chat-repo "owner/repository" --chat-model-config "C:\\Atlas Holding\\models\\local-model.json"
+& "C:\\Atlas Holding\\runtime\\<version>\\AtlasHoldingControlCenter.exe" --project-chat --chat-db "C:\\Atlas Holding\\data\\engine.sqlite" --chat-repo "r9327/Dof-Atlas" --chat-model-config "C:\\Atlas Holding\\agents\\AtlasHoldingModel.json"
 ```
 
-Le chemin de version et les fichiers doivent être adaptés aux chemins **réellement installés** ; ceci n’est pas une commande à copier telle quelle. L’accès au chat est un mode indépendant avec une sélection de projet/configuration explicite : **l’installeur n’ajoute pas encore un bouton « Nouveau projet » et ne crée pas automatiquement la configuration du modèle ni un raccourci**. Ces étapes restent des critères du parcours utilisateur final, tout comme les mesures de RAM, un essai complet à modèle réel et les preuves Windows de machine neuve. Un test Qt ou un EXE démarré ne certifie ni une étude R&D réelle ni une release publiable.
+Les exemples de chemins sont illustratifs ; le bouton se sert des emplacements versionnés et du modèle **déjà choisis** dans l'installateur. Il n'invente ni modèle ni permission de chat. Un raccourci autonome hors installateur, le redémarrage Windows, la réparation/restauration, la mesure de RAM et le parcours complet à modèle réel restent à certifier avant une release.
 
 
 ## Audit de provenance du GUI gelé — correction de l'assemblage natif
