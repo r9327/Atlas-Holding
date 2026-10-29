@@ -238,6 +238,8 @@ def _plan(config: dict, payload: dict, root: Path) -> dict:
                            or not re.fullmatch(
                                r'[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*',
                                path) or not path.endswith('.py')
+                           or any(part in ('', '.', '..') or part.startswith('.')
+                                  for part in path.split('/'))
                            for path in item['importers'])):
                 raise AdapterError('Malformed existing-code candidate')
         mission_context['existing_code'] = existing
