@@ -31,6 +31,22 @@ def passport(stage: str, *, state: str | None = None,
 
 
 class NativeCandidateDoctorTests(unittest.TestCase):
+    def test_real_doctor_runner_uses_exact_upstream_runtime_lock(self):
+        # Import/startup and resource guards must run with the exact Atlas
+        # runtime, not a Qt-only approximation; never waive failed guardians.
+        flow = (
+            Path(__file__).resolve().parents[1]
+            / ".github" / "workflows" / "windows_real_atlas_pr9_doctor.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            'Join-Path $atlas "requirements-pyside.txt"', flow
+        )
+        self.assertIn("--require-hashes --no-deps -r", flow)
+        self.assertIn('ref: 81cd7bec8b67ff2fdd29d412db52d7ed796c48a7', flow)
+        self.assertNotIn("pip install --disable-pip-version-check --only-binary", flow)
+        self.assertIn("if ($LASTEXITCODE -ne 0)", flow)
+        self.assertIn('throw "Required hashed Atlas Windows runtime is unavailable"', flow)
+
     def test_real_git_root_is_verified_as_resolved_path_not_raw_text(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp).resolve(strict=True)
