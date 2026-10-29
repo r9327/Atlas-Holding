@@ -215,3 +215,10 @@ Un smoke test natif exact-SHA a **échoué** sur le commit `38252a606b88269f038e
 **Correctif `1d058050e4ca` :** l'assemblage construit désormais séparément le moteur, l'adaptateur et le runner d'acceptation depuis le `main` certifié ; le **Control Center depuis le candidat #9 exact-SHA** ; et le setup à partir du même candidat avec les deux EXE déjà hachés. Le reçu contient l'origine explicite `source_shas.release_candidate_viewer`, en plus de `certified_main_runtime`. Le test R&D est exécuté sur **les octets de l'exécutable réellement embarqué**. L'ancien PASS d'assemblage ne validait pas les changements UI de cette PR.
 
 Cette correction ne vaut pas à elle seule PASS : reconstruire puis revalider intégralement sur le nouveau SHA avant toute promotion. Le parcours utilisateur sans paramètres, les permissions à modèle réel et la publication restent bloqués.
+
+
+## Preuve R&D après installation fraîche (candidate nonrelease)
+
+La validation native du candidat prend désormais en charge le **fichier `AtlasHoldingControlCenter.exe` effectivement installé**, et non seulement les octets gelés dans le répertoire de build. Sur le runner Windows distinct, sans Python transmis par le setup, elle : (1) installe les vrais fichiers de la candidate depuis l'artefact GitHub Actions, (2) recalcule l'identité du viewer depuis les empreintes reçues, (3) vérifie sa provenance explicite sur le SHA exact du candidat et les octets SHA-256 installés, (4) exécute `--project-chat-self-test` en environnement Qt hors écran sans modèle Ollama, sans capacité IPC, puis (5) inscrit `installed_frozen_rd_chat: PASS` **uniquement** si le processus se termine avec succès. Ce contrôle est ajouté par `338b88c3060c`.
+
+Il reste une **preuve nonrelease** de présence et d'initialisation Qt du chat installé. Il ne certifie pas un nouveau projet R&D, le choix automatique d'un modèle, un redémarrage Windows réel, le contrôle RAM complet ou un installateur signé. Les résultats d'une ancienne CI ne sont pas transférables au nouveau commit.
