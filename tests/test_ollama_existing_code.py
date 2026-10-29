@@ -152,6 +152,66 @@ class ExistingCodeAdapterTests(unittest.TestCase):
                 _plan(CONFIG, payload, Path(folder))
             inference.assert_not_called()
 
+    def test_exact_pr_path_collision_reaches_model_as_advisory_data(self):
+        payload = self.payload()
+        payload["github_pr_observation"] = "OBSERVED"
+        payload["github_open_prs"] = {
+            "repository": payload["repository"],
+            "status": "OPEN_PRS_OBSERVED",
+            "observed_count": 1,
+            "hints": [{"number": 10, "head_sha": SHA,
+                       "base_sha": "b"*40, "head_branch": "fix/feature",
+                       "draft": False, "same_repository": True}],
+            "can_certify": False, "can_skip_implementation": False,
+        }
+        payload["github_pr_path_status"] = "OBSERVED"
+        payload["github_pr_path_overlap"] = {
+            "pr_number": 10, "head_sha": SHA,
+            "status": "EXACT_PATH_OVERLAP",
+            "observed_paths": ["app/feature.py"],
+            "matching_local_paths": ["app/feature.py"],
+            "can_certify": False, "can_skip_implementation": False,
+        }
+        observed = []
+        def http(*args, **kwargs):
+            observed.append(kwargs["payload"])
+            return {"message": {"content": json.dumps(PATCH)}}
+        with tempfile.TemporaryDirectory() as folder, \
+             patch("holding.ollama_protocol._http", side_effect=http), \
+             patch("holding.ollama_protocol._snapshot", return_value=[]):
+            self.assertEqual(_plan(CONFIG, payload, Path(folder)), PATCH)
+        data = json.loads(observed[0]["messages"][1]["content"])
+        self.assertEqual(
+            data["github_pr_path_overlap"]["matching_local_paths"],
+            ["app/feature.py"])
+        self.assertIn("advisory only", observed[0]["messages"][0]["content"])
+
+        for invalid in (
+            {"status": "NO_EXACT_PATH_MATCH"},
+            # A forged status + matching list must not conceal an
+            # overlap clearly visible in observed_paths.
+            {"status": "NO_EXACT_PATH_MATCH", "matching_local_paths": []},
+            {"status": "NO_MATCH_IN_PARTIAL_PR_SCAN", "matching_local_paths": []},
+            {"head_sha": "c"*40},
+            {"can_skip_implementation": True},
+            {"matching_local_paths": ["app/unknown.py"]},
+            {"observed_paths": ["../private.py"]},
+            # The privileged changed-path parser rejects token-like names;
+            # the isolated adapter must enforce the same policy.
+            {"status": "NO_EXACT_PATH_MATCH",
+             "observed_paths": ["config/access_token.json"],
+             "matching_local_paths": []},
+        ):
+            forged = json.loads(json.dumps(payload))
+            forged["github_pr_path_overlap"].update(invalid)
+            with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as folder, \
+                 patch("holding.ollama_protocol._http",
+                       side_effect=AssertionError("model called")) as called, \
+                 patch("holding.ollama_protocol._snapshot", return_value=[]):
+                with self.assertRaises(AdapterError):
+                    _plan(CONFIG, forged, Path(folder))
+                called.assert_not_called()
+
     def test_old_agent_request_remains_compatible(self):
         payload = self.payload()
         del payload["existing_code"]
