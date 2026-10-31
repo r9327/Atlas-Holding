@@ -158,13 +158,15 @@ Les modules indépendants avancent même si un outil manque. L'ordre relatif OS-
 
 ## Audit croisé avec DOFUS ATLAS — réutiliser le pont déjà implémenté
 
-- **PR associée** : [Dof-Atlas #312](https://github.com/r9327/Dof-Atlas/pull/312), catalogue et affectation de **29 candidats** aux modules Atlas ; issue documentaire [#311](https://github.com/r9327/Dof-Atlas/issues/311).
+- **PR associée** : [Dof-Atlas #312](https://github.com/r9327/Dof-Atlas/pull/312), catalogue et affectation de **29 candidats principaux, plus 5 compléments retenus dans l'annexe (34 étudiés)** aux modules Atlas ; issue documentaire [#311](https://github.com/r9327/Dof-Atlas/issues/311).
 - **Constat code vérifié (ne pas recréer !)** : `holding/atlas_doctor_runner.py` existe déjà, invoque `tools.atlas_doctor agent plan/check/validate --json` dans un sous-processus borné et contrôle le SHA du checkout/worktree. `holding/atlas_doctor_evidence.py` valide `atlas-doctor-agent/v1`, les statuts, les sorties et la portée. **La commande Doctor a déjà son adaptateur direct** ; lui ajouter un passage MCP supplémentaire ne serait pas un gain.
 - Le SDK MCP et Inspector restent candidats pour d'**autres** outils sans adaptateur canonique, sous `holding/mcp_policy.py` et `holding/tool_registry.py`. Ne pas déclarer `local_mcp_hub.implemented=true` sans intégration vérifiée ; à la base actuelle la validation impose `implemented=false`.
 - Répartition : **Holding** conserve le contrôleur d'agents, les règles de permission, les évaluations inter-projets, la recherche documentaire et le hub MCP ; **Atlas** conserve Qt, Doctor, Graphify, les données/Guides, les profils, le benchmark RAM/CPU, l'installateur et l'UI Unity.
 - Pour py-spy, pytest-qt, pywinauto, Hypothesis et les autres recouvrements, **un outil peut être partagé comme dépendance de développement**, mais **chaque dépôt garde ses tests, son owner et son verdict au SHA exact**. Aucun ajout à l'EXE Atlas depuis Holding.
 - **Manque à prouver** : tests end-to-end d'AtlasDoctorRunner sur vrai Windows, timeout/kill tree, état offline, contrôle d'identité SHA, rapport erreur et import de preuves ; comparaison du coût du pont existant. Le fait que l'adaptateur soit présent ne signifie pas que son exécution native actuelle est certifiée.
 - **Audit de la PR #60** : les 21 entrées sont présentes, mais les 8 lots restent **NOT_IMPLEMENTED** par cette PR documentaire. Le raccordement n'est pas 21 cases `READY` ; seules les capacités déjà codées et testées peuvent être exposées. Rechercher au moment de chaque lot les PR qui chevauchent `holding/code_worker.py`, `holding/mcp_*`, `holding/learning.py` et `holding/qa_*`.
+
+- **Consolidation anti-doublon vérifiée** : la PR documentaire Atlas #314 a été fermée sans fusion après rapatriement de ses cinq références complémentaires dans #312. Le suivi du code restant est ouvert dans [Atlas #313](https://github.com/r9327/Dof-Atlas/issues/313) ; ce suivi n'est pas un certificat de test.
 
 **Règle de jonction :** échanges inter-dépôts via contrats/protocoles vérifiés (`atlas-doctor-agent/v1`), jamais import d'Atlas comme bibliothèque dans le processus Holding ni duplication des services de l'autre dépôt.
 
